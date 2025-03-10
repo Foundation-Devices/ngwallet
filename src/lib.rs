@@ -8,6 +8,7 @@ use bdk_wallet::rusqlite::Connection;
 use bdk_wallet::{AddressInfo, PersistedWallet, SignOptions};
 use bdk_wallet::{KeychainKind, WalletTx};
 use bdk_wallet::{Update, Wallet};
+use flutter_rust_bridge::frb;
 
 const STOP_GAP: usize = 50;
 const BATCH_SIZE: usize = 5;
@@ -20,6 +21,7 @@ const DB_PATH: &str = "test_wallet.sqlite3";
 
 const ELECTRUM_SERVER: &str = "ssl://mempool.space:60602";
 
+#[frb(non_opaque)]
 pub struct NgWallet {
     wallet: PersistedWallet<Connection>,
 }
