@@ -3,12 +3,17 @@ use anyhow::Result;
 use bdk_electrum::bdk_core::spk_client::FullScanResponse;
 use bdk_electrum::electrum_client::Client;
 use bdk_electrum::BdkElectrumClient;
-use bdk_wallet::bitcoin::{Address, Amount, Network, Psbt, ScriptBuf};
+use bdk_wallet::bitcoin::{Address, Amount, Network, Psbt, ScriptBuf, Transaction, TxIn, TxOut};
 use bdk_wallet::rusqlite::Connection;
 use bdk_wallet::{AddressInfo, PersistedWallet, SignOptions};
 use bdk_wallet::{KeychainKind, WalletTx};
 use bdk_wallet::{Update, Wallet};
 use flutter_rust_bridge::frb;
+use std::sync::{Arc, Mutex};
+use bdk_electrum::bdk_core::bitcoin::absolute;
+use bdk_electrum::bdk_core::bitcoin::block::Version;
+use bdk_electrum::bdk_core::BlockId;
+use bdk_wallet::chain::spk_client::FullScanRequest;
 
 const STOP_GAP: usize = 50;
 const BATCH_SIZE: usize = 5;
@@ -23,7 +28,12 @@ const ELECTRUM_SERVER: &str = "ssl://mempool.space:60602";
 
 #[frb(non_opaque)]
 pub struct NgWallet {
-    wallet: PersistedWallet<Connection>,
+    wallet: Arc<Mutex<PersistedWallet<Connection>>>,
+}
+
+#[derive(Debug)]
+pub struct NgTransaction {
+    pub output: Vec<TxOut>,
 }
 
 impl NgWallet {
@@ -34,12 +44,12 @@ impl NgWallet {
                 .network(Network::Signet)
                 .create_wallet(&mut conn)?;
 
-        Ok(Self { wallet })
+        Ok(Self { wallet: Arc::new(Mutex::new(wallet)) })
     }
 
     pub fn persist(&mut self) -> Result<bool> {
         let mut conn = Connection::open(DB_PATH)?;
-        Ok(self.wallet.persist(&mut conn)?)
+        Ok(self.wallet.lock().unwrap().persist(&mut conn)?)
     }
 
     pub fn load() -> Result<NgWallet> {
@@ -49,50 +59,60 @@ impl NgWallet {
         match wallet_opt {
             Some(wallet) => {
                 println!("Loaded existing wallet database.");
-                Ok(Self { wallet })
+                Ok(Self { wallet: Arc::new(Mutex::new(wallet)) })
             }
             None => {
-                println!("Creating new wallet database.");
                 Err(anyhow::anyhow!("Failed to load wallet database."))
             }
         }
     }
 
     pub fn next_address(&mut self) -> Result<AddressInfo> {
-        let address: AddressInfo = self.wallet.reveal_next_address(KeychainKind::External);
+        let address: AddressInfo = self.wallet.lock().unwrap().reveal_next_address(KeychainKind::External);
         self.persist()?;
         Ok(address)
     }
 
-    pub fn transactions(&self) -> Vec<WalletTx> {
-        let transactions: Vec<WalletTx> = self.wallet.transactions().collect();
-        transactions
+    pub fn transactions(&self) -> Result<Vec<NgTransaction>> {
+        let wallet =  self.wallet.lock().unwrap();
+        let mut transactions: Vec<NgTransaction> = vec![];
+
+        for tx in wallet.transactions() {
+            transactions.push(NgTransaction {
+                output: tx.tx_node.output.clone(),
+            });
+        }
+
+        Ok(transactions)
     }
 
-    pub fn scan(&self) -> Result<FullScanResponse<KeychainKind>> {
+    pub fn scan_request(&self) -> FullScanRequest<KeychainKind> {
+        self.wallet.lock().unwrap().start_full_scan().build()
+    }
+
+    pub fn scan(request: FullScanRequest<KeychainKind>) -> Result<FullScanResponse<KeychainKind>> {
         let client: BdkElectrumClient<Client> =
             BdkElectrumClient::new(Client::new(ELECTRUM_SERVER)?);
-
-        let full_scan_request = self.wallet.start_full_scan();
-        let update = client.full_scan(full_scan_request, STOP_GAP, BATCH_SIZE, true)?;
+        let update = client.full_scan(request, STOP_GAP, BATCH_SIZE, true)?;
 
         Ok(update)
     }
 
     pub fn apply(&mut self, update: Update) -> Result<()> {
         self.wallet
-            .apply_update(update)
+            .lock().unwrap().apply_update(update)
             .map_err(|e| anyhow::anyhow!(e))
     }
 
-    pub fn balance(&self) -> bdk_wallet::Balance {
-        self.wallet.balance()
+    pub fn balance(&self) -> Result<bdk_wallet::Balance> {
+        Ok(self.wallet.lock().unwrap().balance())
     }
 
     pub fn create_send(&mut self, address: String, amount: u64) -> Result<Psbt> {
-        let address = Address::from_str(&address)?.require_network(self.wallet.network())?;
+        let mut wallet = self.wallet.lock().unwrap();
+        let address = Address::from_str(&address)?.require_network(wallet.network())?;
         let script: ScriptBuf = address.into();
-        let mut builder = self.wallet.build_tx();
+        let mut builder = wallet.build_tx();
         builder.add_recipient(script.clone(), Amount::from_sat(amount));
 
         let psbt = builder.finish()?;
@@ -101,7 +121,7 @@ impl NgWallet {
 
     pub fn sign(&self, psbt: &Psbt) -> Result<Psbt> {
         let mut psbt = psbt.to_owned();
-        self.wallet.sign(&mut psbt, SignOptions::default())?;
+        self.wallet.lock().unwrap().sign(&mut psbt, SignOptions::default())?;
         Ok(psbt)
     }
 
@@ -130,10 +150,11 @@ mod tests {
             address.address, address.index
         );
 
-        let update = wallet.scan().unwrap();
+        let request = wallet.scan_request();
+        let update = NgWallet::scan(request).unwrap();
         wallet.apply(Update::from(update)).unwrap();
 
-        let balance = wallet.balance();
+        let balance = wallet.balance().unwrap();
         println!("Wallet balance: {} sat", balance.total().to_sat());
 
         let transactions = wallet.transactions();
