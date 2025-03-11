@@ -26,7 +26,6 @@ const DB_PATH: &str = "test_wallet.sqlite3";
 
 const ELECTRUM_SERVER: &str = "ssl://mempool.space:60602";
 
-//#[frb(non_opaque)]
 pub struct NgWallet {
     pub wallet: Arc<Mutex<PersistedWallet<Connection>>>,
 }
@@ -104,8 +103,8 @@ impl NgWallet {
             .map_err(|e| anyhow::anyhow!(e))
     }
 
-    pub fn balance(&self) -> Result<bdk_wallet::Balance> {
-        Ok(self.wallet.lock().unwrap().balance())
+    pub fn balance(&self) -> Result<u64> {
+        Ok(self.wallet.lock().unwrap().balance().total().to_sat())
     }
 
     pub fn create_send(&mut self, address: String, amount: u64) -> Result<Psbt> {
@@ -155,7 +154,7 @@ mod tests {
         wallet.apply(Update::from(update)).unwrap();
 
         let balance = wallet.balance().unwrap();
-        println!("Wallet balance: {} sat", balance.total().to_sat());
+        println!("Wallet balance: {} sat", balance);
 
         let transactions = wallet.transactions();
 
