@@ -26,9 +26,9 @@ const DB_PATH: &str = "test_wallet.sqlite3";
 
 const ELECTRUM_SERVER: &str = "ssl://mempool.space:60602";
 
-#[frb(non_opaque)]
+//#[frb(non_opaque)]
 pub struct NgWallet {
-    wallet: Arc<Mutex<PersistedWallet<Connection>>>,
+    pub wallet: Arc<Mutex<PersistedWallet<Connection>>>,
 }
 
 #[derive(Debug)]
