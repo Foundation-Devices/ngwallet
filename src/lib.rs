@@ -1,5 +1,5 @@
 use std::str::FromStr;
-use anyhow::Result;
+use anyhow::{Ok, Result};
 use bdk_electrum::bdk_core::spk_client::FullScanResponse;
 use bdk_electrum::electrum_client::Client;
 use bdk_electrum::BdkElectrumClient;
@@ -28,6 +28,7 @@ const ELECTRUM_SERVER: &str = "ssl://mempool.space:60602";
 
 pub struct NgWallet {
     pub wallet: Arc<Mutex<PersistedWallet<Connection>>>,
+    db_path: String
 }
 
 #[derive(Debug)]
@@ -36,29 +37,29 @@ pub struct NgTransaction {
 }
 
 impl NgWallet {
-    pub fn new() -> Result<NgWallet> {
+    pub fn new(db_path: &str) -> Result<NgWallet> {
         let mut conn = Connection::open(DB_PATH)?;
         let wallet: PersistedWallet<Connection> =
             Wallet::create(EXTERNAL_DESCRIPTOR, INTERNAL_DESCRIPTOR)
                 .network(Network::Signet)
                 .create_wallet(&mut conn)?;
 
-        Ok(Self { wallet: Arc::new(Mutex::new(wallet)) })
+        Ok(Self { wallet: Arc::new(Mutex::new(wallet)),db_path:  db_path.to_string() })
     }
 
     pub fn persist(&mut self) -> Result<bool> {
-        let mut conn = Connection::open(DB_PATH)?;
+        let mut conn = Connection::open(&self.db_path)?;
         Ok(self.wallet.lock().unwrap().persist(&mut conn)?)
     }
 
-    pub fn load() -> Result<NgWallet> {
-        let mut conn = Connection::open(DB_PATH)?;
+    pub fn load(db_path: &str) -> Result<NgWallet> {
+        let mut conn = Connection::open(db_path)?;
         let wallet_opt = Wallet::load().load_wallet(&mut conn)?;
 
         match wallet_opt {
             Some(wallet) => {
                 println!("Loaded existing wallet database.");
-                Ok(Self { wallet: Arc::new(Mutex::new(wallet)) })
+                Ok(Self { wallet: Arc::new(Mutex::new(wallet)),db_path: db_path.to_string() })
             }
             None => {
                 Err(anyhow::anyhow!("Failed to load wallet database."))
@@ -73,7 +74,7 @@ impl NgWallet {
     }
 
     pub fn transactions(&self) -> Result<Vec<NgTransaction>> {
-        let wallet =  self.wallet.lock().unwrap();
+        let wallet = self.wallet.lock().unwrap();
         let mut transactions: Vec<NgTransaction> = vec![];
 
         for tx in wallet.transactions() {
@@ -103,8 +104,8 @@ impl NgWallet {
             .map_err(|e| anyhow::anyhow!(e))
     }
 
-    pub fn balance(&self) -> Result<u64> {
-        Ok(self.wallet.lock().unwrap().balance().total().to_sat())
+    pub fn balance(&self) -> Result<bdk_wallet::Balance> {
+        Ok(self.wallet.lock().unwrap().balance())
     }
 
     pub fn create_send(&mut self, address: String, amount: u64) -> Result<Psbt> {
@@ -141,7 +142,8 @@ mod tests {
 
     #[test]
     fn it_works() {
-        let mut wallet = NgWallet::new().unwrap_or(NgWallet::load().unwrap());
+
+        let mut wallet = NgWallet::new(DB_PATH).unwrap_or(NgWallet::load(DB_PATH).unwrap());
 
         let address: AddressInfo = wallet.next_address().unwrap();
         println!(
@@ -154,7 +156,7 @@ mod tests {
         wallet.apply(Update::from(update)).unwrap();
 
         let balance = wallet.balance().unwrap();
-        println!("Wallet balance: {} sat", balance);
+        println!("Wallet balance: {} sat", balance.total().to_sat());
 
         let transactions = wallet.transactions();
 
