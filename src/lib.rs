@@ -4,7 +4,7 @@ use bdk_electrum::bdk_core::spk_client::FullScanResponse;
 use bdk_electrum::electrum_client::Client;
 use bdk_electrum::BdkElectrumClient;
 use bdk_wallet::bitcoin::{Address, Amount, Network, Psbt, ScriptBuf, Transaction, TxIn, TxOut};
-use bdk_wallet::rusqlite::Connection;
+use bdk_wallet::rusqlite::{Connection, Error};
 use bdk_wallet::{AddressInfo, PersistedWallet, SignOptions};
 use bdk_wallet::{KeychainKind, WalletTx};
 use bdk_wallet::{Update, Wallet};
@@ -14,6 +14,7 @@ use bdk_electrum::bdk_core::bitcoin::absolute;
 use bdk_electrum::bdk_core::bitcoin::block::Version;
 use bdk_electrum::bdk_core::BlockId;
 use bdk_wallet::chain::spk_client::FullScanRequest;
+use bdk_wallet::miniscript::miniscript::types::Input::Any;
 
 const STOP_GAP: usize = 50;
 const BATCH_SIZE: usize = 5;
@@ -28,7 +29,8 @@ const ELECTRUM_SERVER: &str = "ssl://mempool.space:60602";
 
 pub struct NgWallet {
     pub wallet: Arc<Mutex<PersistedWallet<Connection>>>,
-    db_path: String
+    db_path: Option<String>,
+    connection: Arc<Mutex<Connection>>,
 }
 
 #[derive(Debug)]
@@ -37,19 +39,31 @@ pub struct NgTransaction {
 }
 
 impl NgWallet {
-    pub fn new(db_path: &str) -> Result<NgWallet> {
-        let mut conn = Connection::open(DB_PATH)?;
+    pub fn new(db_path: Option<String>) -> Result<NgWallet> {
+        let mut conn = match db_path.clone() {
+            None => {
+                Connection::open_in_memory()
+            }
+            Some(path) => {
+                Connection::open(path)
+            }
+        }?;
         let wallet: PersistedWallet<Connection> =
             Wallet::create(EXTERNAL_DESCRIPTOR, INTERNAL_DESCRIPTOR)
                 .network(Network::Signet)
                 .create_wallet(&mut conn)?;
 
-        Ok(Self { wallet: Arc::new(Mutex::new(wallet)),db_path:  db_path.to_string() })
+        Ok(Self {
+            wallet: Arc::new(Mutex::new(wallet)),
+            db_path,
+            connection: Arc::new(Mutex::new(conn)),
+        })
     }
 
     pub fn persist(&mut self) -> Result<bool> {
-        let mut conn = Connection::open(&self.db_path)?;
-        Ok(self.wallet.lock().unwrap().persist(&mut conn)?)
+        self.wallet.lock().unwrap().persist(&mut self.connection.lock().unwrap())
+            .map_err(|e| anyhow::anyhow!(e)
+            )
     }
 
     pub fn load(db_path: &str) -> Result<NgWallet> {
@@ -59,10 +73,14 @@ impl NgWallet {
         match wallet_opt {
             Some(wallet) => {
                 println!("Loaded existing wallet database.");
-                Ok(Self { wallet: Arc::new(Mutex::new(wallet)),db_path: db_path.to_string() })
+                Ok(Self {
+                    wallet: Arc::new(Mutex::new(wallet)),
+                    db_path: Some(db_path.to_owned()),
+                    connection: Arc::new(Mutex::new(conn)),
+                })
             }
             None => {
-                Err(anyhow::anyhow!("Failed to load wallet database."))
+                Err(anyhow::anyhow!("Failed to load wallet database ."))
             }
         }
     }
@@ -142,8 +160,7 @@ mod tests {
 
     #[test]
     fn it_works() {
-
-        let mut wallet = NgWallet::new(DB_PATH).unwrap_or(NgWallet::load(DB_PATH).unwrap());
+        let mut wallet = NgWallet::new(Some(DB_PATH.to_string())).unwrap_or(NgWallet::load(DB_PATH).unwrap());
 
         let address: AddressInfo = wallet.next_address().unwrap();
         println!(
