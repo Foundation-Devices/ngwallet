@@ -60,6 +60,30 @@ impl NgWallet {
         })
     }
 
+
+    pub fn new_from_descriptor(db_path: Option<String>,descriptor: String) -> Result<NgWallet> {
+        let mut conn = match db_path.clone() {
+            None => {
+                Connection::open_in_memory()
+            }
+            Some(path) => {
+                Connection::open(path)
+            }
+        }?;
+        let wallet: PersistedWallet<Connection> =
+            Wallet::create_single(descriptor)
+                .network(Network::Signet)
+                .create_wallet(&mut conn)?;
+
+        Ok(Self {
+            wallet: Arc::new(Mutex::new(wallet)),
+            db_path,
+            connection: Arc::new(Mutex::new(conn)),
+        })
+    }
+
+    
+    
     pub fn persist(&mut self) -> Result<bool> {
         self.wallet.lock().unwrap().persist(&mut self.connection.lock().unwrap())
             .map_err(|e| anyhow::anyhow!(e)
@@ -69,7 +93,6 @@ impl NgWallet {
     pub fn load(db_path: &str) -> Result<NgWallet> {
         let mut conn = Connection::open(db_path)?;
         let wallet_opt = Wallet::load().load_wallet(&mut conn)?;
-
         match wallet_opt {
             Some(wallet) => {
                 println!("Loaded existing wallet database.");
@@ -183,4 +206,31 @@ mod tests {
 
         //println!("Wallet balance: {:?} sat", wallet.transactions());
     }
+
+    #[test]
+    fn check_watch_only() {
+        let mut wallet = NgWallet::new_from_descriptor(Some(DB_PATH.to_string()),EXTERNAL_DESCRIPTOR.to_string()).unwrap_or(NgWallet::load(DB_PATH).unwrap());
+
+        let address: AddressInfo = wallet.next_address().unwrap();
+        println!(
+            "Generated address {} at index {}",
+            address.address, address.index
+        );
+
+        let request = wallet.scan_request();
+        let update = NgWallet::scan(request).unwrap();
+        wallet.apply(Update::from(update)).unwrap();
+
+        let balance = wallet.balance().unwrap().total().to_sat();
+        println!("Wallet balance: {} sat", balance.total().to_sat());
+
+        let transactions = wallet.transactions();
+
+        for tx in transactions {
+            println!("Transaction: {:?}", tx);
+        }
+
+        //println!("Wallet balance: {:?} sat", wallet.transactions());
+    }
+    
 }
