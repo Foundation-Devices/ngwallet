@@ -1,8 +1,6 @@
 use std::str::FromStr;
 use anyhow::{Ok, Result};
-use bdk_electrum::bdk_core::spk_client::FullScanResponse;
-use bdk_electrum::electrum_client::Client;
-use bdk_electrum::BdkElectrumClient;
+
 use bdk_wallet::bitcoin::{Address, Amount, Network, Psbt, ScriptBuf, Transaction, TxIn, TxOut};
 use bdk_wallet::rusqlite::{Connection, Error};
 use bdk_wallet::{AddressInfo, PersistedWallet, SignOptions};
@@ -10,9 +8,14 @@ use bdk_wallet::{KeychainKind, WalletTx};
 use bdk_wallet::{Update, Wallet};
 use flutter_rust_bridge::frb;
 use std::sync::{Arc, Mutex};
-use bdk_electrum::bdk_core::bitcoin::absolute;
-use bdk_electrum::bdk_core::bitcoin::block::Version;
-use bdk_electrum::bdk_core::BlockId;
+
+#[cfg(feature = "electrum")]
+use {bdk_electrum::bdk_core::bitcoin::absolute, bdk_electrum::bdk_core::bitcoin::block::Version,
+ bdk_electrum::bdk_core::{BlockId},
+ bdk_electrum::bdk_core::spk_client::FullScanResponse,
+ bdk_electrum::electrum_client::Client,
+ bdk_electrum::BdkElectrumClient};
+
 use bdk_wallet::chain::spk_client::FullScanRequest;
 use bdk_wallet::miniscript::miniscript::types::Input::Any;
 
@@ -131,6 +134,7 @@ impl NgWallet {
         self.wallet.lock().unwrap().start_full_scan().build()
     }
 
+    #[cfg(feature = "electrum")]
     pub fn scan(request: FullScanRequest<KeychainKind>) -> Result<FullScanResponse<KeychainKind>> {
         let client: BdkElectrumClient<Client> =
             BdkElectrumClient::new(Client::new(ELECTRUM_SERVER)?);
@@ -166,6 +170,7 @@ impl NgWallet {
         Ok(psbt)
     }
 
+    #[cfg(feature = "electrum")]
     pub fn broadcast(&mut self, psbt: Psbt) -> Result<()> {
         let client: BdkElectrumClient<Client> =
             BdkElectrumClient::new(Client::new(ELECTRUM_SERVER)?);
@@ -182,6 +187,7 @@ mod tests {
     use crate::*;
 
     #[test]
+    #[cfg(feature = "electrum")]
     fn it_works() {
         let mut wallet = NgWallet::new(Some(DB_PATH.to_string())).unwrap_or(NgWallet::load(DB_PATH).unwrap());
 
