@@ -1,6 +1,8 @@
 use crate::ngwallet::NgWallet;
 use crate::store::InMemoryMetaStorage;
 
+
+#[derive(Debug)]
 pub struct NgAccount {
     pub name: String,
     pub color: String,
@@ -16,9 +18,10 @@ impl NgAccount {
         device_serial: Option<String>,
         descriptor: String,
         index: u32,
+        db_path: Option<String>,
     ) -> Self {
         let wallet =
-            NgWallet::new_from_descriptor(None, descriptor, Box::new(InMemoryMetaStorage::new()))
+            NgWallet::new_from_descriptor(db_path, descriptor, Box::new(InMemoryMetaStorage::new()))
                 .unwrap();
         Self {
             name,

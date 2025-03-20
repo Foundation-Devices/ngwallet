@@ -1,6 +1,6 @@
 use std::fmt::{Debug, Formatter};
 
-pub(crate) trait MetaStorage: Debug {
+pub trait MetaStorage: Debug + Send + Sync {
     fn set_note(&mut self, key: String, value: String);
     fn get_note(&self, key: &str) -> Option<String>;
 
