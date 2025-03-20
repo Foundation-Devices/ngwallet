@@ -13,6 +13,7 @@ mod tests {
     use crate::*;
 
     #[test]
+    #[cfg(feature = "envoy")]
     fn test_wallet() {
         let mut account = NgAccount::new_from_descriptor(
              "Passport Prime".to_string(),
@@ -89,6 +90,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(feature = "envoy")]
     fn check_watch_only() {
         // let mut wallet = NgWallet::new_from_descriptor(Some(DB_PATH.to_string()), EXTERNAL_DESCRIPTOR.to_string()).unwrap_or(NgWallet::load(DB_PATH).unwrap());
         //

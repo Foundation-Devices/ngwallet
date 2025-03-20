@@ -1,44 +1,62 @@
-use crate::store::MetaStorage;
-use crate::{BATCH_SIZE, ELECTRUM_SERVER, EXTERNAL_DESCRIPTOR, INTERNAL_DESCRIPTOR, STOP_GAP};
-use anyhow::{Ok, Result};
-use bdk_electrum::BdkElectrumClient;
-use bdk_electrum::bdk_core::bitcoin::Txid;
-use bdk_electrum::bdk_core::spk_client::FullScanResponse;
-use bdk_electrum::electrum_client::Client;
-use bdk_wallet::KeychainKind;
-use bdk_wallet::bitcoin::{Address, Amount, Network, OutPoint, Psbt, ScriptBuf};
-use bdk_wallet::chain::ChainPosition::{Confirmed, Unconfirmed};
-use bdk_wallet::chain::spk_client::FullScanRequest;
-use bdk_wallet::rusqlite::Connection;
-use bdk_wallet::{AddressInfo, PersistedWallet, SignOptions};
-use bdk_wallet::{Update, Wallet};
 use std::str::FromStr;
 use std::sync::{Arc, Mutex};
 
+use anyhow::{Ok, Result};
+use bdk_wallet::{AddressInfo, PersistedWallet, SignOptions};
+use bdk_wallet::{Update, Wallet};
+use bdk_wallet::bitcoin::{Address, Amount, Network, OutPoint, Psbt, ScriptBuf, Txid};
+use bdk_wallet::chain::ChainPosition::{Confirmed, Unconfirmed};
+use bdk_wallet::chain::spk_client::FullScanRequest;
+use bdk_wallet::KeychainKind;
+use crate::keyos::KeyOsPersister;
+
+#[cfg(feature = "envoy")]
+use {
+    bdk_electrum::bdk_core::spk_client::FullScanResponse,
+    bdk_electrum::BdkElectrumClient,
+    bdk_electrum::electrum_client::Client,
+    bdk_wallet::rusqlite::Connection,
+};
+
+use crate::{BATCH_SIZE, ELECTRUM_SERVER, EXTERNAL_DESCRIPTOR, INTERNAL_DESCRIPTOR, STOP_GAP};
+use crate::store::MetaStorage;
 use crate::transaction::{BitcoinTransaction, Input, Output};
 
 #[derive(Debug)]
 pub struct NgWallet {
+    #[cfg(feature = "envoy")]
     pub wallet: Arc<Mutex<PersistedWallet<Connection>>>,
-    connection: Arc<Mutex<Connection>>,
+    #[cfg(feature = "envoy")]
+    persister: Arc<Mutex<Connection>>,
+
+    #[cfg(not(feature = "envoy"))]
+    pub wallet: Arc<Mutex<PersistedWallet<KeyOsPersister>>>,
+    #[cfg(not(feature = "envoy"))]
+    persister: Arc<Mutex<KeyOsPersister>>,
     pub descriptors: Vec<String>,
     meta_storage: Box<dyn MetaStorage>,
 }
 
 impl NgWallet {
     pub fn new(db_path: Option<String>, meta_storage: Box<dyn MetaStorage>) -> Result<NgWallet> {
-        let mut conn = match db_path.clone() {
+
+        #[cfg(feature = "envoy")]
+            let mut persister = match db_path.clone() {
             None => Connection::open_in_memory(),
             Some(path) => Connection::open(path),
         }?;
-        let wallet: PersistedWallet<Connection> =
-            Wallet::create(EXTERNAL_DESCRIPTOR, INTERNAL_DESCRIPTOR)
-                .network(Network::Signet)
-                .create_wallet(&mut conn)?;
+
+        #[cfg(not(feature = "envoy"))]
+            let mut persister = KeyOsPersister {};
+
+        let wallet = Wallet::create(EXTERNAL_DESCRIPTOR, INTERNAL_DESCRIPTOR)
+            .network(Network::Signet)
+            .create_wallet(&mut persister)
+            .map_err(|_| anyhow::anyhow!("Couldn't create wallet"))?;
 
         Ok(Self {
             wallet: Arc::new(Mutex::new(wallet)),
-            connection: Arc::new(Mutex::new(conn)),
+            persister: Arc::new(Mutex::new(persister)),
             descriptors: vec![
                 EXTERNAL_DESCRIPTOR.to_string(),
                 INTERNAL_DESCRIPTOR.to_string(),
@@ -52,47 +70,62 @@ impl NgWallet {
         descriptor: String,
         meta_storage: Box<dyn MetaStorage>,
     ) -> Result<NgWallet> {
-        let mut conn = match db_path.clone() {
+       
+        #[cfg(feature = "envoy")]
+            let mut persister = match db_path.clone() {
             None => Connection::open_in_memory(),
             Some(path) => Connection::open(path),
         }?;
-        let wallet: PersistedWallet<Connection> = Wallet::create_single(descriptor)
+        
+        #[cfg(not(feature = "envoy"))]
+            let mut persister = KeyOsPersister {};
+
+        let wallet = Wallet::create_single(descriptor)
             .network(Network::Signet)
-            .create_wallet(&mut conn)?;
+            .create_wallet(&mut persister)
+            .map_err(|_| anyhow::anyhow!("Couldn't create a single descriptor wallet"))?;
 
         Ok(Self {
             wallet: Arc::new(Mutex::new(wallet)),
-            connection: Arc::new(Mutex::new(conn)),
+            persister: Arc::new(Mutex::new(persister)),
             descriptors: vec![
                 EXTERNAL_DESCRIPTOR.to_string(),
                 INTERNAL_DESCRIPTOR.to_string(),
             ],
             meta_storage,
-        })
+        }) 
     }
 
     pub fn persist(&mut self) -> Result<bool> {
         self.wallet
             .lock()
             .unwrap()
-            .persist(&mut self.connection.lock().unwrap())
-            .map_err(|e| anyhow::anyhow!(e))
+            .persist(&mut self.persister.lock().unwrap()).map_err(|_| anyhow::anyhow!("Could not persist wallet"))
     }
 
     pub fn load(db_path: &str, meta_storage: Box<dyn MetaStorage>) -> Result<NgWallet> {
-        let mut conn = Connection::open(db_path)?;
-        let wallet_opt = Wallet::load().load_wallet(&mut conn)?;
+
+
+        #[cfg(feature = "envoy")]
+            let mut persister = Connection::open(db_path)?;
+
+        #[cfg(not(feature = "envoy"))]
+            let mut persister = KeyOsPersister {};
+
+        let wallet_opt = Wallet::load()
+            .load_wallet(&mut persister).unwrap();
+
         match wallet_opt {
             Some(wallet) => {
                 println!("Loaded existing wallet database.");
                 Ok(Self {
                     wallet: Arc::new(Mutex::new(wallet)),
-                    connection: Arc::new(Mutex::new(conn)),
                     descriptors: vec![
                         EXTERNAL_DESCRIPTOR.to_string(),
                         INTERNAL_DESCRIPTOR.to_string(),
                     ],
                     meta_storage,
+                    persister: Arc::new(Mutex::new(persister)),
                 })
             }
             None => Err(anyhow::anyhow!("Failed to load wallet database .")),
@@ -185,6 +218,7 @@ impl NgWallet {
         self.wallet.lock().unwrap().start_full_scan().build()
     }
 
+    #[cfg(feature = "envoy")]
     pub fn scan(request: FullScanRequest<KeychainKind>) -> Result<FullScanResponse<KeychainKind>> {
         let client: BdkElectrumClient<Client> =
             BdkElectrumClient::new(Client::new(ELECTRUM_SERVER)?);
@@ -250,6 +284,7 @@ impl NgWallet {
         Ok(psbt)
     }
 
+    #[cfg(feature = "envoy")]
     pub fn broadcast(&mut self, psbt: Psbt) -> Result<()> {
         let client: BdkElectrumClient<Client> =
             BdkElectrumClient::new(Client::new(ELECTRUM_SERVER)?);

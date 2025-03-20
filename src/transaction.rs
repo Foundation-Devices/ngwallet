@@ -1,5 +1,3 @@
-use bdk_electrum::bdk_core::bitcoin::{TxIn, TxOut};
-
 #[derive(Debug)]
 struct RampTransaction {
     pub ramp_id: String,
