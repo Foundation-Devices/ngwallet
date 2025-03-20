@@ -1,20 +1,26 @@
-use std::str::FromStr;
+mod keyos;
+
 use anyhow::{Ok, Result};
+use std::str::FromStr;
 
 use bdk_wallet::bitcoin::{Address, Amount, Network, Psbt, ScriptBuf, Transaction, TxIn, TxOut};
-use bdk_wallet::rusqlite::{Connection, Error};
 use bdk_wallet::{AddressInfo, PersistedWallet, SignOptions};
 use bdk_wallet::{KeychainKind, WalletTx};
 use bdk_wallet::{Update, Wallet};
-use flutter_rust_bridge::frb;
 use std::sync::{Arc, Mutex};
 
-#[cfg(feature = "electrum")]
-use {bdk_electrum::bdk_core::bitcoin::absolute, bdk_electrum::bdk_core::bitcoin::block::Version,
- bdk_electrum::bdk_core::{BlockId},
- bdk_electrum::bdk_core::spk_client::FullScanResponse,
- bdk_electrum::electrum_client::Client,
- bdk_electrum::BdkElectrumClient};
+use keyos::KeyOsPersister;
+
+#[cfg(feature = "envoy")]
+use {
+    bdk_electrum::BdkElectrumClient,
+    bdk_electrum::bdk_core::BlockId,
+    bdk_electrum::bdk_core::bitcoin::absolute,
+    bdk_electrum::bdk_core::bitcoin::block::Version,
+    bdk_electrum::bdk_core::spk_client::FullScanResponse,
+    bdk_electrum::electrum_client::Client,
+    bdk_wallet::rusqlite::{Connection, Error},
+};
 
 use bdk_wallet::chain::spk_client::FullScanRequest;
 use bdk_wallet::miniscript::miniscript::types::Input::Any;
@@ -31,9 +37,17 @@ const DB_PATH: &str = "test_wallet.sqlite3";
 const ELECTRUM_SERVER: &str = "ssl://mempool.space:60602";
 
 pub struct NgWallet {
+    #[cfg(feature = "envoy")]
     pub wallet: Arc<Mutex<PersistedWallet<Connection>>>,
+    #[cfg(feature = "envoy")]
+    persister: Arc<Mutex<Connection>>,
+
+    #[cfg(not(feature = "envoy"))]
+    pub wallet: Arc<Mutex<PersistedWallet<KeyOsPersister>>>,
+    #[cfg(not(feature = "envoy"))]
+    persister: Arc<Mutex<KeyOsPersister>>,
+
     db_path: Option<String>,
-    connection: Arc<Mutex<Connection>>,
 }
 
 #[derive(Debug)]
@@ -43,77 +57,86 @@ pub struct NgTransaction {
 
 impl NgWallet {
     pub fn new(db_path: Option<String>) -> Result<NgWallet> {
-        let mut conn = match db_path.clone() {
-            None => {
-                Connection::open_in_memory()
-            }
-            Some(path) => {
-                Connection::open(path)
-            }
+        #[cfg(feature = "envoy")]
+        let mut persister = match db_path.clone() {
+            None => Connection::open_in_memory(),
+            Some(path) => Connection::open(path),
         }?;
-        let wallet: PersistedWallet<Connection> =
-            Wallet::create(EXTERNAL_DESCRIPTOR, INTERNAL_DESCRIPTOR)
-                .network(Network::Signet)
-                .create_wallet(&mut conn)?;
+
+        #[cfg(not(feature = "envoy"))]
+        let mut persister = KeyOsPersister {};
+
+        let wallet = Wallet::create(EXTERNAL_DESCRIPTOR, INTERNAL_DESCRIPTOR)
+            .network(Network::Signet)
+            .create_wallet(&mut persister)
+            .map_err(|_| anyhow::anyhow!("Couldn't create wallet"))?;
 
         Ok(Self {
             wallet: Arc::new(Mutex::new(wallet)),
             db_path,
-            connection: Arc::new(Mutex::new(conn)),
+            persister: Arc::new(Mutex::new(persister)),
         })
     }
 
-
-    pub fn new_from_descriptor(db_path: Option<String>,descriptor: String) -> Result<NgWallet> {
-        let mut conn = match db_path.clone() {
-            None => {
-                Connection::open_in_memory()
-            }
-            Some(path) => {
-                Connection::open(path)
-            }
+    pub fn new_from_descriptor(db_path: Option<String>, descriptor: String) -> Result<NgWallet> {
+        #[cfg(feature = "envoy")]
+        let mut persister = match db_path.clone() {
+            None => Connection::open_in_memory(),
+            Some(path) => Connection::open(path),
         }?;
-        let wallet: PersistedWallet<Connection> =
-            Wallet::create_single(descriptor)
-                .network(Network::Signet)
-                .create_wallet(&mut conn)?;
+
+        #[cfg(not(feature = "envoy"))]
+        let mut persister = KeyOsPersister {};
+
+        let wallet = Wallet::create_single(descriptor)
+            .network(Network::Signet)
+            .create_wallet(&mut persister)
+            .map_err(|_| anyhow::anyhow!("Couldn't create a single descriptor wallet"))?;
 
         Ok(Self {
             wallet: Arc::new(Mutex::new(wallet)),
             db_path,
-            connection: Arc::new(Mutex::new(conn)),
+            persister: Arc::new(Mutex::new(persister)),
         })
-    }
-
-    
-    
-    pub fn persist(&mut self) -> Result<bool> {
-        self.wallet.lock().unwrap().persist(&mut self.connection.lock().unwrap())
-            .map_err(|e| anyhow::anyhow!(e)
-            )
     }
 
     pub fn load(db_path: &str) -> Result<NgWallet> {
-        let mut conn = Connection::open(db_path)?;
-        let wallet_opt = Wallet::load().load_wallet(&mut conn)?;
+        #[cfg(feature = "envoy")]
+        let mut persister = Connection::open(db_path)?;
+
+        #[cfg(not(feature = "envoy"))]
+        let mut persister = KeyOsPersister {};
+
+        let wallet_opt = Wallet::load()
+            .load_wallet(&mut persister).unwrap();
+
         match wallet_opt {
             Some(wallet) => {
                 println!("Loaded existing wallet database.");
                 Ok(Self {
                     wallet: Arc::new(Mutex::new(wallet)),
                     db_path: Some(db_path.to_owned()),
-                    connection: Arc::new(Mutex::new(conn)),
+                    persister: Arc::new(Mutex::new(persister)),
                 })
             }
-            None => {
-                Err(anyhow::anyhow!("Failed to load wallet database ."))
-            }
+            None => Err(anyhow::anyhow!("Failed to load wallet database .")),
         }
     }
 
+    pub fn persist(&mut self) -> Result<bool> {
+        self.wallet
+            .lock()
+            .unwrap()
+            .persist(&mut self.persister.lock().unwrap()).map_err(|_| anyhow::anyhow!("Could not persist wallet"))
+    }
+
     pub fn next_address(&mut self) -> Result<AddressInfo> {
-        let address: AddressInfo = self.wallet.lock().unwrap().reveal_next_address(KeychainKind::External);
-        self.persist()?;
+        let address: AddressInfo = self
+            .wallet
+            .lock()
+            .unwrap()
+            .reveal_next_address(KeychainKind::External);
+        self.persist().unwrap();
         Ok(address)
     }
 
@@ -134,7 +157,7 @@ impl NgWallet {
         self.wallet.lock().unwrap().start_full_scan().build()
     }
 
-    #[cfg(feature = "electrum")]
+    #[cfg(feature = "envoy")]
     pub fn scan(request: FullScanRequest<KeychainKind>) -> Result<FullScanResponse<KeychainKind>> {
         let client: BdkElectrumClient<Client> =
             BdkElectrumClient::new(Client::new(ELECTRUM_SERVER)?);
@@ -145,7 +168,9 @@ impl NgWallet {
 
     pub fn apply(&mut self, update: Update) -> Result<()> {
         self.wallet
-            .lock().unwrap().apply_update(update)
+            .lock()
+            .unwrap()
+            .apply_update(update)
             .map_err(|e| anyhow::anyhow!(e))
     }
 
@@ -166,11 +191,14 @@ impl NgWallet {
 
     pub fn sign(&self, psbt: &Psbt) -> Result<Psbt> {
         let mut psbt = psbt.to_owned();
-        self.wallet.lock().unwrap().sign(&mut psbt, SignOptions::default())?;
+        self.wallet
+            .lock()
+            .unwrap()
+            .sign(&mut psbt, SignOptions::default())?;
         Ok(psbt)
     }
 
-    #[cfg(feature = "electrum")]
+    #[cfg(feature = "envoy")]
     pub fn broadcast(&mut self, psbt: Psbt) -> Result<()> {
         let client: BdkElectrumClient<Client> =
             BdkElectrumClient::new(Client::new(ELECTRUM_SERVER)?);
@@ -187,9 +215,10 @@ mod tests {
     use crate::*;
 
     #[test]
-    #[cfg(feature = "electrum")]
+    #[cfg(feature = "envoy")]
     fn it_works() {
-        let mut wallet = NgWallet::new(Some(DB_PATH.to_string())).unwrap_or(NgWallet::load(DB_PATH).unwrap());
+        let mut wallet =
+            NgWallet::new(Some(DB_PATH.to_string())).unwrap_or(NgWallet::load(DB_PATH).unwrap());
 
         let address: AddressInfo = wallet.next_address().unwrap();
         println!(
@@ -214,8 +243,13 @@ mod tests {
     }
 
     #[test]
+    #[cfg(feature = "envoy")]
     fn check_watch_only() {
-        let mut wallet = NgWallet::new_from_descriptor(Some(DB_PATH.to_string()),EXTERNAL_DESCRIPTOR.to_string()).unwrap_or(NgWallet::load(DB_PATH).unwrap());
+        let mut wallet = NgWallet::new_from_descriptor(
+            Some(DB_PATH.to_string()),
+            EXTERNAL_DESCRIPTOR.to_string(),
+        )
+        .unwrap_or(NgWallet::load(DB_PATH).unwrap());
 
         let address: AddressInfo = wallet.next_address().unwrap();
         println!(
@@ -228,7 +262,7 @@ mod tests {
         wallet.apply(Update::from(update)).unwrap();
 
         let balance = wallet.balance().unwrap().total().to_sat();
-        println!("Wallet balance: {} sat", balance.total().to_sat());
+        println!("Wallet balance: {} sat", balance);
 
         let transactions = wallet.transactions();
 
@@ -238,5 +272,4 @@ mod tests {
 
         //println!("Wallet balance: {:?} sat", wallet.transactions());
     }
-    
 }
