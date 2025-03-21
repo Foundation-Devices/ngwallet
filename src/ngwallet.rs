@@ -104,8 +104,6 @@ impl NgWallet {
     }
 
     pub fn load(db_path: &str, meta_storage: Box<dyn MetaStorage>) -> Result<NgWallet> {
-
-
         #[cfg(feature = "envoy")]
             let mut persister = Connection::open(db_path)?;
 
@@ -207,7 +205,7 @@ impl NgWallet {
                 amount,
                 inputs,
                 outputs,
-                note: self.meta_storage.get_note(&tx_id),
+                note: self.meta_storage.get_note(&tx_id).unwrap(),
             })
         }
 
@@ -275,13 +273,13 @@ impl NgWallet {
         Ok(psbt)
     }
 
-    pub fn sign(&self, psbt: &Psbt) -> Result<Psbt> {
-        let mut psbt = psbt.to_owned();
+    pub fn sign(&self, psbt: &str) -> Result<String> {
+        let mut psbt = Psbt::from_str(psbt)?;
         self.wallet
             .lock()
             .unwrap()
             .sign(&mut psbt, SignOptions::default())?;
-        Ok(psbt)
+        Ok(psbt.serialize_hex())
     }
 
     #[cfg(feature = "envoy")]
@@ -295,14 +293,14 @@ impl NgWallet {
         Ok(())
     }
 
-    pub fn set_note(&mut self, tx_id: String, note: String) -> Option<bool> {
+    pub fn set_note(&mut self, tx_id: &str, note: &str) -> Option<bool> {
         self.wallet
             .lock()
             .unwrap()
             .get_tx(Txid::from_str(&tx_id).unwrap())
             .map(|tx| tx.tx_node.tx.compute_txid())
             .map(|tx| {
-                self.meta_storage.set_note(tx.to_string(), note);
+                self.meta_storage.set_note(&tx.to_string(), note);
                 true
             })
     }

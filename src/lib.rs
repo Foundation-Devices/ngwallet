@@ -5,6 +5,7 @@ pub mod transaction;
 pub mod utxo;
 
 mod keyos;
+mod db;
 
 use anyhow::{Ok, Result};
 use std::str::FromStr;

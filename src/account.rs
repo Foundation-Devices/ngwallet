@@ -1,3 +1,4 @@
+use crate::db::RedbMetaStorage;
 use crate::ngwallet::NgWallet;
 use crate::store::InMemoryMetaStorage;
 
@@ -21,7 +22,7 @@ impl NgAccount {
         db_path: Option<String>,
     ) -> Self {
         let wallet =
-            NgWallet::new_from_descriptor(db_path, descriptor, Box::new(InMemoryMetaStorage::new()))
+            NgWallet::new_from_descriptor(db_path, descriptor, Box::new(RedbMetaStorage::new()))
                 .unwrap();
         Self {
             name,
@@ -33,7 +34,7 @@ impl NgAccount {
     }
 
     pub fn new(name: String, color: String, device_serial: Option<String>, index: u32) -> Self {
-        let wallet = NgWallet::new(None, Box::new(InMemoryMetaStorage::new())).unwrap();
+        let wallet = NgWallet::new(None, Box::new(RedbMetaStorage::new())).unwrap();
         Self {
             name,
             color,
@@ -41,5 +42,14 @@ impl NgAccount {
             index,
             wallet,
         }
+    }
+
+    pub fn get_backup(&self) -> Vec<u8> {
+
+
+        vec![]
+    }
+
+    pub fn restore_backup(&mut self, backup: Vec<u8>) {
     }
 }

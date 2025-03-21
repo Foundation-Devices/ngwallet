@@ -53,7 +53,7 @@ mod tests {
             println!("\nSetting note: {:?}", message);
             account
                 .wallet
-                .set_note(transactions[0].tx_id.to_string(), message.clone())
+                .set_note(&transactions[0].tx_id, &message.clone())
                 .unwrap();
             let transactions = account.wallet.transactions().unwrap();
             let firs_tx = transactions[0].note.clone().unwrap_or("".to_string());
