@@ -1,6 +1,6 @@
 use crate::db::RedbMetaStorage;
 use crate::ngwallet::NgWallet;
-use crate::store::MetaStorage;
+use crate::store::{InMemoryMetaStorage, MetaStorage};
 use crate::transaction::{BitcoinTransaction, Output};
 use bdk_wallet::bitcoin::Network;
 
@@ -34,13 +34,19 @@ impl NgAccount {
             "Testnet" => Network::Testnet,
             _ => Network::Bitcoin,
         };
+
+        #[cfg(not(feature = "envoy"))]
+            let meta = InMemoryMetaStorage::new();
+
+        let meta = RedbMetaStorage::new(meta_db);
+
         let wallet = NgWallet::new_from_descriptor(
             wallet_db,
             internal_descriptor,
             external_descriptor,
             network,
         )
-        .unwrap();
+            .unwrap();
 
         Self {
             name,
@@ -49,7 +55,7 @@ impl NgAccount {
             date_added,
             index,
             wallet,
-            meta_storage: Box::new(RedbMetaStorage::new(meta_db)),
+            meta_storage: Box::new(meta),
         }
     }
 
