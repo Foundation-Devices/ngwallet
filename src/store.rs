@@ -10,6 +10,8 @@ pub trait MetaStorage: Debug + Send + Sync {
 
     fn set_do_not_spend(&mut self, key: &str, value: bool) -> Result<()>;
     fn get_do_not_spend(&self, key: &str) -> Option<bool>;
+    
+    fn persist(&mut self) -> Result<bool>;
 }
 
 pub struct InMemoryMetaStorage {
@@ -49,6 +51,10 @@ impl MetaStorage for InMemoryMetaStorage {
     }
     fn get_do_not_spend(&self, key: &str) -> Option<bool> {
         self.do_not_spend_store.get(key).cloned()
+    }
+    fn persist(&mut self) -> Result<bool> {
+        // In-memory storage does not require persistence
+        Ok(true)
     }
 }
 

@@ -1,8 +1,10 @@
+use anyhow::Error;
+use bdk_wallet::bitcoin::Network;
+
 use crate::db::RedbMetaStorage;
 use crate::ngwallet::NgWallet;
-use crate::store::{InMemoryMetaStorage, MetaStorage};
+use crate::store::MetaStorage;
 use crate::transaction::{BitcoinTransaction, Output};
-use bdk_wallet::bitcoin::Network;
 
 #[derive(Debug)]
 pub struct NgAccount {
@@ -34,11 +36,12 @@ impl NgAccount {
             "Testnet" => Network::Testnet,
             _ => Network::Bitcoin,
         };
+        
+        let meta = RedbMetaStorage::new(meta_db);
 
         #[cfg(not(feature = "envoy"))]
             let meta = InMemoryMetaStorage::new();
 
-        let meta = RedbMetaStorage::new(meta_db);
 
         let wallet = NgWallet::new_from_descriptor(
             wallet_db,
@@ -59,6 +62,11 @@ impl NgAccount {
         }
     }
 
+    pub fn persist(&mut self) -> Result<bool, Error> {
+        self.wallet
+            .persist()
+            .map_err(|e| anyhow::anyhow!(e))
+    }
     pub fn get_backup(&self) -> Vec<u8> {
         vec![]
     }

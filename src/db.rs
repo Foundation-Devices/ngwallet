@@ -1,10 +1,15 @@
 use crate::store::MetaStorage;
 use anyhow::Result;
 use redb::{Database, Error, TableDefinition};
+use bincode::{Decode, Encode, decode_from_slice, encode_to_vec};
+use crate::account::NgAccount;
 
 const NOTE_TABLE: TableDefinition<&str, &str> = TableDefinition::new("notes");
 const TAG_TABLE: TableDefinition<&str, &str> = TableDefinition::new("tags");
 const DO_NOT_SPEND_TABLE: TableDefinition<&str, bool> = TableDefinition::new("do_not_spend");
+
+const TABLE: TableDefinition<&str, Bincode<NgAccount>> =
+    TableDefinition::new("my_data");
 
 #[derive(Debug)]
 pub struct RedbMetaStorage {
@@ -20,7 +25,7 @@ impl RedbMetaStorage {
     }
 
     pub fn persist(&self) -> Result<Vec<u8>> {
-        // read the file and return it here
+        self.db.compact()
         Ok(vec![])
     }
 }
@@ -60,5 +65,9 @@ impl MetaStorage for RedbMetaStorage {
 
     fn get_do_not_spend(&self, key: &str) -> Option<bool> {
         todo!()
+    }
+
+    fn persist(&mut self) -> Result<bool> {
+        self.db.persist()?
     }
 }
