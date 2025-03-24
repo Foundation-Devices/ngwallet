@@ -1,6 +1,6 @@
-use redb::{Database, Error, TableDefinition};
-use crate::store::{MetaStorage};
+use crate::store::MetaStorage;
 use anyhow::Result;
+use redb::{Database, Error, TableDefinition};
 
 const NOTE_TABLE: TableDefinition<&str, &str> = TableDefinition::new("notes");
 const TAG_TABLE: TableDefinition<&str, &str> = TableDefinition::new("tags");
@@ -12,9 +12,10 @@ pub struct RedbMetaStorage {
 }
 
 impl RedbMetaStorage {
-    pub fn new() -> Self {
+    pub fn new(path: Option<String>) -> Self {
+        let file_path = path.unwrap_or("wallet.meta".to_string());
         RedbMetaStorage {
-            db: Database::create("meta").unwrap(),
+            db: Database::create(file_path).unwrap(),
         }
     }
 
@@ -31,15 +32,17 @@ impl MetaStorage for RedbMetaStorage {
             let mut table = write_txn.open_table(NOTE_TABLE)?;
             table.insert(&key, &value)?;
         }
-        write_txn.commit().map_err(|e| anyhow::anyhow!(e.to_string()))
+        write_txn
+            .commit()
+            .map_err(|e| anyhow::anyhow!(e.to_string()))
     }
 
     fn get_note(&self, key: &str) -> Result<Option<String>> {
         let read_txn = self.db.begin_read()?;
         let table = read_txn.open_table(NOTE_TABLE)?;
         match table.get(key) {
-            Ok(v) => {Ok(Some(v.unwrap().value().to_string()))}
-            Err(e) => {Err(anyhow::anyhow!(e.to_string()))}
+            Ok(v) => Ok(Some(v.unwrap().value().to_string())),
+            Err(e) => Err(anyhow::anyhow!(e.to_string())),
         }
     }
 

@@ -1,9 +1,7 @@
 use bdk_wallet::{ChangeSet, WalletPersister};
 
 #[derive(Debug)]
-pub struct KeyOsPersister {
-
-}
+pub struct KeyOsPersister {}
 
 impl WalletPersister for KeyOsPersister {
     type Error = ();

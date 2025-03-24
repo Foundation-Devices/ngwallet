@@ -1,5 +1,5 @@
-use std::fmt::{Debug, Formatter};
 use anyhow::Result;
+use std::fmt::{Debug, Formatter};
 
 pub trait MetaStorage: Debug + Send + Sync {
     fn set_note(&mut self, key: &str, value: &str) -> Result<()>;
@@ -43,7 +43,7 @@ impl MetaStorage for InMemoryMetaStorage {
     fn get_tag(&self, key: &str) -> Option<String> {
         self.tag_store.get(key).cloned()
     }
-    fn set_do_not_spend(&mut self, key: &str, value: bool)  -> Result<()> {
+    fn set_do_not_spend(&mut self, key: &str, value: bool) -> Result<()> {
         self.do_not_spend_store.insert(key.to_string(), value);
         Ok(())
     }
