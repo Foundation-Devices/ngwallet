@@ -22,7 +22,7 @@ impl NgAccount {
         db_path: Option<String>,
     ) -> Self {
         let wallet =
-            NgWallet::new_from_descriptor(db_path, descriptor, Box::new(RedbMetaStorage::new()))
+            NgWallet::new_from_descriptor(db_path, descriptor, Box::new(InMemoryMetaStorage::new()))
                 .unwrap();
         Self {
             name,
@@ -34,7 +34,7 @@ impl NgAccount {
     }
 
     pub fn new(name: String, color: String, device_serial: Option<String>, index: u32) -> Self {
-        let wallet = NgWallet::new(None, Box::new(RedbMetaStorage::new())).unwrap();
+        let wallet = NgWallet::new(None, Box::new(InMemoryMetaStorage::new())).unwrap();
         Self {
             name,
             color,
