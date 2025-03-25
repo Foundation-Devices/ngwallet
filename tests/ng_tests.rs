@@ -5,10 +5,10 @@ const ELECTRUM_SERVER: &str = "ssl://mempool.space:60602";
 // TODO: make this unique to the descriptor
 #[cfg(test)]
 mod tests {
-    use std::env;
     use std::path::PathBuf;
-    use std::str::FromStr;
+    use std::sync::{Arc, Mutex};
     use bdk_wallet::{AddressInfo, Update};
+    use bdk_wallet::rusqlite::Connection;
     use ngwallet::account::NgAccount;
     use ngwallet::ngwallet::NgWallet;
 
@@ -17,6 +17,11 @@ mod tests {
     #[test]
     #[cfg(feature = "envoy")]
     fn new_wallet() {
+        let wallet_file = "wallet.sqlite".to_string();
+        println!("Creating database at: {}", wallet_file);
+
+        let connection = Connection::open(wallet_file).unwrap();
+
         let mut account = NgAccount::new_from_descriptor(
             "Passport Prime".to_string(),
             "red".to_string(),
@@ -27,7 +32,9 @@ mod tests {
             EXTERNAL_DESCRIPTOR.to_string(),
             None,
             0,
-            None,);
+            None,
+            Arc::new(Mutex::new(connection)));
+
         let address: AddressInfo = account.wallet.next_address().unwrap();
         println!(
             "Generated address {} at index {}",
@@ -35,7 +42,7 @@ mod tests {
         );
     
         let request = account.wallet.scan_request();
-        let update = NgWallet::scan(request,ELECTRUM_SERVER).unwrap();
+        let update = NgWallet::<Connection>::scan(request,ELECTRUM_SERVER).unwrap();
         account.wallet.apply(Update::from(update)).unwrap();
     
         let balance = account.wallet.balance().unwrap();

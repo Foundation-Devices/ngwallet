@@ -1,33 +1,36 @@
+use std::fmt::Debug;
 use std::sync::{Arc, Mutex};
 
 use anyhow::Error;
 use bdk_wallet::bitcoin::Network;
+use bdk_wallet::WalletPersister;
 use serde::Serialize;
 
 use crate::config::NgAccountConfig;
 use crate::db::RedbMetaStorage;
 use crate::ngwallet::NgWallet;
-use crate::store::{InMemoryMetaStorage, MetaStorage};
+use crate::store::MetaStorage;
 
 #[derive(Debug)]
-pub struct NgAccount {
+pub struct NgAccount<P: WalletPersister> {
     pub config: NgAccountConfig,
-    pub wallet: NgWallet,
+    pub wallet: NgWallet<P>,
     meta_storage: Arc<Mutex<dyn MetaStorage>>,
 }
 
-impl NgAccount {
+impl<P: WalletPersister> NgAccount<P> {
     pub fn new_from_descriptor(
         name: String,
         color: String,
         device_serial: Option<String>,
         date_added: Option<String>,
-        network: String,
+        network: Network,
         address_type: String,
         internal_descriptor: String,
         external_descriptor: Option<String>,
         index: u32,
         db_path: Option<String>,
+        bdk_persister: Arc<Mutex<P>>
     ) -> Self {
 
         // #[cfg(feature = "envoy")]
@@ -37,11 +40,11 @@ impl NgAccount {
         //     let meta = Arc::new(Mutex::new(InMemoryMetaStorage::new()));
 
         let wallet = NgWallet::new_from_descriptor(
-            db_path,
             internal_descriptor.clone(),
             external_descriptor.clone(),
-            network.clone(),
+            network,
             meta.clone(),
+            bdk_persister.clone(),
         )
             .unwrap();
 
@@ -68,7 +71,8 @@ impl NgAccount {
 
     pub fn open_wallet(
         db_path: String,
-    ) -> Self {
+        bdk_persister: Arc<Mutex<P>>
+    ) -> Self where <P as WalletPersister>::Error: Debug {
         let meta_storage = Arc::new(Mutex::new(RedbMetaStorage::new(Some(db_path.clone()))));
 
         // #[cfg(not(feature = "envoy"))]
@@ -77,8 +81,8 @@ impl NgAccount {
         let config = meta_storage.lock().unwrap().get_config().unwrap().unwrap();
 
         let wallet = NgWallet::load(
-            db_path.as_str(),
             meta_storage.clone(),
+            bdk_persister.clone(),
         )
             .unwrap();
         Self {

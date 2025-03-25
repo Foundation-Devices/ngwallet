@@ -1,8 +1,9 @@
+use std::fmt::Debug;
 use std::str::FromStr;
 use std::sync::{Arc, Mutex};
 
 use anyhow::{Ok, Result};
-use bdk_wallet::KeychainKind;
+use bdk_wallet::{bitcoin, KeychainKind, WalletPersister};
 use bdk_wallet::bitcoin::{Address, Amount, Network, OutPoint, Psbt, ScriptBuf, Txid};
 use bdk_wallet::chain::ChainPosition::{Confirmed, Unconfirmed};
 use bdk_wallet::chain::spk_client::FullScanRequest;
@@ -20,53 +21,20 @@ use crate::transaction::{BitcoinTransaction, Input, Output};
 use crate::{BATCH_SIZE, STOP_GAP};
 
 #[derive(Debug)]
-pub struct NgWallet {
-    #[cfg(feature = "envoy")]
-    pub wallet: Arc<Mutex<PersistedWallet<Connection>>>,
-    #[cfg(feature = "envoy")]
-    persister: Arc<Mutex<Connection>>,
-
-    #[cfg(not(feature = "envoy"))]
-    pub wallet: Arc<Mutex<PersistedWallet<KeyOsPersister>>>,
-    #[cfg(not(feature = "envoy"))]
-    persister: Arc<Mutex<KeyOsPersister>>,
-
-
+pub struct NgWallet<P: WalletPersister> {
+    pub wallet: Arc<Mutex<PersistedWallet<P>>>,
     meta_storage: Arc<Mutex<dyn MetaStorage>>,
+    bdk_persister: Arc<Mutex<P>>,
 }
 
-impl NgWallet {
-     
+impl<P: WalletPersister> NgWallet<P> {
     pub fn new_from_descriptor(
-        db_path: Option<String>,
         internal_descriptor: String,
         external_descriptor: Option<String>,
-        network: String,
+        network: Network,
         meta_storage: Arc<Mutex<dyn MetaStorage>>,
-    ) -> Result<NgWallet> {
-
-        let network = match network.as_str() {
-            "Signet" => Network::Signet,
-            "Testnet" => Network::Testnet,
-            _ => Network::Bitcoin,
-        };
-        
-        #[cfg(feature = "envoy")]
-            let mut persister = match db_path.clone() {
-            None => {
-                println!("Creating database in memory");
-                Connection::open("wallet.sqlite")
-            }
-            Some(path) => {
-                let wallet_file = format!("{:?}/wallet.sqlite", path);
-                println!("Creating database at: {}", wallet_file);
-                Connection::open(wallet_file)
-            }
-        }?;
-
-        #[cfg(not(feature = "envoy"))]
-            let mut persister = KeyOsPersister {};
-
+        mut bdk_persister: Arc<Mutex<P>>,
+    ) -> Result<NgWallet<P>> {
         let wallet = match external_descriptor {
             None => Wallet::create_single(internal_descriptor.to_string()),
             Some(external_descriptor) => {
@@ -74,13 +42,13 @@ impl NgWallet {
             }
         }
             .network(network)
-            .create_wallet(&mut persister)
-            .map_err(|e| anyhow::anyhow!("Couldn't create wallet {:?}", e))
+            .create_wallet(&mut *bdk_persister.lock().unwrap())
+            .map_err(|e| anyhow::anyhow!("Couldn't create wallet"))
             .unwrap();
 
         Ok(Self {
             wallet: Arc::new(Mutex::new(wallet)),
-            persister: Arc::new(Mutex::new(persister)),
+            bdk_persister,
             meta_storage,
         })
     }
@@ -89,28 +57,26 @@ impl NgWallet {
         self.wallet
             .lock()
             .unwrap()
-            .persist(&mut self.persister.lock().unwrap())
+            .persist(&mut self.bdk_persister.lock().unwrap())
             .map_err(|_| anyhow::anyhow!("Could not persist wallet"))
     }
 
-    pub fn load(db_path: &str, meta_storage: Arc<Mutex<dyn MetaStorage>>) -> Result<NgWallet> {
-        #[cfg(feature = "envoy")]
-            let mut persister = Connection::open(format!("{}/wallet.sqlite",db_path))?;
+    pub fn load(meta_storage: Arc<Mutex<dyn MetaStorage>>, mut bdk_persister: Arc<Mutex<P>>,) -> Result<NgWallet<P>> where <P as WalletPersister>::Error: Debug {
+        // #[cfg(feature = "envoy")]
+        //     let mut persister = Connection::open(format!("{}/wallet.sqlite",db_path))?;
 
-        #[cfg(not(feature = "envoy"))]
-            let mut persister = KeyOsPersister {};
 
-        let wallet_opt = Wallet::load().load_wallet(&mut persister).unwrap();
+        let wallet_opt = Wallet::load().load_wallet(&mut *bdk_persister.lock().unwrap()).unwrap();
 
         match wallet_opt {
             Some(wallet) => {
                 Ok(Self {
                     wallet: Arc::new(Mutex::new(wallet)),
-                    persister: Arc::new(Mutex::new(persister)),
+                    bdk_persister,
                     meta_storage,
                 })
             }
-            None => Err(anyhow::anyhow!("Failed to load wallet database .")),
+            None => Err(anyhow::anyhow!("Failed to load wallet database.")),
         }
     }
 
