@@ -2,8 +2,9 @@ use std::fmt::Debug;
 use std::sync::{Arc, Mutex};
 
 use anyhow::Error;
-use bdk_wallet::bitcoin::{Network};
 use bdk_wallet::WalletPersister;
+use bdk_wallet::bitcoin::Network;
+use redb::StorageBackend;
 use serde::Serialize;
 
 use crate::config::{AddressType, NgAccountConfig};
@@ -31,13 +32,9 @@ impl<P: WalletPersister> NgAccount<P> {
         index: u32,
         db_path: Option<String>,
         bdk_persister: Arc<Mutex<P>>,
+        meta_storage_backend: Option<impl StorageBackend>,
     ) -> Self {
-
-        // #[cfg(feature = "envoy")]
-        let meta = Arc::new(Mutex::new(RedbMetaStorage::new(db_path.clone())));
-        //
-        // #[cfg(not(feature = "envoy"))]
-        //     let meta = Arc::new(Mutex::new(InMemoryMetaStorage::new()));
+        let meta = Arc::new(Mutex::new(RedbMetaStorage::new(db_path.clone(), meta_storage_backend)));
 
         let wallet = NgWallet::new_from_descriptor(
             internal_descriptor.clone(),
@@ -46,7 +43,7 @@ impl<P: WalletPersister> NgAccount<P> {
             meta.clone(),
             bdk_persister.clone(),
         )
-            .unwrap();
+        .unwrap();
 
         let account_config = NgAccountConfig::new(
             name,
@@ -59,9 +56,10 @@ impl<P: WalletPersister> NgAccount<P> {
             address_type,
             network,
         );
-        meta.lock().unwrap().set_config(
-            account_config.serialize().as_str(),
-        ).unwrap();
+        meta.lock()
+            .unwrap()
+            .set_config(account_config.serialize().as_str())
+            .unwrap();
         Self {
             config: account_config,
             wallet,
@@ -72,19 +70,19 @@ impl<P: WalletPersister> NgAccount<P> {
     pub fn open_wallet(
         db_path: String,
         bdk_persister: Arc<Mutex<P>>,
-    ) -> Self where <P as WalletPersister>::Error: Debug {
-        let meta_storage = Arc::new(Mutex::new(RedbMetaStorage::new(Some(db_path.clone()))));
-
-        // #[cfg(not(feature = "envoy"))]
-        //     let meta = InMemoryMetaStorage::new();
+        meta_storage_backend: Option<impl StorageBackend>,
+    ) -> Self
+    where
+        <P as WalletPersister>::Error: Debug,
+    {
+        let meta_storage = Arc::new(Mutex::new(RedbMetaStorage::new(
+            Some(db_path.clone()),
+            meta_storage_backend,
+        )));
 
         let config = meta_storage.lock().unwrap().get_config().unwrap().unwrap();
 
-        let wallet = NgWallet::load(
-            meta_storage.clone(),
-            bdk_persister.clone(),
-        )
-            .unwrap();
+        let wallet = NgWallet::load(meta_storage.clone(), bdk_persister.clone()).unwrap();
         Self {
             config,
             wallet,
@@ -93,9 +91,7 @@ impl<P: WalletPersister> NgAccount<P> {
     }
 
     pub fn persist(&mut self) -> Result<bool, Error> {
-        self.wallet
-            .persist()
-            .map_err(|e| anyhow::anyhow!(e))
+        self.wallet.persist().map_err(|e| anyhow::anyhow!(e))
     }
     pub fn get_backup(&self) -> Vec<u8> {
         vec![]

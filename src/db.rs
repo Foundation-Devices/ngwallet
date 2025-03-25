@@ -1,7 +1,7 @@
 use std::sync::Arc;
 use crate::store::MetaStorage;
 use anyhow::Result;
-use redb::{AccessGuard, Database, Error, TableDefinition};
+use redb::{AccessGuard, Builder, Database, Error, StorageBackend, TableDefinition};
 use crate::config::NgAccountConfig;
 
 const NOTE_TABLE: TableDefinition<&str, &str> = TableDefinition::new("notes");
@@ -17,10 +17,21 @@ pub struct RedbMetaStorage {
 }
 
 impl RedbMetaStorage {
-    pub fn new(path: Option<String>) -> Self {
-        let file_path = path.clone().map(|p| format!("{:?}/wallet.meta", p)).unwrap_or("wallet.meta".to_string());
+    pub fn new(path: Option<String>, backend: Option<impl StorageBackend>) -> Self {
+        let db = {
+            match backend {
+                None => {
+                    let file_path = path.clone().map(|p| format!("{:?}/wallet.meta", p)).unwrap_or("wallet.meta".to_string());
+                    Builder::new().create(file_path).unwrap()
+                }
+                Some(b) => {
+                    Builder::new().create_with_backend(b).unwrap()
+                }
+            }
+        };
+
         RedbMetaStorage {
-            db: Arc::new(Database::create(file_path).unwrap()),
+            db: Arc::new(db),
         }
     }
 

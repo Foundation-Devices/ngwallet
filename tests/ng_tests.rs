@@ -10,6 +10,7 @@ mod tests {
     use bdk_wallet::{AddressInfo, Update};
     use bdk_wallet::bitcoin::Network;
     use bdk_wallet::rusqlite::Connection;
+    use redb::backends::FileBackend;
     use ngwallet::account::NgAccount;
     use ngwallet::config::AddressType;
     use ngwallet::ngwallet::NgWallet;
@@ -35,7 +36,8 @@ mod tests {
             None,
             0,
             None,
-            Arc::new(Mutex::new(connection)));
+            Arc::new(Mutex::new(connection)),
+            None::<FileBackend>);
 
         let address: AddressInfo = account.wallet.next_address().unwrap();
         println!(
