@@ -2,11 +2,11 @@ use std::fmt::Debug;
 use std::sync::{Arc, Mutex};
 
 use anyhow::Error;
-use bdk_wallet::bitcoin::Network;
+use bdk_wallet::bitcoin::{Network};
 use bdk_wallet::WalletPersister;
 use serde::Serialize;
 
-use crate::config::NgAccountConfig;
+use crate::config::{AddressType, NgAccountConfig};
 use crate::db::RedbMetaStorage;
 use crate::ngwallet::NgWallet;
 use crate::store::MetaStorage;
@@ -25,12 +25,12 @@ impl<P: WalletPersister> NgAccount<P> {
         device_serial: Option<String>,
         date_added: Option<String>,
         network: Network,
-        address_type: String,
+        address_type: AddressType,
         internal_descriptor: String,
         external_descriptor: Option<String>,
         index: u32,
         db_path: Option<String>,
-        bdk_persister: Arc<Mutex<P>>
+        bdk_persister: Arc<Mutex<P>>,
     ) -> Self {
 
         // #[cfg(feature = "envoy")]
@@ -71,7 +71,7 @@ impl<P: WalletPersister> NgAccount<P> {
 
     pub fn open_wallet(
         db_path: String,
-        bdk_persister: Arc<Mutex<P>>
+        bdk_persister: Arc<Mutex<P>>,
     ) -> Self where <P as WalletPersister>::Error: Debug {
         let meta_storage = Arc::new(Mutex::new(RedbMetaStorage::new(Some(db_path.clone()))));
 
@@ -91,7 +91,7 @@ impl<P: WalletPersister> NgAccount<P> {
             meta_storage,
         }
     }
- 
+
     pub fn persist(&mut self) -> Result<bool, Error> {
         self.wallet
             .persist()

@@ -8,12 +8,14 @@ mod tests {
     use std::path::PathBuf;
     use std::sync::{Arc, Mutex};
     use bdk_wallet::{AddressInfo, Update};
+    use bdk_wallet::bitcoin::Network;
     use bdk_wallet::rusqlite::Connection;
     use ngwallet::account::NgAccount;
+    use ngwallet::config::AddressType;
     use ngwallet::ngwallet::NgWallet;
 
     use crate::*;
-    
+
     #[test]
     #[cfg(feature = "envoy")]
     fn new_wallet() {
@@ -27,8 +29,8 @@ mod tests {
             "red".to_string(),
             None,
             None,
-            "Signet".to_string(),
-            "Taproot".to_string(),
+            Network::Signet,
+            AddressType::P2tr,
             EXTERNAL_DESCRIPTOR.to_string(),
             None,
             0,
@@ -40,26 +42,26 @@ mod tests {
             "Generated address {} at index {}",
             address.address, address.index
         );
-    
+
         let request = account.wallet.scan_request();
-        let update = NgWallet::<Connection>::scan(request,ELECTRUM_SERVER).unwrap();
+        let update = NgWallet::<Connection>::scan(request, ELECTRUM_SERVER).unwrap();
         account.wallet.apply(Update::from(update)).unwrap();
-    
+
         let balance = account.wallet.balance().unwrap();
         println!("Wallet balance: {} sat\n", balance.total().to_sat());
-    
+
         let transactions = account.wallet.transactions();
         for tx in transactions {
             println!("Transaction: {:?}", tx);
         }
-    
+
         let utxos = account.wallet.unspend_outputs();
         utxos.unwrap().iter().for_each(|utxo| {
             println!("Utxo: {:?}", utxo);
         });
-    
+
         let transactions = account.wallet.transactions().unwrap();
-    
+
         if !transactions.is_empty() {
             let message = "Test Message".to_string();
             println!("\nSetting note: {:?}", message);
@@ -70,7 +72,7 @@ mod tests {
             println!("Transaction note: {:?}", firs_tx);
             assert_eq!(firs_tx, message);
         }
-    
+
         let utxos = account.wallet.unspend_outputs().unwrap_or(vec![]);
         if !utxos.is_empty() {
             let tag = "Test Tag".to_string();
@@ -81,18 +83,18 @@ mod tests {
             let utxo_tag = utxos[0].tag.clone().unwrap_or("".to_string());
             println!("Utxo tag: {:?}", utxo_tag);
             assert_eq!(utxo_tag, tag);
-    
+
             println!("\nSetting do not spend : {:?}", false);
-    
+
             account.wallet.set_do_not_spend(first_utxo, false).unwrap();
-    
+
             let utxos = account.wallet.unspend_outputs().unwrap_or(vec![]);
             let utxo_tag = &utxos[0];
             println!("Utxo After Do not Spend: {:?}", utxo_tag);
-    
+
             println!("\nSetting do not spend : {:?}", true);
             account.wallet.set_do_not_spend(first_utxo, false).unwrap();
-    
+
             let utxos = account.wallet.unspend_outputs().unwrap_or(vec![]);
             let utxo_tag = &utxos[0];
             println!("Utxo After Do not Spend: {:?}", utxo_tag);
@@ -118,7 +120,6 @@ mod tests {
         // }
         // let balance = account.wallet.balance().unwrap();
         // println!("Wallet balance: {} sat\n", balance.total().to_sat());
-
     }
 
 
