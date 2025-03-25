@@ -1,7 +1,6 @@
 use std::str::FromStr;
 use std::sync::{Arc, Mutex};
 
-use crate::keyos::KeyOsPersister;
 use anyhow::{Ok, Result};
 use bdk_wallet::KeychainKind;
 use bdk_wallet::bitcoin::{Address, Amount, Network, OutPoint, Psbt, ScriptBuf, Txid};
@@ -18,7 +17,7 @@ use {
 
 use crate::store::MetaStorage;
 use crate::transaction::{BitcoinTransaction, Input, Output};
-use crate::{BATCH_SIZE, ELECTRUM_SERVER, EXTERNAL_DESCRIPTOR, INTERNAL_DESCRIPTOR, STOP_GAP};
+use crate::{BATCH_SIZE, STOP_GAP};
 
 #[derive(Debug)]
 pub struct NgWallet {
@@ -31,50 +30,39 @@ pub struct NgWallet {
     pub wallet: Arc<Mutex<PersistedWallet<KeyOsPersister>>>,
     #[cfg(not(feature = "envoy"))]
     persister: Arc<Mutex<KeyOsPersister>>,
-    pub descriptors: Vec<String>,
+    meta_storage: Arc<Mutex<dyn MetaStorage>>,
 }
 
 impl NgWallet {
-    pub fn new(db_path: Option<String>, meta_storage: Box<dyn MetaStorage>) -> Result<NgWallet> {
-        #[cfg(feature = "envoy")]
-        let mut persister = match db_path.clone() {
-            None => Connection::open_in_memory(),
-            Some(path) => Connection::open(path),
-        }?;
-
-        #[cfg(not(feature = "envoy"))]
-        let mut persister = KeyOsPersister {};
-
-        let wallet = Wallet::create(EXTERNAL_DESCRIPTOR, INTERNAL_DESCRIPTOR)
-            .network(Network::Signet)
-            .create_wallet(&mut persister)
-            .map_err(|_| anyhow::anyhow!("Couldn't create wallet"))?;
-
-        Ok(Self {
-            wallet: Arc::new(Mutex::new(wallet)),
-            persister: Arc::new(Mutex::new(persister)),
-            descriptors: vec![
-                EXTERNAL_DESCRIPTOR.to_string(),
-                INTERNAL_DESCRIPTOR.to_string(),
-            ],
-        })
-    }
-
+     
     pub fn new_from_descriptor(
         db_path: Option<String>,
         internal_descriptor: String,
         external_descriptor: Option<String>,
-        network: Network,
+        network: String,
+        meta_storage: Arc<Mutex<dyn MetaStorage>>,
     ) -> Result<NgWallet> {
 
+        let network = match network.as_str() {
+            "Signet" => Network::Signet,
+            "Testnet" => Network::Testnet,
+            _ => Network::Bitcoin,
+        };
+        
         #[cfg(feature = "envoy")]
-        let mut persister = match db_path.clone() {
-            None => Connection::open_in_memory(),
-            Some(path) => Connection::open(path),
+            let mut persister = match db_path.clone() {
+            None => {
+                println!("Creating database in memory");
+                Connection::open("wallet.sqlite")
+            }
+            Some(path) => {
+                let wallet_file = format!("{:?}/wallet.sqlite", path);
+                println!("Creating database at: {}", wallet_file);
+                Connection::open(wallet_file)
+            }
         }?;
-
         #[cfg(not(feature = "envoy"))]
-        let mut persister = KeyOsPersister {};
+            let mut persister = KeyOsPersister {};
 
         let wallet = match external_descriptor {
             None => Wallet::create_single(internal_descriptor.to_string()),
@@ -82,18 +70,15 @@ impl NgWallet {
                 Wallet::create(internal_descriptor.to_string(), external_descriptor)
             }
         }
-        .network(network)
-        .create_wallet(&mut persister)
-        .map_err(|e| anyhow::anyhow!("Couldn't create wallet {}", e.to_string()))
-        .unwrap();
+            .network(network)
+            .create_wallet(&mut persister)
+            .map_err(|e| anyhow::anyhow!("Couldn't create wallet {}", e.to_string()))
+            .unwrap();
 
         Ok(Self {
             wallet: Arc::new(Mutex::new(wallet)),
             persister: Arc::new(Mutex::new(persister)),
-            descriptors: vec![
-                EXTERNAL_DESCRIPTOR.to_string(),
-                INTERNAL_DESCRIPTOR.to_string(),
-            ],
+            meta_storage,
         })
     }
 
@@ -105,25 +90,21 @@ impl NgWallet {
             .map_err(|_| anyhow::anyhow!("Could not persist wallet"))
     }
 
-    pub fn load(db_path: &str, meta_storage: Box<dyn MetaStorage>) -> Result<NgWallet> {
+    pub fn load(db_path: &str, meta_storage: Arc<Mutex<dyn MetaStorage>>) -> Result<NgWallet> {
         #[cfg(feature = "envoy")]
-        let mut persister = Connection::open(db_path)?;
+            let mut persister = Connection::open(format!("{}/wallet.sqlite",db_path))?;
 
         #[cfg(not(feature = "envoy"))]
-        let mut persister = KeyOsPersister {};
+            let mut persister = KeyOsPersister {};
 
         let wallet_opt = Wallet::load().load_wallet(&mut persister).unwrap();
 
         match wallet_opt {
             Some(wallet) => {
-                println!("Loaded existing wallet database.");
                 Ok(Self {
                     wallet: Arc::new(Mutex::new(wallet)),
-                    descriptors: vec![
-                        EXTERNAL_DESCRIPTOR.to_string(),
-                        INTERNAL_DESCRIPTOR.to_string(),
-                    ],
                     persister: Arc::new(Mutex::new(persister)),
+                    meta_storage,
                 })
             }
             None => Err(anyhow::anyhow!("Failed to load wallet database .")),
@@ -140,10 +121,11 @@ impl NgWallet {
         Ok(address)
     }
 
-    pub fn transactions(&self, meta_storage: &dyn MetaStorage) -> Result<Vec<BitcoinTransaction>> {
+    pub fn transactions(&self) -> Result<Vec<BitcoinTransaction>> {
         let wallet = self.wallet.lock().unwrap();
         let mut transactions: Vec<BitcoinTransaction> = vec![];
         let tip_height = wallet.latest_checkpoint().height();
+        let storage = self.meta_storage.lock().unwrap();
 
         for canonical_tx in wallet.transactions() {
             let tx = canonical_tx.tx_node.tx;
@@ -185,8 +167,8 @@ impl NgWallet {
                         tx_id: tx_id.clone(),
                         vout: index as u32,
                         amount: amount.to_sat(),
-                        tag: meta_storage.get_tag(&tx_id),
-                        do_not_spend: meta_storage.get_do_not_spend(&tx_id),
+                        tag: storage.get_tag(&tx_id).unwrap(),
+                        do_not_spend: storage.get_do_not_spend(&tx_id).unwrap(),
                     }
                 })
                 .collect::<Vec<Output>>();
@@ -205,7 +187,7 @@ impl NgWallet {
                 amount,
                 inputs,
                 outputs,
-                note: meta_storage.get_note(&tx_id).unwrap(),
+                note: storage.get_note(&tx_id).unwrap(),
             })
         }
 
@@ -217,17 +199,17 @@ impl NgWallet {
     }
 
     #[cfg(feature = "envoy")]
-    pub fn scan(request: FullScanRequest<KeychainKind>) -> Result<FullScanResponse<KeychainKind>> {
+    pub fn scan(request: FullScanRequest<KeychainKind>,electrum_server:&str) -> Result<FullScanResponse<KeychainKind>> {
         let client: BdkElectrumClient<Client> =
-            BdkElectrumClient::new(Client::new(ELECTRUM_SERVER)?);
+            BdkElectrumClient::new(Client::new(electrum_server)?);
         let update = client.full_scan(request, STOP_GAP, BATCH_SIZE, true)?;
-
         Ok(update)
     }
 
-    pub fn unspend_outputs(&self, meta_storage: &dyn MetaStorage) -> Result<Vec<Output>> {
+    pub fn unspend_outputs(&self) -> Result<Vec<Output>> {
         let wallet = self.wallet.lock().unwrap();
         let mut unspents: Vec<Output> = vec![];
+        let mut meta_storage = self.meta_storage.lock().unwrap();
         for local_output in wallet.list_unspent() {
             let out_put_id = format!(
                 "{}:{}",
@@ -238,8 +220,8 @@ impl NgWallet {
                 tx_id: local_output.outpoint.txid.to_string(),
                 vout: local_output.outpoint.vout,
                 amount: local_output.txout.value.to_sat(),
-                tag: meta_storage.get_tag(out_put_id.clone().as_str()),
-                do_not_spend: meta_storage.get_do_not_spend(out_put_id.as_str()),
+                tag: meta_storage.get_tag(out_put_id.clone().as_str()).unwrap(),
+                do_not_spend: meta_storage.get_do_not_spend(out_put_id.as_str()).unwrap(),
             });
         }
         Ok(unspents)
@@ -283,9 +265,9 @@ impl NgWallet {
     }
 
     #[cfg(feature = "envoy")]
-    pub fn broadcast(&mut self, psbt: Psbt) -> Result<()> {
+    pub fn broadcast(&mut self, psbt: Psbt,electrum_server: &str) -> Result<()> {
         let client: BdkElectrumClient<Client> =
-            BdkElectrumClient::new(Client::new(ELECTRUM_SERVER)?);
+            BdkElectrumClient::new(Client::new(electrum_server)?);
 
         let tx = psbt.extract_tx()?;
         client.transaction_broadcast(&tx)?;
@@ -297,36 +279,30 @@ impl NgWallet {
         &mut self,
         tx_id: &str,
         note: &str,
-        meta_storage: &mut dyn MetaStorage,
     ) -> Result<bool> {
-        meta_storage.set_note(tx_id, note);
-        return Ok(true);
-        //
-        //
-        // self.wallet
-        //     .lock()
-        //     .unwrap()
-        //     .get_tx(Txid::from_str(&tx_id).unwrap())
-        //     .map(|tx| tx.tx_node.tx.compute_txid())
-        //     .map(|tx| {
-        //         self.meta_storage.set_note(&tx.to_string(), note);
-        //         true
-        //     })
+        self.wallet
+            .lock()
+            .unwrap()
+            .get_tx(Txid::from_str(&tx_id).unwrap())
+            .map(|tx| tx.tx_node.tx.compute_txid())
+            .map(|tx| {
+                self.meta_storage
+                    .lock().unwrap().set_note(&tx.to_string(), note).map_err(|e| {
+                    anyhow::anyhow!("Could not set note {:?}", e.to_string())
+                })
+            });
+        Ok(true)
     }
 
     pub fn set_tag(
         &mut self,
         output: &Output,
-        tag: String,
-        meta_storage: &mut dyn MetaStorage,
+        tag: &str,
     ) -> Result<bool> {
-        let out_point = OutPoint::new(Txid::from_str(&output.tx_id).unwrap(), output.vout);
-        self.wallet.lock().unwrap().get_utxo(out_point).map(|_| {
-            meta_storage
-                .set_tag(output.get_id().as_str(), tag)
-                .map_err(|_| anyhow::anyhow!("Could not set tag "))
-                .unwrap();
-        });
+        self.meta_storage.lock().unwrap()
+            .set_tag(output.get_id().as_str(), tag)
+            .map_err(|_| anyhow::anyhow!("Could not set tag "))
+            .unwrap();
         Ok(true)
     }
 
@@ -334,15 +310,15 @@ impl NgWallet {
         &mut self,
         output: &Output,
         state: bool,
-        meta_storage: &mut dyn MetaStorage,
     ) -> Result<bool> {
         let out_point = OutPoint::new(Txid::from_str(&output.tx_id).unwrap(), output.vout);
         self.wallet.lock().unwrap().get_utxo(out_point).map(|_| {
-            meta_storage
+            self.meta_storage
+                .lock().unwrap()
                 .set_do_not_spend(output.get_id().as_str(), state)
                 .map_err(|_| anyhow::anyhow!("Could not set do not spend"))
                 .unwrap();
-        });
-        Ok(true)
+            Ok(true)
+        }).unwrap_or(Ok(false))
     }
 }

@@ -846,6 +846,8 @@ dependencies = [
  "bdk_wallet",
  "flutter_rust_bridge",
  "redb",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]

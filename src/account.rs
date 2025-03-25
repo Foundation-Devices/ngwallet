@@ -1,20 +1,19 @@
+use std::sync::{Arc, Mutex};
+
 use anyhow::Error;
 use bdk_wallet::bitcoin::Network;
+use serde::Serialize;
 
+use crate::config::NgAccountConfig;
 use crate::db::RedbMetaStorage;
 use crate::ngwallet::NgWallet;
 use crate::store::MetaStorage;
-use crate::transaction::{BitcoinTransaction, Output};
 
 #[derive(Debug)]
 pub struct NgAccount {
-    pub name: String,
-    pub color: String,
-    pub device_serial: Option<String>,
-    pub date_added: Option<String>,
-    pub index: u32,
+    pub config: NgAccountConfig,
     pub wallet: NgWallet,
-    meta_storage: Box<dyn MetaStorage>,
+    meta_storage: Arc<Mutex<dyn MetaStorage>>,
 }
 
 impl NgAccount {
@@ -24,44 +23,71 @@ impl NgAccount {
         device_serial: Option<String>,
         date_added: Option<String>,
         network: String,
+        address_type: String,
         internal_descriptor: String,
         external_descriptor: Option<String>,
         index: u32,
         db_path: Option<String>,
     ) -> Self {
-        let wallet_db = db_path.clone().map(|p| format!("{:?}/wallet.sqlite", p));
-        let meta_db = db_path.map(|p| format!("{:?}/wallet.meta", p));
-        let network = match network.as_str() {
-            "Signet" => Network::Signet,
-            "Testnet" => Network::Testnet,
-            _ => Network::Bitcoin,
-        };
-        
-        let meta = RedbMetaStorage::new(meta_db);
+
+
+        let meta = Arc::new(Mutex::new(RedbMetaStorage::new(db_path.clone())));
 
         #[cfg(not(feature = "envoy"))]
             let meta = InMemoryMetaStorage::new();
 
-
         let wallet = NgWallet::new_from_descriptor(
-            wallet_db,
-            internal_descriptor,
-            external_descriptor,
-            network,
+            db_path,
+            internal_descriptor.clone(),
+            external_descriptor.clone(),
+            network.clone(),
+            meta.clone(),
         )
             .unwrap();
 
-        Self {
+        let account_config = NgAccountConfig::new(
             name,
             color,
             device_serial,
             date_added,
             index,
+            internal_descriptor,
+            external_descriptor,
+            address_type,
+            network,
+        );
+        meta.lock().unwrap().set_config(
+            account_config.serialize().as_str(),
+        ).unwrap();
+        Self {
+            config: account_config,
             wallet,
-            meta_storage: Box::new(meta),
+            meta_storage: meta,
         }
     }
 
+    pub fn open_wallet(
+        db_path: String,
+    ) -> Self {
+        let meta_storage = Arc::new(Mutex::new(RedbMetaStorage::new(Some(db_path.clone()))));
+
+        #[cfg(not(feature = "envoy"))]
+            let meta = InMemoryMetaStorage::new();
+
+        let config = meta_storage.lock().unwrap().get_config().unwrap().unwrap();
+
+        let wallet = NgWallet::load(
+            db_path.as_str(),
+            meta_storage.clone(),
+        )
+            .unwrap();
+        Self {
+            config,
+            wallet,
+            meta_storage,
+        }
+    }
+ 
     pub fn persist(&mut self) -> Result<bool, Error> {
         self.wallet
             .persist()
@@ -69,25 +95,5 @@ impl NgAccount {
     }
     pub fn get_backup(&self) -> Vec<u8> {
         vec![]
-    }
-
-    pub fn transactions(&self) -> anyhow::Result<Vec<BitcoinTransaction>> {
-        self.wallet.transactions(self.meta_storage.as_ref())
-    }
-
-    pub fn unspend_outputs(&self) -> anyhow::Result<Vec<Output>> {
-        self.wallet.unspend_outputs(self.meta_storage.as_ref())
-    }
-
-    pub fn set_note(&mut self, tx_id: &str, note: &str) -> anyhow::Result<bool> {
-        self.wallet
-            .set_note(tx_id, note, self.meta_storage.as_mut())
-    }
-    pub fn set_tag(&mut self, output: &Output, tag: String) -> anyhow::Result<bool> {
-        self.wallet.set_tag(output, tag, self.meta_storage.as_mut())
-    }
-    pub fn set_do_not_spend(&mut self, output: &Output, state: bool) -> anyhow::Result<bool> {
-        self.wallet
-            .set_do_not_spend(output, state, self.meta_storage.as_mut())
     }
 }

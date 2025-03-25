@@ -1,20 +1,25 @@
 use anyhow::Result;
 use std::fmt::{Debug, Formatter};
+use crate::config::NgAccountConfig;
 
 pub trait MetaStorage: Debug + Send + Sync {
     fn set_note(&mut self, key: &str, value: &str) -> Result<()>;
     fn get_note(&self, key: &str) -> Result<Option<String>>;
 
-    fn set_tag(&mut self, key: &str, value: String) -> Result<()>;
-    fn get_tag(&self, key: &str) -> Option<String>;
+    fn set_tag(&mut self, key: &str, value: &str) -> Result<()>;
+    fn get_tag(&self, key: &str) -> Result<Option<String>>;
 
     fn set_do_not_spend(&mut self, key: &str, value: bool) -> Result<()>;
-    fn get_do_not_spend(&self, key: &str) -> Option<bool>;
-    
+    fn get_do_not_spend(&self, key: &str) -> Result<Option<bool>>;
+   
+    fn set_config(&mut self, deserialized_config:&str) -> Result<()>;
+    fn get_config(&self) -> Result<Option<NgAccountConfig>>;
+
     fn persist(&mut self) -> Result<bool>;
 }
 
 pub struct InMemoryMetaStorage {
+    config_store: std::collections::HashMap<String, String>,
     notes_store: std::collections::HashMap<String, String>,
     tag_store: std::collections::HashMap<String, String>,
     do_not_spend_store: std::collections::HashMap<String, bool>,
@@ -23,6 +28,7 @@ pub struct InMemoryMetaStorage {
 impl InMemoryMetaStorage {
     pub fn new() -> Self {
         InMemoryMetaStorage {
+            config_store: std::collections::HashMap::new(),
             notes_store: std::collections::HashMap::new(),
             tag_store: std::collections::HashMap::new(),
             do_not_spend_store: std::collections::HashMap::new(),
@@ -38,20 +44,41 @@ impl MetaStorage for InMemoryMetaStorage {
     fn get_note(&self, key: &str) -> Result<Option<String>> {
         Ok(self.notes_store.get(key).cloned())
     }
-    fn set_tag(&mut self, key: &str, value: String) -> Result<()> {
-        self.tag_store.insert(key.to_string(), value);
+    fn set_tag(&mut self, key: &str, value: &str) -> Result<()> {
+        self.tag_store.insert(key.to_string(), value.to_string());
         Ok(())
     }
-    fn get_tag(&self, key: &str) -> Option<String> {
-        self.tag_store.get(key).cloned()
+    fn get_tag(&self, key: &str) -> Result<Option<String>> {
+        Ok(self.tag_store.get(key).cloned())
     }
     fn set_do_not_spend(&mut self, key: &str, value: bool) -> Result<()> {
         self.do_not_spend_store.insert(key.to_string(), value);
         Ok(())
     }
-    fn get_do_not_spend(&self, key: &str) -> Option<bool> {
-        self.do_not_spend_store.get(key).cloned()
+    fn get_do_not_spend(&self, key: &str) -> Result<Option<bool>> {
+        return match self.do_not_spend_store.get(key) {
+            None => {
+                Ok(Some(true))
+            }
+            Some(value) => {
+                Ok(Some(value.clone()))
+            }
+        };
     }
+ 
+    fn set_config(&mut self, deserialized_config: &str) -> Result<()> {
+        self.config_store.insert("config".to_string(), deserialized_config.to_string());
+        Ok(())
+    }
+    fn get_config(&self) -> Result<Option<NgAccountConfig>> {
+        if let Some(config_str) = self.config_store.get("config") {
+            let config: NgAccountConfig = serde_json::from_str(config_str)?;
+            Ok(Some(config))
+        } else {
+            Ok(None)
+        }
+    }
+
     fn persist(&mut self) -> Result<bool> {
         // In-memory storage does not require persistence
         Ok(true)
