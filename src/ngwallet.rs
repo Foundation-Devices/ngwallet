@@ -30,6 +30,8 @@ pub struct NgWallet {
     pub wallet: Arc<Mutex<PersistedWallet<KeyOsPersister>>>,
     #[cfg(not(feature = "envoy"))]
     persister: Arc<Mutex<KeyOsPersister>>,
+
+
     meta_storage: Arc<Mutex<dyn MetaStorage>>,
 }
 
@@ -61,6 +63,7 @@ impl NgWallet {
                 Connection::open(wallet_file)
             }
         }?;
+
         #[cfg(not(feature = "envoy"))]
             let mut persister = KeyOsPersister {};
 
@@ -72,7 +75,7 @@ impl NgWallet {
         }
             .network(network)
             .create_wallet(&mut persister)
-            .map_err(|e| anyhow::anyhow!("Couldn't create wallet {}", e.to_string()))
+            .map_err(|e| anyhow::anyhow!("Couldn't create wallet {:?}", e))
             .unwrap();
 
         Ok(Self {

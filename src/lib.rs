@@ -5,8 +5,10 @@ pub mod transaction;
 pub mod utxo;
 pub mod config;
 
+pub use bdk_wallet;
+pub use redb;
+
 mod db;
-mod keyos;
 
 const STOP_GAP: usize = 1000;
 const BATCH_SIZE: usize = 5;

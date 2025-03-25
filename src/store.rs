@@ -18,6 +18,7 @@ pub trait MetaStorage: Debug + Send + Sync {
     fn persist(&mut self) -> Result<bool>;
 }
 
+#[derive(Clone)]
 pub struct InMemoryMetaStorage {
     config_store: std::collections::HashMap<String, String>,
     notes_store: std::collections::HashMap<String, String>,

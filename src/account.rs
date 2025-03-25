@@ -7,7 +7,7 @@ use serde::Serialize;
 use crate::config::NgAccountConfig;
 use crate::db::RedbMetaStorage;
 use crate::ngwallet::NgWallet;
-use crate::store::MetaStorage;
+use crate::store::{InMemoryMetaStorage, MetaStorage};
 
 #[derive(Debug)]
 pub struct NgAccount {
@@ -30,11 +30,11 @@ impl NgAccount {
         db_path: Option<String>,
     ) -> Self {
 
-
+        // #[cfg(feature = "envoy")]
         let meta = Arc::new(Mutex::new(RedbMetaStorage::new(db_path.clone())));
-
-        #[cfg(not(feature = "envoy"))]
-            let meta = InMemoryMetaStorage::new();
+        //
+        // #[cfg(not(feature = "envoy"))]
+        //     let meta = Arc::new(Mutex::new(InMemoryMetaStorage::new()));
 
         let wallet = NgWallet::new_from_descriptor(
             db_path,
@@ -71,8 +71,8 @@ impl NgAccount {
     ) -> Self {
         let meta_storage = Arc::new(Mutex::new(RedbMetaStorage::new(Some(db_path.clone()))));
 
-        #[cfg(not(feature = "envoy"))]
-            let meta = InMemoryMetaStorage::new();
+        // #[cfg(not(feature = "envoy"))]
+        //     let meta = InMemoryMetaStorage::new();
 
         let config = meta_storage.lock().unwrap().get_config().unwrap().unwrap();
 

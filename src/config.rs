@@ -1,4 +1,3 @@
-use bdk_electrum::bdk_core::bitcoin::Network;
 use serde::{Deserialize, Serialize};
 
 #[derive(Serialize, Deserialize, Debug,Clone)]
