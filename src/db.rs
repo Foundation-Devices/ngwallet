@@ -21,7 +21,7 @@ impl RedbMetaStorage {
         let db = {
             match backend {
                 None => {
-                    let file_path = path.clone().map(|p| format!("{:?}/wallet.meta", p)).unwrap_or("wallet.meta".to_string());
+                    let file_path = path.clone().map(|p| format!("{}/wallet.meta", p)).unwrap_or("wallet.meta".to_string());
                     Builder::new().create(file_path).unwrap()
                 }
                 Some(b) => {
@@ -34,6 +34,14 @@ impl RedbMetaStorage {
             db: Arc::new(db),
         }
     }
+
+    pub fn open(path: Option<String>) -> Self {
+        let file_path = path.map(|p| format!("{}/wallet.meta", p)).unwrap_or("wallet.meta".to_string());
+        RedbMetaStorage {
+            db: Arc::new(Database::open(file_path).unwrap()),
+        }
+    }
+
 
     pub fn persist(&self) -> Result<Vec<u8>> {
         Ok(vec![])

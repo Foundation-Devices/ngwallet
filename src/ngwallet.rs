@@ -61,7 +61,7 @@ impl<P: WalletPersister> NgWallet<P> {
             .map_err(|_| anyhow::anyhow!("Could not persist wallet"))
     }
 
-    pub fn load(meta_storage: Arc<Mutex<dyn MetaStorage>>, mut bdk_persister: Arc<Mutex<P>>,) -> Result<NgWallet<P>> where <P as WalletPersister>::Error: Debug {
+    pub fn load(meta_storage: Arc<Mutex<dyn MetaStorage>>, mut bdk_persister: Arc<Mutex<P>>) -> Result<NgWallet<P>> where <P as WalletPersister>::Error: Debug {
         // #[cfg(feature = "envoy")]
         //     let mut persister = Connection::open(format!("{}/wallet.sqlite",db_path))?;
 
@@ -164,11 +164,12 @@ impl<P: WalletPersister> NgWallet<P> {
     }
 
     pub fn scan_request(&self) -> FullScanRequest<KeychainKind> {
-        self.wallet.lock().unwrap().start_full_scan().build()
+        self.wallet.lock().unwrap().start_full_scan()
+            .build()
     }
 
     #[cfg(feature = "envoy")]
-    pub fn scan(request: FullScanRequest<KeychainKind>,electrum_server:&str) -> Result<FullScanResponse<KeychainKind>> {
+    pub fn scan(request: FullScanRequest<KeychainKind>, electrum_server: &str) -> Result<FullScanResponse<KeychainKind>> {
         let client: BdkElectrumClient<Client> =
             BdkElectrumClient::new(Client::new(electrum_server)?);
         let update = client.full_scan(request, STOP_GAP, BATCH_SIZE, true)?;
@@ -234,7 +235,7 @@ impl<P: WalletPersister> NgWallet<P> {
     }
 
     #[cfg(feature = "envoy")]
-    pub fn broadcast(&mut self, psbt: Psbt,electrum_server: &str) -> Result<()> {
+    pub fn broadcast(&mut self, psbt: Psbt, electrum_server: &str) -> Result<()> {
         let client: BdkElectrumClient<Client> =
             BdkElectrumClient::new(Client::new(electrum_server)?);
 
@@ -249,17 +250,22 @@ impl<P: WalletPersister> NgWallet<P> {
         tx_id: &str,
         note: &str,
     ) -> Result<bool> {
-        self.wallet
+        let tx_id = Txid::from_str(tx_id).map_err(|e| anyhow::anyhow!("Invalid Txid: {:?}", e))?;
+        let tx = self.wallet
             .lock()
             .unwrap()
-            .get_tx(Txid::from_str(&tx_id).unwrap())
-            .map(|tx| tx.tx_node.tx.compute_txid())
-            .map(|tx| {
-                self.meta_storage
-                    .lock().unwrap().set_note(&tx.to_string(), note).map_err(|e| {
-                    anyhow::anyhow!("Could not set note {:?}", e.to_string())
-                })
-            });
+            .get_tx(tx_id)
+            .ok_or_else(|| anyhow::anyhow!("Transaction not found"))?
+            .tx_node
+            .tx
+            .compute_txid();
+
+        self.meta_storage
+            .lock()
+            .unwrap()
+            .set_note(&tx.to_string(), note)
+            .map_err(|e| anyhow::anyhow!("Could not set note: {:?}", e))?;
+
         Ok(true)
     }
 
@@ -289,5 +295,20 @@ impl<P: WalletPersister> NgWallet<P> {
                 .unwrap();
             Ok(true)
         }).unwrap_or(Ok(false))
+    }
+
+    //Reveal addresses up to and including the target index and return an iterator of newly revealed addresses.
+    pub fn reveal_addresses_up_to(
+        &mut self,
+        keychain: KeychainKind,
+        index: u32,
+    ) -> Result<()> {
+        let _ = self
+            .wallet
+            .lock()
+            .unwrap()
+            .reveal_addresses_to(keychain, index);
+        self.persist().unwrap();
+        Ok(())
     }
 }

@@ -10,5 +10,5 @@ pub use redb;
 
 mod db;
 
-const STOP_GAP: usize = 1000;
+const STOP_GAP: usize = 100;
 const BATCH_SIZE: usize = 5;
