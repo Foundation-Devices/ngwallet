@@ -18,8 +18,7 @@ pub enum AddressType {
 }
 
 
-
-#[derive(Serialize, Deserialize, Debug,Clone)]
+#[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct NgAccountConfig {
     pub name: String,
     pub color: String,
@@ -29,7 +28,9 @@ pub struct NgAccountConfig {
     pub index: u32,
     pub internal_descriptor: String,
     pub external_descriptor: Option<String>,
+    pub date_synced: Option<String>,
     pub network: Network,
+    pub id: String,
 }
 
 impl NgAccountConfig {
@@ -43,6 +44,8 @@ impl NgAccountConfig {
         external_descriptor: Option<String>,
         address_type: AddressType,
         network: Network,
+        id: String,
+        date_synced: Option<String>,
     ) -> Self {
         Self {
             name,
@@ -54,6 +57,8 @@ impl NgAccountConfig {
             external_descriptor,
             address_type,
             network,
+            id,
+            date_synced,
         }
     }
     pub fn serialize(&self) -> String {

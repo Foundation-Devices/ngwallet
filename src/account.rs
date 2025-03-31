@@ -33,6 +33,8 @@ impl<P: WalletPersister> NgAccount<P> {
         db_path: Option<String>,
         bdk_persister: Arc<Mutex<P>>,
         meta_storage_backend: Option<impl StorageBackend>,
+        id:String,
+        date_synced: Option<String>,
     ) -> Self {
         let meta = Arc::new(Mutex::new(RedbMetaStorage::new(db_path.clone(), meta_storage_backend)));
 
@@ -55,6 +57,8 @@ impl<P: WalletPersister> NgAccount<P> {
             external_descriptor,
             address_type,
             network,
+            id,
+            date_synced
         );
         meta.lock()
             .unwrap()
