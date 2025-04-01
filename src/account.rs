@@ -58,7 +58,8 @@ impl<P: WalletPersister> NgAccount<P> {
             address_type,
             network,
             id,
-            date_synced
+            date_synced,
+            db_path
         );
         meta.lock()
             .unwrap()
@@ -84,7 +85,7 @@ impl<P: WalletPersister> NgAccount<P> {
             meta_storage_backend,
         )));
 
-        let config = meta_storage.lock().unwrap().get_config().unwrap().unwrap();
+        let config = meta_storage.lock().unwrap().get_config().unwrap().unwrap() ;
 
         let wallet = NgWallet::load(meta_storage.clone(), bdk_persister.clone()).unwrap();
         Self {
@@ -94,8 +95,13 @@ impl<P: WalletPersister> NgAccount<P> {
         }
     }
 
-    pub fn persist(&mut self) -> Result<bool, Error> {
-        self.wallet.persist().map_err(|e| anyhow::anyhow!(e))
+    pub fn persist(&mut self) -> Result<(), Error> {
+        self.wallet.persist().map_err(|e| anyhow::anyhow!(e))?;
+        self.meta_storage
+            .lock()
+            .unwrap()
+            .set_config(self.config.serialize().as_str())
+            .map_err(|e| anyhow::anyhow!(e))
     }
     pub fn get_backup(&self) -> Vec<u8> {
         vec![]

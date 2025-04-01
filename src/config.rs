@@ -29,6 +29,7 @@ pub struct NgAccountConfig {
     pub internal_descriptor: String,
     pub external_descriptor: Option<String>,
     pub date_synced: Option<String>,
+    pub wallet_path: Option<String>,
     pub network: Network,
     pub id: String,
 }
@@ -46,6 +47,7 @@ impl NgAccountConfig {
         network: Network,
         id: String,
         date_synced: Option<String>,
+        wallet_path: Option<String>,
     ) -> Self {
         Self {
             name,
@@ -59,6 +61,7 @@ impl NgAccountConfig {
             network,
             id,
             date_synced,
+            wallet_path,
         }
     }
     pub fn serialize(&self) -> String {
@@ -67,5 +70,9 @@ impl NgAccountConfig {
 
     pub fn deserialize(data: &str) -> Self {
         serde_json::from_str(data).unwrap()
+    }
+    pub fn is_hot(&self) -> bool {
+        let descriptor = self.internal_descriptor.clone();
+        descriptor.contains("xprv") || descriptor.contains("xpri") || descriptor.contains("wif")
     }
 }
