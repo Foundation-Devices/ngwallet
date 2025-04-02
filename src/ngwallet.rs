@@ -13,7 +13,7 @@ use bdk_wallet::{Update, Wallet};
 #[cfg(feature = "envoy")]
 use {
     bdk_electrum::BdkElectrumClient, bdk_electrum::bdk_core::spk_client::FullScanResponse,
-    bdk_electrum::electrum_client::Client, bdk_wallet::rusqlite::Connection,
+    bdk_electrum::electrum_client::Client,
 };
 
 use crate::store::MetaStorage;
