@@ -3,10 +3,10 @@ use std::str::FromStr;
 use std::sync::{Arc, Mutex};
 
 use anyhow::{Ok, Result};
-use bdk_wallet::{bitcoin, KeychainKind, WalletPersister};
+use bdk_wallet::{ KeychainKind, WalletPersister};
 use bdk_wallet::bitcoin::{Address, Amount, Network, OutPoint, Psbt, ScriptBuf, Txid};
 use bdk_wallet::chain::ChainPosition::{Confirmed, Unconfirmed};
-use bdk_wallet::chain::spk_client::FullScanRequest;
+use bdk_wallet::chain::spk_client::{FullScanRequest, SyncResponse};
 use bdk_wallet::{AddressInfo, PersistedWallet, SignOptions};
 use bdk_wallet::{Update, Wallet};
 
@@ -14,6 +14,7 @@ use bdk_wallet::{Update, Wallet};
 use {
     bdk_electrum::BdkElectrumClient, bdk_electrum::bdk_core::spk_client::FullScanResponse,
     bdk_electrum::electrum_client::Client,
+    bdk_electrum::bdk_core::spk_client::SyncRequest
 };
 
 use crate::store::MetaStorage;
@@ -162,10 +163,23 @@ impl<P: WalletPersister> NgWallet<P> {
 
         Ok(transactions)
     }
-
-    pub fn scan_request(&self) -> FullScanRequest<KeychainKind> {
+    #[cfg(feature = "envoy")]
+    pub fn full_scan_request(&self) -> FullScanRequest<KeychainKind> {
         self.wallet.lock().unwrap().start_full_scan()
             .build()
+    }
+    #[cfg(feature = "envoy")]
+    pub fn sync_request(&self) -> SyncRequest<(KeychainKind, u32)> {
+        self.wallet.lock().unwrap().start_sync_with_revealed_spks()
+            .build()
+    }
+
+    #[cfg(feature = "envoy")]
+    pub fn sync(request: SyncRequest<(KeychainKind, u32)>, electrum_server: &str) -> Result<SyncResponse> {
+        let client: BdkElectrumClient<Client> =
+            BdkElectrumClient::new(Client::new(electrum_server)?);
+        let update = client.sync(request, BATCH_SIZE,true)?;
+        Ok(update)
     }
 
     #[cfg(feature = "envoy")]
