@@ -1,16 +1,15 @@
+use std::result::Result::Ok;
 use std::fmt::Debug;
 use std::str::FromStr;
 use std::sync::{Arc, Mutex};
 
-use anyhow::{Ok, Result};
-use bdk_wallet::{KeychainKind, WalletPersister};
+use anyhow::{Result};
+use bdk_wallet::{ KeychainKind, WalletPersister};
 use bdk_wallet::bitcoin::{Address, Amount, Network, OutPoint, Psbt, ScriptBuf, Txid};
 use bdk_wallet::chain::ChainPosition::{Confirmed, Unconfirmed};
 use bdk_wallet::chain::spk_client::{FullScanRequest, SyncResponse};
 use bdk_wallet::{AddressInfo, PersistedWallet, SignOptions};
 use bdk_wallet::{Update, Wallet};
-use bdk_wallet::miniscript::plan::AssetProvider;
-use chrono::{DateTime, Local, NaiveDateTime, Utc};
 
 #[cfg(feature = "envoy")]
 use {
@@ -23,6 +22,12 @@ use {
 use crate::store::MetaStorage;
 use crate::transaction::{BitcoinTransaction, Input, Output};
 use crate::{BATCH_SIZE, STOP_GAP};
+
+#[derive(Debug)]
+pub struct PsbtInfo {
+    pub outputs: std::collections::HashMap<u64, String>,
+    pub fee: u64,
+}
 
 #[derive(Debug)]
 pub struct NgWallet<P: WalletPersister> {
@@ -374,6 +379,30 @@ impl<P: WalletPersister> NgWallet<P> {
             .sign(&mut psbt, SignOptions::default())?;
         Ok(psbt.serialize_hex())
     }
+
+    pub fn parse_psbt(&self, psbt_str: &str) -> Result<PsbtInfo> {
+        let psbt = Psbt::from_str(psbt_str)?;
+        let tx = psbt.extract_tx()?;
+        let wallet = self.wallet.lock().unwrap();
+        let mut outputs = std::collections::HashMap::new();
+        let mut fee = 0;
+
+        for output in tx.clone().output {
+            if let Ok(address) = Address::from_script(&output.script_pubkey, wallet.network()) {
+                if !wallet.is_mine(output.script_pubkey) {
+                    outputs.insert(output.value.to_sat(), address.to_string());
+                }
+            }
+
+        }
+
+        if let Ok(fee_amount) = wallet.calculate_fee(&tx) {
+            fee = fee_amount.to_sat();
+        }
+
+        Ok(PsbtInfo { outputs, fee })
+    }
+
 
     #[cfg(feature = "envoy")]
     pub fn broadcast(&mut self, psbt: Psbt, electrum_server: &str) -> Result<()> {
