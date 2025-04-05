@@ -3,18 +3,21 @@ use std::str::FromStr;
 use std::sync::{Arc, Mutex};
 
 use anyhow::{Ok, Result};
-use bdk_wallet::{ KeychainKind, WalletPersister};
+use bdk_wallet::{KeychainKind, WalletPersister};
 use bdk_wallet::bitcoin::{Address, Amount, Network, OutPoint, Psbt, ScriptBuf, Txid};
 use bdk_wallet::chain::ChainPosition::{Confirmed, Unconfirmed};
 use bdk_wallet::chain::spk_client::{FullScanRequest, SyncResponse};
 use bdk_wallet::{AddressInfo, PersistedWallet, SignOptions};
 use bdk_wallet::{Update, Wallet};
+use bdk_wallet::miniscript::plan::AssetProvider;
+use chrono::{DateTime, Local, NaiveDateTime, Utc};
 
 #[cfg(feature = "envoy")]
 use {
+    bdk_electrum::electrum_client::{Config, Socks5Config},
     bdk_electrum::BdkElectrumClient, bdk_electrum::bdk_core::spk_client::FullScanResponse,
     bdk_electrum::electrum_client::Client,
-    bdk_electrum::bdk_core::spk_client::SyncRequest
+    bdk_electrum::bdk_core::spk_client::SyncRequest,
 };
 
 use crate::store::MetaStorage;
@@ -86,10 +89,11 @@ impl<P: WalletPersister> NgWallet<P> {
             .wallet
             .lock()
             .unwrap()
-            .reveal_next_address(KeychainKind::External);
+            .next_unused_address(KeychainKind::External);
         self.persist()?;
         Ok(address)
     }
+
 
     pub fn transactions(&self) -> Result<Vec<BitcoinTransaction>> {
         let wallet = self.wallet.lock().unwrap();
@@ -97,6 +101,8 @@ impl<P: WalletPersister> NgWallet<P> {
         let tip_height = wallet.latest_checkpoint().height();
         let storage = self.meta_storage.lock().unwrap();
 
+        //add date to transaction
+         let mut date :Option<u64> = None ;
         for canonical_tx in wallet.transactions() {
             let tx = canonical_tx.tx_node.tx;
             let tx_id = canonical_tx.tx_node.txid.to_string();
@@ -104,10 +110,21 @@ impl<P: WalletPersister> NgWallet<P> {
             let fee = wallet.calculate_fee(tx.as_ref()).unwrap().to_sat();
             let block_height = match canonical_tx.chain_position {
                 Confirmed { anchor, .. } => {
+                    //to milliseconds
+                    date  = Some(anchor.confirmation_time * 1000);
                     let block_height = anchor.block_id.height;
                     if block_height > 0 { block_height } else { 0 }
                 }
-                Unconfirmed { .. } => 0,
+                Unconfirmed { last_seen } => {
+                    match last_seen {
+                        None => {}
+                        Some(last_seen) => {
+                            //to milliseconds
+                            date  = Some(last_seen * 1000);
+                        }
+                    }
+                    0
+                },
             };
             let confirmations = if block_height > 0 {
                 tip_height - block_height + 1
@@ -142,21 +159,100 @@ impl<P: WalletPersister> NgWallet<P> {
                     }
                 })
                 .collect::<Vec<Output>>();
+            let amount: i64 = (received.to_sat() as i64) - (sent.to_sat() as i64);
 
-            let amount = if sent.to_sat() > 0 {
-                sent.to_sat()
-            } else {
-                received.to_sat()
+            let mut address = {
+                let mut ret = "".to_string();
+                //its a sent transaction
+                if (amount.is_positive()) {
+                    tx
+                        .output
+                        .clone()
+                        .iter()
+                        .filter(|output| {
+                            !wallet.is_mine(output.script_pubkey.clone())
+                        })
+                        .enumerate()
+                        .for_each(|(index, output)| {
+                            ret =
+                                Address::from_script(&output.script_pubkey, wallet.network())
+                                    .unwrap()
+                                    .to_string();
+                        });
+                } else {
+                    tx
+                        .output
+                        .clone()
+                        .iter()
+                        .filter(|output| {
+                            wallet.derivation_of_spk(output.script_pubkey.clone())
+                                .is_none()
+                        })
+                        .enumerate()
+                        .for_each(|(index, output)| {
+                            ret =
+                                Address::from_script(&output.script_pubkey, wallet.network())
+                                    .unwrap()
+                                    .to_string();
+                        });
+                    // if the address is empty, then check for self transfer
+                    if (ret.is_empty()) {
+                        tx
+                            .output
+                            .clone()
+                            .iter()
+                            .filter(|output| {
+                                wallet.derivation_of_spk(output.script_pubkey.clone())
+                                    .is_some_and(|x| {
+                                        x.0 == KeychainKind::External
+                                    })
+                            })
+                            .enumerate()
+                            .for_each(|(index, output)| {
+                                ret =
+                                    Address::from_script(&output.script_pubkey, wallet.network())
+                                        .unwrap()
+                                        .to_string();
+                            });
+                    }
+                }
+
+                //possible cancel transaction that involves change address
+                if ret.is_empty() && tx
+                    .output.len() == 1 {
+                    tx
+                        .output
+                        .clone()
+                        .iter()
+                        .filter(|output| {
+                            wallet.derivation_of_spk(output.script_pubkey.clone())
+                                .is_some_and(|x| {
+                                    x.0 == KeychainKind::Internal
+                                })
+                        })
+                        .for_each(|o| {
+                            ret =
+                                Address::from_script(&o.script_pubkey, wallet.network())
+                                    .unwrap()
+                                    .to_string();
+                        });
+                }
+                ret
             };
+
 
             transactions.push(BitcoinTransaction {
                 tx_id: tx_id.clone(),
                 block_height,
                 confirmations,
+                is_confirmed: confirmations >= 3,
                 fee,
                 amount,
                 inputs,
                 outputs,
+                address,
+                date,
+                vsize: tx.vsize() ,
                 note: storage.get_note(&tx_id).unwrap(),
             })
         }
@@ -175,17 +271,48 @@ impl<P: WalletPersister> NgWallet<P> {
     }
 
     #[cfg(feature = "envoy")]
-    pub fn sync(request: SyncRequest<(KeychainKind, u32)>, electrum_server: &str) -> Result<SyncResponse> {
-        let client: BdkElectrumClient<Client> =
-            BdkElectrumClient::new(Client::new(electrum_server)?);
-        let update = client.sync(request, BATCH_SIZE,true)?;
+    pub fn sync(request: SyncRequest<(KeychainKind, u32)>,
+                electrum_server: &str,
+                socks_proxy: Option<&str>,
+    ) -> Result<SyncResponse> {
+        let socks5_config = match (socks_proxy) {
+            Some(socks_proxy) => {
+                let socks5_config = Socks5Config::new(socks_proxy);
+                Some(socks5_config)
+            }
+            None => None
+        };
+        let electrum_config = Config::builder()
+            .socks5(
+                socks5_config.clone()
+            )
+            .build();
+        let client = Client::from_config(electrum_server, electrum_config).unwrap();
+
+        let bdk_client: BdkElectrumClient<Client> =
+            BdkElectrumClient::new(client);
+        let update = bdk_client.sync(request, BATCH_SIZE, true)?;
         Ok(update)
     }
 
     #[cfg(feature = "envoy")]
-    pub fn scan(request: FullScanRequest<KeychainKind>, electrum_server: &str) -> Result<FullScanResponse<KeychainKind>> {
+    pub fn scan(request: FullScanRequest<KeychainKind>, electrum_server: &str, socks_proxy: Option<&str>) -> Result<FullScanResponse<KeychainKind>> {
+        let socks5_config = match (socks_proxy) {
+            Some(socks_proxy) => {
+                let socks5_config = Socks5Config::new(socks_proxy);
+                Some(socks5_config)
+            }
+            None => None
+        };
+        let electrum_config = Config::builder()
+            .socks5(
+                socks5_config
+            )
+            .build();
+
+        let client = Client::from_config(electrum_server, electrum_config)?;
         let client: BdkElectrumClient<Client> =
-            BdkElectrumClient::new(Client::new(electrum_server)?);
+            BdkElectrumClient::new(client);
         let update = client.full_scan(request, STOP_GAP, BATCH_SIZE, true)?;
         Ok(update)
     }

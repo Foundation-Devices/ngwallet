@@ -1,3 +1,5 @@
+use chrono::{DateTime, Local};
+
 #[derive(Debug)]
 struct RampTransaction {
     pub ramp_id: String,
@@ -20,13 +22,13 @@ pub enum TransactionPlaceholder {
     Azteco,
 }
 
-#[derive(Debug)]
+#[derive(Debug,Clone)]
 pub struct Input {
     pub tx_id: String,
     pub vout: u32,
 }
 
-#[derive(Debug)]
+#[derive(Debug,Clone)]
 pub struct Output {
     pub tx_id: String,
     pub vout: u32,
@@ -41,16 +43,20 @@ impl Output {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug,Clone)]
 pub struct BitcoinTransaction {
     pub tx_id: String,
     pub block_height: u32,
     pub confirmations: u32,
+    pub is_confirmed: bool,
     pub fee: u64,
-    pub amount: u64,
+    pub amount: i64,
     pub inputs: Vec<Input>,
+    pub address: String,
     pub outputs: Vec<Output>,
     pub note: Option<String>,
+    pub date: Option<u64>,
+    pub vsize: usize,
 }
 
 #[derive(Debug)]
@@ -58,3 +64,4 @@ pub struct NgTransaction {
     pub placeholder: Option<TransactionPlaceholder>,
     pub output: Option<BitcoinTransaction>,
 }
+
