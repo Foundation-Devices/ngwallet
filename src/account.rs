@@ -95,6 +95,11 @@ impl<P: WalletPersister> NgAccount<P> {
         }
     }
 
+    pub fn rename(&mut self,name: &str ) -> Result<(), Error> {
+        self.config.name  = name.to_string();
+        self.persist()
+    }
+
     pub fn persist(&mut self) -> Result<(), Error> {
         self.wallet.persist().map_err(|e| anyhow::anyhow!(e))?;
         self.meta_storage
