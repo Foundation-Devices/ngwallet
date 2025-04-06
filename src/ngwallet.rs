@@ -10,6 +10,7 @@ use bdk_wallet::chain::ChainPosition::{Confirmed, Unconfirmed};
 use bdk_wallet::chain::spk_client::{FullScanRequest, SyncResponse};
 use bdk_wallet::{AddressInfo, PersistedWallet, SignOptions};
 use bdk_wallet::{Update, Wallet};
+use log::info;
 
 #[cfg(feature = "envoy")]
 use {
@@ -98,7 +99,6 @@ impl<P: WalletPersister> NgWallet<P> {
         self.persist()?;
         Ok(address)
     }
-
 
     pub fn transactions(&self) -> Result<Vec<BitcoinTransaction>> {
         let wallet = self.wallet.lock().unwrap();
@@ -245,7 +245,7 @@ impl<P: WalletPersister> NgWallet<P> {
                 ret
             };
 
-
+            storage.get_note(&tx_id).unwrap_or(None);
             transactions.push(BitcoinTransaction {
                 tx_id: tx_id.clone(),
                 block_height,

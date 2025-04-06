@@ -1,6 +1,7 @@
 use std::sync::Arc;
 use crate::store::MetaStorage;
 use anyhow::Result;
+use log::info;
 use redb::{AccessGuard, Builder, Database, Error, StorageBackend, TableDefinition};
 use crate::config::NgAccountConfig;
 
@@ -65,11 +66,20 @@ impl MetaStorage for RedbMetaStorage {
         match read_txn.open_table(NOTE_TABLE) {
             Ok(table) => {
                 match table.get(key) {
-                    Ok(v) => Ok(Some(v.unwrap().value().to_string())),
+                    Ok(result) => {
+                        match result {
+                            None => {
+                                Ok(Some("".to_string()))
+                            }
+                            Some(value) => {
+                                Ok(Some(value.value().to_string()))
+                            }
+                        }
+                    },
                     Err(e) => Err(anyhow::anyhow!(e.to_string())),
                 }
             }
-            Err(_) => {
+            Err(error) => {
                 Ok(Some("".to_string()))
             }
         }
