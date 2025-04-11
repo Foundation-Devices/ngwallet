@@ -10,7 +10,6 @@ use bdk_wallet::chain::ChainPosition::{Confirmed, Unconfirmed};
 use bdk_wallet::chain::spk_client::{FullScanRequest, SyncResponse};
 use bdk_wallet::{AddressInfo, PersistedWallet, SignOptions};
 use bdk_wallet::{Update, Wallet};
-use log::info;
 
 #[cfg(feature = "envoy")]
 use {
@@ -159,6 +158,9 @@ impl<P: WalletPersister> NgWallet<P> {
                         tx_id: tx_id.clone(),
                         vout: index as u32,
                         amount: amount.to_sat(),
+                        address: Address::from_script(&output.script_pubkey, wallet.network())
+                            .unwrap()
+                            .to_string(),
                         tag: storage.get_tag(&tx_id).unwrap(),
                         do_not_spend: storage.get_do_not_spend(&tx_id).unwrap(),
                     }
@@ -336,6 +338,9 @@ impl<P: WalletPersister> NgWallet<P> {
                 tx_id: local_output.outpoint.txid.to_string(),
                 vout: local_output.outpoint.vout,
                 amount: local_output.txout.value.to_sat(),
+                address: Address::from_script(&local_output.txout.script_pubkey, wallet.network())
+                .unwrap()
+                .to_string(),
                 tag: meta_storage.get_tag(out_put_id.clone().as_str()).unwrap(),
                 do_not_spend: meta_storage.get_do_not_spend(out_put_id.as_str()).unwrap(),
             });

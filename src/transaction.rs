@@ -34,6 +34,7 @@ pub struct Output {
     pub vout: u32,
     pub amount: u64,
     pub tag: Option<String>,
+    pub address: String,
     pub do_not_spend: Option<bool>,
 }
 
