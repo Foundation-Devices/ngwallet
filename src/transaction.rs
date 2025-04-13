@@ -1,5 +1,3 @@
-use chrono::{DateTime, Local};
-
 #[derive(Debug)]
 struct RampTransaction {
     pub ramp_id: String,
@@ -34,8 +32,10 @@ pub struct Output {
     pub vout: u32,
     pub amount: u64,
     pub tag: Option<String>,
+    pub date: Option<u64>,
+    pub is_confirmed: bool,
     pub address: String,
-    pub do_not_spend: Option<bool>,
+    pub do_not_spend: bool,
 }
 
 impl Output {

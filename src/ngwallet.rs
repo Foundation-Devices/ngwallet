@@ -4,7 +4,7 @@ use std::str::FromStr;
 use std::sync::{Arc, Mutex};
 
 use anyhow::{Result};
-use bdk_wallet::{ KeychainKind, WalletPersister};
+use bdk_wallet::{KeychainKind, WalletPersister, WalletTx};
 use bdk_wallet::bitcoin::{Address, Amount, Network, OutPoint, Psbt, ScriptBuf, Txid};
 use bdk_wallet::chain::ChainPosition::{Confirmed, Unconfirmed};
 use bdk_wallet::chain::spk_client::{FullScanRequest, SyncResponse};
@@ -106,7 +106,7 @@ impl<P: WalletPersister> NgWallet<P> {
         let storage = self.meta_storage.lock().unwrap();
 
         //add date to transaction
-         let mut date :Option<u64> = None ;
+        let mut date: Option<u64> = None;
         for canonical_tx in wallet.transactions() {
             let tx = canonical_tx.tx_node.tx;
             let tx_id = canonical_tx.tx_node.txid.to_string();
@@ -115,7 +115,7 @@ impl<P: WalletPersister> NgWallet<P> {
             let block_height = match canonical_tx.chain_position {
                 Confirmed { anchor, .. } => {
                     //to milliseconds
-                    date  = Some(anchor.confirmation_time * 1000);
+                    date = Some(anchor.confirmation_time * 1000);
                     let block_height = anchor.block_id.height;
                     if block_height > 0 { block_height } else { 0 }
                 }
@@ -124,11 +124,11 @@ impl<P: WalletPersister> NgWallet<P> {
                         None => {}
                         Some(last_seen) => {
                             //to milliseconds
-                            date  = Some(last_seen * 1000);
+                            date = Some(last_seen * 1000);
                         }
                     }
                     0
-                },
+                }
             };
             let confirmations = if block_height > 0 {
                 tip_height - block_height + 1
@@ -154,6 +154,15 @@ impl<P: WalletPersister> NgWallet<P> {
                 .enumerate()
                 .map(|(index, output)| {
                     let amount = output.value;
+
+                    let do_not_spend = match storage.get_do_not_spend(&tx_id) {
+                        Ok(value) => {
+                            value.unwrap_or(false)
+                        }
+                        Err(_) => {
+                            false
+                        }
+                    };
                     Output {
                         tx_id: tx_id.clone(),
                         vout: index as u32,
@@ -162,7 +171,9 @@ impl<P: WalletPersister> NgWallet<P> {
                             .unwrap()
                             .to_string(),
                         tag: storage.get_tag(&tx_id).unwrap(),
-                        do_not_spend: storage.get_do_not_spend(&tx_id).unwrap(),
+                        do_not_spend,
+                        date: date.clone(),
+                        is_confirmed: confirmations.clone() >= 3,
                     }
                 })
                 .collect::<Vec<Output>>();
@@ -259,7 +270,7 @@ impl<P: WalletPersister> NgWallet<P> {
                 outputs,
                 address,
                 date,
-                vsize: tx.vsize() ,
+                vsize: tx.vsize(),
                 note: storage.get_note(&tx_id).unwrap(),
             })
         }
@@ -327,22 +338,68 @@ impl<P: WalletPersister> NgWallet<P> {
     pub fn unspend_outputs(&self) -> Result<Vec<Output>> {
         let wallet = self.wallet.lock().unwrap();
         let mut unspents: Vec<Output> = vec![];
+        let tip_height = wallet.latest_checkpoint().height();
+
         let mut meta_storage = self.meta_storage.lock().unwrap();
         for local_output in wallet.list_unspent() {
+            let mut date: Option<u64> = None;
             let out_put_id = format!(
                 "{}:{}",
                 local_output.outpoint.txid.to_string(),
                 local_output.outpoint.vout,
             );
+            let wallet_tx = wallet.get_tx(local_output.outpoint.txid.clone());
+            let mut confirmations = 0;
+            match wallet_tx {
+                None => {}
+                Some(wallet_tx) => {
+                    match wallet_tx.chain_position {
+                        Confirmed { anchor, .. } => {
+                            //to milliseconds
+
+                            date = Some(anchor.confirmation_time * 1000);
+                            let block_height = anchor.block_id.height;
+                            confirmations = if block_height > 0 {
+                                tip_height - block_height + 1
+                            } else {
+                                0
+                            };
+                            if block_height > 0 { block_height } else { 0 }
+                        }
+                        Unconfirmed { last_seen } => {
+                            match last_seen {
+                                None => {}
+                                Some(last_seen) => {
+                                    //to milliseconds
+                                    date = Some(last_seen * 1000);
+                                }
+                            }
+                            0
+                        }
+                    };
+                }
+            }
+
+            let do_not_spend = match meta_storage.get_do_not_spend(out_put_id.as_str()) {
+                Ok(value) => {
+                    value.unwrap_or(false)
+                }
+                Err(_) => {
+                    false
+                }
+            };
+
             unspents.push(Output {
                 tx_id: local_output.outpoint.txid.to_string(),
                 vout: local_output.outpoint.vout,
                 amount: local_output.txout.value.to_sat(),
                 address: Address::from_script(&local_output.txout.script_pubkey, wallet.network())
-                .unwrap()
-                .to_string(),
+                    .unwrap()
+                    .to_string(),
                 tag: meta_storage.get_tag(out_put_id.clone().as_str()).unwrap(),
-                do_not_spend: meta_storage.get_do_not_spend(out_put_id.as_str()).unwrap(),
+                do_not_spend,
+                date,
+                is_confirmed: confirmations >= 3,
             });
         }
         Ok(unspents)
@@ -398,7 +455,6 @@ impl<P: WalletPersister> NgWallet<P> {
                     outputs.insert(output.value.to_sat(), address.to_string());
                 }
             }
-
         }
 
         if let Ok(fee_amount) = wallet.calculate_fee(&tx) {
@@ -407,7 +463,6 @@ impl<P: WalletPersister> NgWallet<P> {
 
         Ok(PsbtInfo { outputs, fee })
     }
-
 
     #[cfg(feature = "envoy")]
     pub fn broadcast(&mut self, psbt: Psbt, electrum_server: &str) -> Result<()> {
@@ -450,12 +505,50 @@ impl<P: WalletPersister> NgWallet<P> {
         tag: &str,
     ) -> Result<bool> {
         self.meta_storage.lock().unwrap()
-            .set_tag(output.get_id().as_str(), tag)
+            .set_tag(output.get_id().as_str(), tag.clone())
+            .map_err(|_| anyhow::anyhow!("Could not set tag "))
+            .unwrap();
+        self.meta_storage.lock().unwrap()
+            .add_tag(tag.to_string().as_str())
             .map_err(|_| anyhow::anyhow!("Could not set tag "))
             .unwrap();
         Ok(true)
     }
 
+    pub fn list_tags(
+        &self,
+    ) -> Result<Vec<String>> {
+        self.meta_storage.lock().unwrap()
+            .list_tags()
+    }
+    pub fn remove_tag(
+        &mut self,
+        target_tag: &str,
+        rename_to: Option<&str>,
+    ) -> Result<()> {
+        self.meta_storage.lock().unwrap()
+            .remove_tag(&target_tag.clone())
+            .map_err(|e| anyhow::anyhow!("Error {}",e))
+            .unwrap();
+        self.unspend_outputs()
+            .map_err(|e| anyhow::anyhow!("Error {}",e))
+            .unwrap()
+            .iter().for_each(|output: &Output| {
+            match output.clone().tag {
+                None => {}
+                Some(existing_tag) => {
+                    let new_tag = rename_to.unwrap_or("");
+                    if (existing_tag.eq(target_tag)) {
+                        self.set_tag(&output, new_tag)
+                            .map_err(|e| anyhow::anyhow!("Error {}",e))
+                            .unwrap();
+                    }
+                }
+            }
+        });
+
+        Ok(())
+    }
     pub fn set_do_not_spend(
         &mut self,
         output: &Output,
@@ -471,7 +564,6 @@ impl<P: WalletPersister> NgWallet<P> {
             Ok(true)
         }).unwrap_or(Ok(false))
     }
-
     //Reveal addresses up to and including the target index and return an iterator of newly revealed addresses.
     pub fn reveal_addresses_up_to(
         &mut self,
