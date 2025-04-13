@@ -1,12 +1,15 @@
+use std::collections::HashSet;
 use std::sync::Arc;
 use crate::store::MetaStorage;
 use anyhow::Result;
 use log::info;
-use redb::{AccessGuard, Builder, Database, Error, StorageBackend, TableDefinition};
+use redb::{AccessGuard, Builder, Database, Error, ReadableTable, StorageBackend, TableDefinition};
 use crate::config::NgAccountConfig;
 
 const NOTE_TABLE: TableDefinition<&str, &str> = TableDefinition::new("notes");
 const TAG_TABLE: TableDefinition<&str, &str> = TableDefinition::new("tags");
+const TAGS_LIST: TableDefinition<&str, &str> = TableDefinition::new("tags_list");
+
 const DO_NOT_SPEND_TABLE: TableDefinition<&str, bool> = TableDefinition::new("do_not_spend");
 
 const ACCOUNT_CONFIG: TableDefinition<&str, &str> = TableDefinition::new("config");
@@ -75,7 +78,7 @@ impl MetaStorage for RedbMetaStorage {
                                 Ok(Some(value.value().to_string()))
                             }
                         }
-                    },
+                    }
                     Err(e) => Err(anyhow::anyhow!(e.to_string())),
                 }
             }
@@ -85,6 +88,46 @@ impl MetaStorage for RedbMetaStorage {
         }
     }
 
+
+    fn list_tags(&self) -> Result<Vec<String>> {
+        let read_txn = self.db.begin_read()?;
+        match read_txn.open_table(TAGS_LIST) {
+            Ok(table) => {
+                let table_iter = table.iter().unwrap();
+                let mut items: Vec<String> = vec![];
+                for item in table_iter {
+                    let a = item.unwrap();
+                    items.push(a.1.value().to_string())
+                }
+                Ok(items)
+            }
+            Err(err) => {
+                Err(anyhow::anyhow!(err.to_string()))
+            }
+        }
+    }
+
+    fn add_tag(&mut self, tag: &str) -> Result<()> {
+        let write_txn = self.db.begin_write()?;
+        {
+            let mut table = write_txn.open_table(TAGS_LIST)?;
+            table.insert(tag.clone().to_string().to_lowercase().as_str(), tag)?;
+        }
+        write_txn
+            .commit()
+            .map_err(|e| anyhow::anyhow!(e.to_string()))
+    }
+
+    fn remove_tag(&mut self, tag: &str) -> Result<()> {
+        let write_txn = self.db.begin_write()?;
+        {
+            let mut table = write_txn.open_table(TAGS_LIST)?;
+            table.remove(tag)?;
+        }
+        write_txn
+            .commit()
+            .map_err(|e| anyhow::anyhow!(e.to_string()))
+    }
     fn set_tag(&mut self, key: &str, value: &str) -> Result<()> {
         let write_txn = self.db.begin_write()?;
         {
@@ -110,7 +153,7 @@ impl MetaStorage for RedbMetaStorage {
                                 Ok(Some(value.value().to_string()))
                             }
                         }
-                    },
+                    }
                     Err(e) => Err(anyhow::anyhow!(e.to_string())),
                 }
             }
@@ -144,7 +187,7 @@ impl MetaStorage for RedbMetaStorage {
                                 Ok(Some(value.value().clone()))
                             }
                         }
-                    },
+                    }
                     Err(e) => Err(anyhow::anyhow!(e.to_string())),
                 }
             }
