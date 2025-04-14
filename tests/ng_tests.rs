@@ -185,7 +185,10 @@ mod tests {
     #[test]
     fn autocomplete_seedword() {
         let suggestions = bip39::get_seedword_suggestions("fa", 3);
-        assert_eq!(suggestions, ["fabric", "face", "faculty"])
+        assert_eq!(suggestions, ["fabric", "face", "faculty"]);
+
+        let suggestions = bip39::get_seedword_suggestions("xy", 3);
+        assert_eq!(suggestions, Vec::<&str>::new());
     }
 
     // #[test]
