@@ -1,9 +1,7 @@
 use crate::config::NgAccountConfig;
 use crate::store::MetaStorage;
 use anyhow::Result;
-use log::info;
-use redb::{AccessGuard, Builder, Database, Error, ReadableTable, StorageBackend, TableDefinition};
-use std::collections::HashSet;
+use redb::{Builder, Database, ReadableTable, StorageBackend, TableDefinition};
 use std::sync::Arc;
 
 const NOTE_TABLE: TableDefinition<&str, &str> = TableDefinition::new("notes");
@@ -37,6 +35,8 @@ impl RedbMetaStorage {
         RedbMetaStorage { db: Arc::new(db) }
     }
 
+    //TODO: remove open
+    #[allow(dead_code)]
     pub fn open(path: Option<String>) -> Self {
         let file_path = path
             .map(|p| format!("{}/wallet.meta", p))
@@ -46,6 +46,8 @@ impl RedbMetaStorage {
         }
     }
 
+    //TODO: fix persist
+    #[allow(dead_code)]
     pub fn persist(&self) -> Result<Vec<u8>> {
         Ok(vec![])
     }
@@ -73,7 +75,7 @@ impl MetaStorage for RedbMetaStorage {
                 },
                 Err(e) => Err(anyhow::anyhow!(e.to_string())),
             },
-            Err(error) => Ok(Some("".to_string())),
+            Err(_error) => Ok(Some("".to_string())),
         }
     }
 
@@ -97,7 +99,7 @@ impl MetaStorage for RedbMetaStorage {
         let write_txn = self.db.begin_write()?;
         {
             let mut table = write_txn.open_table(TAGS_LIST)?;
-            table.insert(tag.clone().to_string().to_lowercase().as_str(), tag)?;
+            table.insert(tag.to_string().to_lowercase().as_str(), tag)?;
         }
         write_txn
             .commit()
@@ -135,7 +137,7 @@ impl MetaStorage for RedbMetaStorage {
                 },
                 Err(e) => Err(anyhow::anyhow!(e.to_string())),
             },
-            Err(err) => Ok(Some("".to_string())),
+            Err(_) => Ok(Some("".to_string())),
         }
     }
 
@@ -149,17 +151,17 @@ impl MetaStorage for RedbMetaStorage {
             .commit()
             .map_err(|e| anyhow::anyhow!(e.to_string()))
     }
-    fn get_do_not_spend(&self, key: &str) -> Result<Option<bool>> {
+    fn get_do_not_spend(&self, key: &str) -> Result<bool> {
         let read_txn = self.db.begin_read()?;
         match read_txn.open_table(DO_NOT_SPEND_TABLE) {
             Ok(table) => match table.get(key) {
                 Ok(v) => match v {
-                    None => Ok(Some(true)),
-                    Some(value) => Ok(Some(value.value().clone())),
+                    None => Ok(false),
+                    Some(value) => Ok(value.value()),
                 },
                 Err(e) => Err(anyhow::anyhow!(e.to_string())),
             },
-            Err(_) => Ok(Some(true)),
+            Err(_) => Ok(false),
         }
     }
 
@@ -189,6 +191,6 @@ impl MetaStorage for RedbMetaStorage {
     }
 
     fn persist(&mut self) -> Result<bool> {
-        return Ok(true);
+        Ok(true)
     }
 }

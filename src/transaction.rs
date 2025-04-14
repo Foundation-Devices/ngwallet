@@ -1,28 +1,27 @@
-use bdk_electrum::bdk_core::bitcoin::Txid;
-use bdk_wallet::bitcoin::OutPoint;
+use bdk_wallet::bitcoin::{OutPoint, Txid};
 use std::str::FromStr;
 
-#[derive(Debug)]
-struct RampTransaction {
-    pub ramp_id: String,
-    pub ramp_fee: u32,
-    pub currency_amount: String,
-    pub currency: String,
-}
-
-#[derive(Debug)]
-struct BtcPayVoucher {
-    pub btc_pay_voucher_uri: String,
-    pub payout_id: String,
-}
-
-#[derive(Debug)]
-pub enum TransactionPlaceholder {
-    Ramp(RampTransaction),
-    BtcPayVoucher(BtcPayVoucher),
-    BroadcastPending,
-    Azteco,
-}
+// #[derive(Debug)]
+// struct RampTransaction {
+//     pub ramp_id: String,
+//     pub ramp_fee: u32,
+//     pub currency_amount: String,
+//     pub currency: String,
+// }
+//
+// #[derive(Debug)]
+// struct BtcPayVoucher {
+//     pub btc_pay_voucher_uri: String,
+//     pub payout_id: String,
+// }
+//
+// #[derive(Debug)]
+// pub enum TransactionPlaceholder {
+//     Ramp(RampTransaction),
+//     BtcPayVoucher(BtcPayVoucher),
+//     BroadcastPending,
+//     Azteco,
+// }
 
 #[derive(Debug, Clone)]
 pub struct Input {
@@ -68,8 +67,8 @@ pub struct BitcoinTransaction {
     pub vsize: usize,
 }
 
-#[derive(Debug)]
-pub struct NgTransaction {
-    pub placeholder: Option<TransactionPlaceholder>,
-    pub output: Option<BitcoinTransaction>,
-}
+// #[derive(Debug)]
+// pub struct NgTransaction {
+//     pub placeholder: Option<TransactionPlaceholder>,
+//     pub output: Option<BitcoinTransaction>,
+// }

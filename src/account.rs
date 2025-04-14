@@ -5,7 +5,6 @@ use anyhow::Error;
 use bdk_wallet::WalletPersister;
 use bdk_wallet::bitcoin::Network;
 use redb::StorageBackend;
-use serde::Serialize;
 
 use crate::config::{AddressType, NgAccountConfig};
 use crate::db::RedbMetaStorage;
@@ -20,6 +19,7 @@ pub struct NgAccount<P: WalletPersister> {
 }
 
 impl<P: WalletPersister> NgAccount<P> {
+    #![allow(clippy::too_many_arguments)]
     pub fn new_from_descriptor(
         name: String,
         color: String,
@@ -50,7 +50,7 @@ impl<P: WalletPersister> NgAccount<P> {
         )
         .unwrap();
 
-        let account_config = NgAccountConfig::new(
+        let account_config = NgAccountConfig {
             name,
             color,
             device_serial,
@@ -62,8 +62,8 @@ impl<P: WalletPersister> NgAccount<P> {
             network,
             id,
             date_synced,
-            db_path,
-        );
+            wallet_path: db_path,
+        };
         meta.lock()
             .unwrap()
             .set_config(account_config.serialize().as_str())

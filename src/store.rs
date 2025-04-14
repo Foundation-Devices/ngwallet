@@ -13,7 +13,7 @@ pub trait MetaStorage: Debug + Send + Sync {
     fn get_tag(&self, key: &str) -> Result<Option<String>>;
 
     fn set_do_not_spend(&mut self, key: &str, value: bool) -> Result<()>;
-    fn get_do_not_spend(&self, key: &str) -> Result<Option<bool>>;
+    fn get_do_not_spend(&self, key: &str) -> Result<bool>;
 
     fn set_config(&mut self, deserialized_config: &str) -> Result<()>;
     fn get_config(&self) -> Result<Option<NgAccountConfig>>;
@@ -31,6 +31,7 @@ pub struct InMemoryMetaStorage {
 }
 
 impl InMemoryMetaStorage {
+    #![allow(dead_code)]
     pub fn new() -> Self {
         InMemoryMetaStorage {
             config_store: std::collections::HashMap::new(),
@@ -61,10 +62,10 @@ impl MetaStorage for InMemoryMetaStorage {
     }
 
     fn remove_tag(&mut self, tag: &str) -> Result<()> {
-        return match self.tag_list.remove(tag) {
+        match self.tag_list.remove(tag) {
             true => Ok(()),
             false => Err(anyhow!("error")),
-        };
+        }
     }
 
     fn set_tag(&mut self, key: &str, value: &str) -> Result<()> {
@@ -78,11 +79,11 @@ impl MetaStorage for InMemoryMetaStorage {
         self.do_not_spend_store.insert(key.to_string(), value);
         Ok(())
     }
-    fn get_do_not_spend(&self, key: &str) -> Result<Option<bool>> {
-        return match self.do_not_spend_store.get(key) {
-            None => Ok(Some(true)),
-            Some(value) => Ok(Some(value.clone())),
-        };
+    fn get_do_not_spend(&self, key: &str) -> Result<bool> {
+        match self.do_not_spend_store.get(key) {
+            None => Ok(false),
+            Some(&value) => Ok(value),
+        }
     }
 
     fn set_config(&mut self, deserialized_config: &str) -> Result<()> {

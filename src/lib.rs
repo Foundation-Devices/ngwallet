@@ -9,8 +9,11 @@ pub mod utxo;
 pub use bdk_wallet;
 pub use redb;
 
-mod db;
 pub mod bip39;
+mod db;
 
+#[cfg(feature = "envoy")]
 const STOP_GAP: usize = 100;
+
+#[cfg(feature = "envoy")]
 const BATCH_SIZE: usize = 5;

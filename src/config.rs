@@ -33,35 +33,6 @@ pub struct NgAccountConfig {
 }
 
 impl NgAccountConfig {
-    pub fn new(
-        name: String,
-        color: String,
-        device_serial: Option<String>,
-        date_added: Option<String>,
-        index: u32,
-        internal_descriptor: String,
-        external_descriptor: Option<String>,
-        address_type: AddressType,
-        network: Network,
-        id: String,
-        date_synced: Option<String>,
-        wallet_path: Option<String>,
-    ) -> Self {
-        Self {
-            name,
-            color,
-            device_serial,
-            date_added,
-            index,
-            internal_descriptor,
-            external_descriptor,
-            address_type,
-            network,
-            id,
-            date_synced,
-            wallet_path,
-        }
-    }
     pub fn serialize(&self) -> String {
         serde_json::to_string_pretty(self).unwrap()
     }

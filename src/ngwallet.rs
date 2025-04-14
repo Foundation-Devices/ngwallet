@@ -4,25 +4,26 @@ use std::str::FromStr;
 use std::sync::{Arc, Mutex};
 
 use anyhow::Result;
-use bdk_wallet::bitcoin::{Address, Amount, Network, OutPoint, Psbt, ScriptBuf, Txid};
+use bdk_wallet::bitcoin::{Address, Network, OutPoint, Psbt, Txid};
 use bdk_wallet::chain::ChainPosition::{Confirmed, Unconfirmed};
-use bdk_wallet::chain::spk_client::{FullScanRequest, SyncResponse};
 use bdk_wallet::{AddressInfo, PersistedWallet, SignOptions};
-use bdk_wallet::{KeychainKind, WalletPersister, WalletTx};
+use bdk_wallet::{KeychainKind, WalletPersister};
 use bdk_wallet::{Update, Wallet};
 
 #[cfg(feature = "envoy")]
 use {
+    crate::{BATCH_SIZE, STOP_GAP},
     bdk_electrum::BdkElectrumClient,
+    bdk_electrum::bdk_core::spk_client::FullScanRequest,
     bdk_electrum::bdk_core::spk_client::FullScanResponse,
     bdk_electrum::bdk_core::spk_client::SyncRequest,
+    bdk_electrum::bdk_core::spk_client::SyncResponse,
     bdk_electrum::electrum_client::Client,
     bdk_electrum::electrum_client::{Config, Socks5Config},
 };
 
 use crate::store::MetaStorage;
 use crate::transaction::{BitcoinTransaction, Input, Output};
-use crate::{BATCH_SIZE, STOP_GAP};
 
 #[derive(Debug)]
 pub struct PsbtInfo {
@@ -43,7 +44,7 @@ impl<P: WalletPersister> NgWallet<P> {
         external_descriptor: Option<String>,
         network: Network,
         meta_storage: Arc<Mutex<dyn MetaStorage>>,
-        mut bdk_persister: Arc<Mutex<P>>,
+        bdk_persister: Arc<Mutex<P>>,
     ) -> Result<NgWallet<P>> {
         let wallet = match external_descriptor {
             None => Wallet::create_single(internal_descriptor.to_string()),
@@ -53,7 +54,7 @@ impl<P: WalletPersister> NgWallet<P> {
         }
         .network(network)
         .create_wallet(&mut *bdk_persister.lock().unwrap())
-        .map_err(|e| anyhow::anyhow!("Couldn't create wallet"))
+        .map_err(|_| anyhow::anyhow!("Couldn't create wallet "))
         .unwrap();
 
         Ok(Self {
@@ -73,7 +74,7 @@ impl<P: WalletPersister> NgWallet<P> {
 
     pub fn load(
         meta_storage: Arc<Mutex<dyn MetaStorage>>,
-        mut bdk_persister: Arc<Mutex<P>>,
+        bdk_persister: Arc<Mutex<P>>,
     ) -> Result<NgWallet<P>>
     where
         <P as WalletPersister>::Error: Debug,
@@ -160,11 +161,7 @@ impl<P: WalletPersister> NgWallet<P> {
                 .enumerate()
                 .map(|(index, output)| {
                     let amount = output.value;
-
-                    let do_not_spend = match storage.get_do_not_spend(&tx_id) {
-                        Ok(value) => value.unwrap_or(false),
-                        Err(_) => false,
-                    };
+                    let do_not_spend = storage.get_do_not_spend(&tx_id).unwrap_or(false);
                     Output {
                         tx_id: tx_id.clone(),
                         vout: index as u32,
@@ -174,14 +171,14 @@ impl<P: WalletPersister> NgWallet<P> {
                             .to_string(),
                         tag: storage.get_tag(&tx_id).unwrap(),
                         do_not_spend,
-                        date: date.clone(),
-                        is_confirmed: confirmations.clone() >= 3,
+                        date,
+                        is_confirmed: confirmations >= 3,
                     }
                 })
                 .collect::<Vec<Output>>();
             let amount: i64 = (received.to_sat() as i64) - (sent.to_sat() as i64);
 
-            let mut address = {
+            let address = {
                 let mut ret = "".to_string();
                 //its a sent transaction
                 if amount.is_positive() {
@@ -189,8 +186,7 @@ impl<P: WalletPersister> NgWallet<P> {
                         .clone()
                         .iter()
                         .filter(|output| !wallet.is_mine(output.script_pubkey.clone()))
-                        .enumerate()
-                        .for_each(|(index, output)| {
+                        .for_each(|output| {
                             ret = Address::from_script(&output.script_pubkey, wallet.network())
                                 .unwrap()
                                 .to_string();
@@ -204,8 +200,7 @@ impl<P: WalletPersister> NgWallet<P> {
                                 .derivation_of_spk(output.script_pubkey.clone())
                                 .is_none()
                         })
-                        .enumerate()
-                        .for_each(|(index, output)| {
+                        .for_each(|output| {
                             ret = Address::from_script(&output.script_pubkey, wallet.network())
                                 .unwrap()
                                 .to_string();
@@ -220,8 +215,7 @@ impl<P: WalletPersister> NgWallet<P> {
                                     .derivation_of_spk(output.script_pubkey.clone())
                                     .is_some_and(|x| x.0 == KeychainKind::External)
                             })
-                            .enumerate()
-                            .for_each(|(index, output)| {
+                            .for_each(|output| {
                                 ret = Address::from_script(&output.script_pubkey, wallet.network())
                                     .unwrap()
                                     .to_string();
@@ -327,15 +321,14 @@ impl<P: WalletPersister> NgWallet<P> {
         let mut unspents: Vec<Output> = vec![];
         let tip_height = wallet.latest_checkpoint().height();
 
-        let mut meta_storage = self.meta_storage.lock().unwrap();
+        let meta_storage = self.meta_storage.lock().unwrap();
         for local_output in wallet.list_unspent() {
             let mut date: Option<u64> = None;
             let out_put_id = format!(
                 "{}:{}",
-                local_output.outpoint.txid.to_string(),
-                local_output.outpoint.vout,
+                local_output.outpoint.txid, local_output.outpoint.vout,
             );
-            let wallet_tx = wallet.get_tx(local_output.outpoint.txid.clone());
+            let wallet_tx = wallet.get_tx(local_output.outpoint.txid);
             let mut confirmations = 0;
             match wallet_tx {
                 None => {}
@@ -367,10 +360,9 @@ impl<P: WalletPersister> NgWallet<P> {
                 }
             }
 
-            let do_not_spend = match meta_storage.get_do_not_spend(out_put_id.as_str()) {
-                Ok(value) => value.unwrap_or(false),
-                Err(_) => false,
-            };
+            let do_not_spend = meta_storage
+                .get_do_not_spend(out_put_id.as_str())
+                .unwrap_or(false);
 
             unspents.push(Output {
                 tx_id: local_output.outpoint.txid.to_string(),
@@ -491,7 +483,7 @@ impl<P: WalletPersister> NgWallet<P> {
         self.meta_storage
             .lock()
             .unwrap()
-            .remove_tag(&target_tag.clone())
+            .remove_tag(target_tag)
             .map_err(|e| anyhow::anyhow!("Error {}", e))
             .unwrap();
         self.unspend_outputs()
@@ -503,7 +495,7 @@ impl<P: WalletPersister> NgWallet<P> {
                 Some(existing_tag) => {
                     let new_tag = rename_to.unwrap_or("");
                     if existing_tag.eq(target_tag) {
-                        self.set_tag(&output, new_tag)
+                        self.set_tag(output, new_tag)
                             .map_err(|e| anyhow::anyhow!("Error {}", e))
                             .unwrap();
                     }
