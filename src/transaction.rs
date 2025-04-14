@@ -1,3 +1,7 @@
+use bdk_electrum::bdk_core::bitcoin::Txid;
+use bdk_wallet::bitcoin::OutPoint;
+use std::str::FromStr;
+
 #[derive(Debug)]
 struct RampTransaction {
     pub ramp_id: String,
@@ -20,13 +24,13 @@ pub enum TransactionPlaceholder {
     Azteco,
 }
 
-#[derive(Debug,Clone)]
+#[derive(Debug, Clone)]
 pub struct Input {
     pub tx_id: String,
     pub vout: u32,
 }
 
-#[derive(Debug,Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct Output {
     pub tx_id: String,
     pub vout: u32,
@@ -42,9 +46,13 @@ impl Output {
     pub fn get_id(&self) -> String {
         format!("{}:{}", self.tx_id, self.vout)
     }
+    pub fn get_outpoint(&self) -> OutPoint {
+        let tx_id = Txid::from_str(self.tx_id.as_str()).unwrap();
+        OutPoint::new(tx_id, self.vout)
+    }
 }
 
-#[derive(Debug,Clone)]
+#[derive(Debug, Clone)]
 pub struct BitcoinTransaction {
     pub tx_id: String,
     pub block_height: u32,
@@ -65,4 +73,3 @@ pub struct NgTransaction {
     pub placeholder: Option<TransactionPlaceholder>,
     pub output: Option<BitcoinTransaction>,
 }
-

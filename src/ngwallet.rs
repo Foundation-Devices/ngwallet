@@ -1,22 +1,23 @@
-use std::result::Result::Ok;
 use std::fmt::Debug;
+use std::result::Result::Ok;
 use std::str::FromStr;
 use std::sync::{Arc, Mutex};
 
-use anyhow::{Result};
-use bdk_wallet::{KeychainKind, WalletPersister, WalletTx};
+use anyhow::Result;
 use bdk_wallet::bitcoin::{Address, Amount, Network, OutPoint, Psbt, ScriptBuf, Txid};
 use bdk_wallet::chain::ChainPosition::{Confirmed, Unconfirmed};
 use bdk_wallet::chain::spk_client::{FullScanRequest, SyncResponse};
 use bdk_wallet::{AddressInfo, PersistedWallet, SignOptions};
+use bdk_wallet::{KeychainKind, WalletPersister, WalletTx};
 use bdk_wallet::{Update, Wallet};
 
 #[cfg(feature = "envoy")]
 use {
-    bdk_electrum::electrum_client::{Config, Socks5Config},
-    bdk_electrum::BdkElectrumClient, bdk_electrum::bdk_core::spk_client::FullScanResponse,
-    bdk_electrum::electrum_client::Client,
+    bdk_electrum::BdkElectrumClient,
+    bdk_electrum::bdk_core::spk_client::FullScanResponse,
     bdk_electrum::bdk_core::spk_client::SyncRequest,
+    bdk_electrum::electrum_client::Client,
+    bdk_electrum::electrum_client::{Config, Socks5Config},
 };
 
 use crate::store::MetaStorage;
@@ -50,10 +51,10 @@ impl<P: WalletPersister> NgWallet<P> {
                 Wallet::create(internal_descriptor.to_string(), external_descriptor)
             }
         }
-            .network(network)
-            .create_wallet(&mut *bdk_persister.lock().unwrap())
-            .map_err(|e| anyhow::anyhow!("Couldn't create wallet"))
-            .unwrap();
+        .network(network)
+        .create_wallet(&mut *bdk_persister.lock().unwrap())
+        .map_err(|e| anyhow::anyhow!("Couldn't create wallet"))
+        .unwrap();
 
         Ok(Self {
             wallet: Arc::new(Mutex::new(wallet)),
@@ -70,21 +71,26 @@ impl<P: WalletPersister> NgWallet<P> {
             .map_err(|_| anyhow::anyhow!("Could not persist wallet"))
     }
 
-    pub fn load(meta_storage: Arc<Mutex<dyn MetaStorage>>, mut bdk_persister: Arc<Mutex<P>>) -> Result<NgWallet<P>> where <P as WalletPersister>::Error: Debug {
+    pub fn load(
+        meta_storage: Arc<Mutex<dyn MetaStorage>>,
+        mut bdk_persister: Arc<Mutex<P>>,
+    ) -> Result<NgWallet<P>>
+    where
+        <P as WalletPersister>::Error: Debug,
+    {
         // #[cfg(feature = "envoy")]
         //     let mut persister = Connection::open(format!("{}/wallet.sqlite",db_path))?;
 
-
-        let wallet_opt = Wallet::load().load_wallet(&mut *bdk_persister.lock().unwrap()).unwrap();
+        let wallet_opt = Wallet::load()
+            .load_wallet(&mut *bdk_persister.lock().unwrap())
+            .unwrap();
 
         match wallet_opt {
-            Some(wallet) => {
-                Ok(Self {
-                    wallet: Arc::new(Mutex::new(wallet)),
-                    bdk_persister,
-                    meta_storage,
-                })
-            }
+            Some(wallet) => Ok(Self {
+                wallet: Arc::new(Mutex::new(wallet)),
+                bdk_persister,
+                meta_storage,
+            }),
             None => Err(anyhow::anyhow!("Failed to load wallet database.")),
         }
     }
@@ -156,12 +162,8 @@ impl<P: WalletPersister> NgWallet<P> {
                     let amount = output.value;
 
                     let do_not_spend = match storage.get_do_not_spend(&tx_id) {
-                        Ok(value) => {
-                            value.unwrap_or(false)
-                        }
-                        Err(_) => {
-                            false
-                        }
+                        Ok(value) => value.unwrap_or(false),
+                        Err(_) => false,
                     };
                     Output {
                         tx_id: tx_id.clone(),
@@ -182,77 +184,65 @@ impl<P: WalletPersister> NgWallet<P> {
             let mut address = {
                 let mut ret = "".to_string();
                 //its a sent transaction
-                if (amount.is_positive()) {
-                    tx
-                        .output
+                if amount.is_positive() {
+                    tx.output
                         .clone()
                         .iter()
-                        .filter(|output| {
-                            !wallet.is_mine(output.script_pubkey.clone())
-                        })
+                        .filter(|output| !wallet.is_mine(output.script_pubkey.clone()))
                         .enumerate()
                         .for_each(|(index, output)| {
-                            ret =
-                                Address::from_script(&output.script_pubkey, wallet.network())
-                                    .unwrap()
-                                    .to_string();
+                            ret = Address::from_script(&output.script_pubkey, wallet.network())
+                                .unwrap()
+                                .to_string();
                         });
                 } else {
-                    tx
-                        .output
+                    tx.output
                         .clone()
                         .iter()
                         .filter(|output| {
-                            wallet.derivation_of_spk(output.script_pubkey.clone())
+                            wallet
+                                .derivation_of_spk(output.script_pubkey.clone())
                                 .is_none()
                         })
                         .enumerate()
                         .for_each(|(index, output)| {
-                            ret =
-                                Address::from_script(&output.script_pubkey, wallet.network())
-                                    .unwrap()
-                                    .to_string();
+                            ret = Address::from_script(&output.script_pubkey, wallet.network())
+                                .unwrap()
+                                .to_string();
                         });
                     // if the address is empty, then check for self transfer
-                    if (ret.is_empty()) {
-                        tx
-                            .output
+                    if ret.is_empty() {
+                        tx.output
                             .clone()
                             .iter()
                             .filter(|output| {
-                                wallet.derivation_of_spk(output.script_pubkey.clone())
-                                    .is_some_and(|x| {
-                                        x.0 == KeychainKind::External
-                                    })
+                                wallet
+                                    .derivation_of_spk(output.script_pubkey.clone())
+                                    .is_some_and(|x| x.0 == KeychainKind::External)
                             })
                             .enumerate()
                             .for_each(|(index, output)| {
-                                ret =
-                                    Address::from_script(&output.script_pubkey, wallet.network())
-                                        .unwrap()
-                                        .to_string();
+                                ret = Address::from_script(&output.script_pubkey, wallet.network())
+                                    .unwrap()
+                                    .to_string();
                             });
                     }
                 }
 
                 //possible cancel transaction that involves change address
-                if ret.is_empty() && tx
-                    .output.len() == 1 {
-                    tx
-                        .output
+                if ret.is_empty() && tx.output.len() == 1 {
+                    tx.output
                         .clone()
                         .iter()
                         .filter(|output| {
-                            wallet.derivation_of_spk(output.script_pubkey.clone())
-                                .is_some_and(|x| {
-                                    x.0 == KeychainKind::Internal
-                                })
+                            wallet
+                                .derivation_of_spk(output.script_pubkey.clone())
+                                .is_some_and(|x| x.0 == KeychainKind::Internal)
                         })
                         .for_each(|o| {
-                            ret =
-                                Address::from_script(&o.script_pubkey, wallet.network())
-                                    .unwrap()
-                                    .to_string();
+                            ret = Address::from_script(&o.script_pubkey, wallet.network())
+                                .unwrap()
+                                .to_string();
                         });
                 }
                 ret
@@ -279,58 +269,55 @@ impl<P: WalletPersister> NgWallet<P> {
     }
     #[cfg(feature = "envoy")]
     pub fn full_scan_request(&self) -> FullScanRequest<KeychainKind> {
-        self.wallet.lock().unwrap().start_full_scan()
-            .build()
+        self.wallet.lock().unwrap().start_full_scan().build()
     }
     #[cfg(feature = "envoy")]
     pub fn sync_request(&self) -> SyncRequest<(KeychainKind, u32)> {
-        self.wallet.lock().unwrap().start_sync_with_revealed_spks()
+        self.wallet
+            .lock()
+            .unwrap()
+            .start_sync_with_revealed_spks()
             .build()
     }
 
     #[cfg(feature = "envoy")]
-    pub fn sync(request: SyncRequest<(KeychainKind, u32)>,
-                electrum_server: &str,
-                socks_proxy: Option<&str>,
+    pub fn sync(
+        request: SyncRequest<(KeychainKind, u32)>,
+        electrum_server: &str,
+        socks_proxy: Option<&str>,
     ) -> Result<SyncResponse> {
-        let socks5_config = match (socks_proxy) {
+        let socks5_config = match socks_proxy {
             Some(socks_proxy) => {
                 let socks5_config = Socks5Config::new(socks_proxy);
                 Some(socks5_config)
             }
-            None => None
+            None => None,
         };
-        let electrum_config = Config::builder()
-            .socks5(
-                socks5_config.clone()
-            )
-            .build();
+        let electrum_config = Config::builder().socks5(socks5_config.clone()).build();
         let client = Client::from_config(electrum_server, electrum_config).unwrap();
 
-        let bdk_client: BdkElectrumClient<Client> =
-            BdkElectrumClient::new(client);
+        let bdk_client: BdkElectrumClient<Client> = BdkElectrumClient::new(client);
         let update = bdk_client.sync(request, BATCH_SIZE, true)?;
         Ok(update)
     }
 
     #[cfg(feature = "envoy")]
-    pub fn scan(request: FullScanRequest<KeychainKind>, electrum_server: &str, socks_proxy: Option<&str>) -> Result<FullScanResponse<KeychainKind>> {
-        let socks5_config = match (socks_proxy) {
+    pub fn scan(
+        request: FullScanRequest<KeychainKind>,
+        electrum_server: &str,
+        socks_proxy: Option<&str>,
+    ) -> Result<FullScanResponse<KeychainKind>> {
+        let socks5_config = match socks_proxy {
             Some(socks_proxy) => {
                 let socks5_config = Socks5Config::new(socks_proxy);
                 Some(socks5_config)
             }
-            None => None
+            None => None,
         };
-        let electrum_config = Config::builder()
-            .socks5(
-                socks5_config
-            )
-            .build();
+        let electrum_config = Config::builder().socks5(socks5_config).build();
 
         let client = Client::from_config(electrum_server, electrum_config)?;
-        let client: BdkElectrumClient<Client> =
-            BdkElectrumClient::new(client);
+        let client: BdkElectrumClient<Client> = BdkElectrumClient::new(client);
         let update = client.full_scan(request, STOP_GAP, BATCH_SIZE, true)?;
         Ok(update)
     }
@@ -381,12 +368,8 @@ impl<P: WalletPersister> NgWallet<P> {
             }
 
             let do_not_spend = match meta_storage.get_do_not_spend(out_put_id.as_str()) {
-                Ok(value) => {
-                    value.unwrap_or(false)
-                }
-                Err(_) => {
-                    false
-                }
+                Ok(value) => value.unwrap_or(false),
+                Err(_) => false,
             };
 
             unspents.push(Output {
@@ -420,17 +403,6 @@ impl<P: WalletPersister> NgWallet<P> {
     //TODO: fix, check descriptor
     pub fn is_hot(&self) -> bool {
         true
-    }
-
-    pub fn create_send(&mut self, address: String, amount: u64) -> Result<Psbt> {
-        let mut wallet = self.wallet.lock().unwrap();
-        let address = Address::from_str(&address)?.require_network(wallet.network())?;
-        let script: ScriptBuf = address.into();
-        let mut builder = wallet.build_tx();
-        builder.add_recipient(script.clone(), Amount::from_sat(amount));
-
-        let psbt = builder.finish()?;
-        Ok(psbt)
     }
 
     pub fn sign(&self, psbt: &str) -> Result<String> {
@@ -475,13 +447,10 @@ impl<P: WalletPersister> NgWallet<P> {
         Ok(())
     }
 
-    pub fn set_note(
-        &mut self,
-        tx_id: &str,
-        note: &str,
-    ) -> Result<bool> {
+    pub fn set_note(&mut self, tx_id: &str, note: &str) -> Result<bool> {
         let tx_id = Txid::from_str(tx_id).map_err(|e| anyhow::anyhow!("Invalid Txid: {:?}", e))?;
-        let tx = self.wallet
+        let tx = self
+            .wallet
             .lock()
             .unwrap()
             .get_tx(tx_id)
@@ -499,77 +468,69 @@ impl<P: WalletPersister> NgWallet<P> {
         Ok(true)
     }
 
-    pub fn set_tag(
-        &mut self,
-        output: &Output,
-        tag: &str,
-    ) -> Result<bool> {
-        self.meta_storage.lock().unwrap()
-            .set_tag(output.get_id().as_str(), tag.clone())
+    pub fn set_tag(&mut self, output: &Output, tag: &str) -> Result<bool> {
+        self.meta_storage
+            .lock()
+            .unwrap()
+            .set_tag(output.get_id().as_str(), tag)
             .map_err(|_| anyhow::anyhow!("Could not set tag "))
             .unwrap();
-        self.meta_storage.lock().unwrap()
+        self.meta_storage
+            .lock()
+            .unwrap()
             .add_tag(tag.to_string().as_str())
             .map_err(|_| anyhow::anyhow!("Could not set tag "))
             .unwrap();
         Ok(true)
     }
 
-    pub fn list_tags(
-        &self,
-    ) -> Result<Vec<String>> {
-        self.meta_storage.lock().unwrap()
-            .list_tags()
+    pub fn list_tags(&self) -> Result<Vec<String>> {
+        self.meta_storage.lock().unwrap().list_tags()
     }
-    pub fn remove_tag(
-        &mut self,
-        target_tag: &str,
-        rename_to: Option<&str>,
-    ) -> Result<()> {
-        self.meta_storage.lock().unwrap()
+    pub fn remove_tag(&mut self, target_tag: &str, rename_to: Option<&str>) -> Result<()> {
+        self.meta_storage
+            .lock()
+            .unwrap()
             .remove_tag(&target_tag.clone())
-            .map_err(|e| anyhow::anyhow!("Error {}",e))
+            .map_err(|e| anyhow::anyhow!("Error {}", e))
             .unwrap();
         self.unspend_outputs()
-            .map_err(|e| anyhow::anyhow!("Error {}",e))
+            .map_err(|e| anyhow::anyhow!("Error {}", e))
             .unwrap()
-            .iter().for_each(|output: &Output| {
-            match output.clone().tag {
+            .iter()
+            .for_each(|output: &Output| match output.clone().tag {
                 None => {}
                 Some(existing_tag) => {
                     let new_tag = rename_to.unwrap_or("");
-                    if (existing_tag.eq(target_tag)) {
+                    if existing_tag.eq(target_tag) {
                         self.set_tag(&output, new_tag)
-                            .map_err(|e| anyhow::anyhow!("Error {}",e))
+                            .map_err(|e| anyhow::anyhow!("Error {}", e))
                             .unwrap();
                     }
                 }
-            }
-        });
+            });
 
         Ok(())
     }
-    pub fn set_do_not_spend(
-        &mut self,
-        output: &Output,
-        state: bool,
-    ) -> Result<bool> {
+    pub fn set_do_not_spend(&mut self, output: &Output, state: bool) -> Result<bool> {
         let out_point = OutPoint::new(Txid::from_str(&output.tx_id).unwrap(), output.vout);
-        self.wallet.lock().unwrap().get_utxo(out_point).map(|_| {
-            self.meta_storage
-                .lock().unwrap()
-                .set_do_not_spend(output.get_id().as_str(), state)
-                .map_err(|_| anyhow::anyhow!("Could not set do not spend"))
-                .unwrap();
-            Ok(true)
-        }).unwrap_or(Ok(false))
+        self.wallet
+            .lock()
+            .unwrap()
+            .get_utxo(out_point)
+            .map(|_| {
+                self.meta_storage
+                    .lock()
+                    .unwrap()
+                    .set_do_not_spend(output.get_id().as_str(), state)
+                    .map_err(|_| anyhow::anyhow!("Could not set do not spend"))
+                    .unwrap();
+                Ok(true)
+            })
+            .unwrap_or(Ok(false))
     }
     //Reveal addresses up to and including the target index and return an iterator of newly revealed addresses.
-    pub fn reveal_addresses_up_to(
-        &mut self,
-        keychain: KeychainKind,
-        index: u32,
-    ) -> Result<()> {
+    pub fn reveal_addresses_up_to(&mut self, keychain: KeychainKind, index: u32) -> Result<()> {
         let _ = self
             .wallet
             .lock()

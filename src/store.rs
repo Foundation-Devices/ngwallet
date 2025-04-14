@@ -1,12 +1,12 @@
-use anyhow::{anyhow, Result};
-use std::fmt::{Debug, Formatter};
 use crate::config::NgAccountConfig;
+use anyhow::{Result, anyhow};
+use std::fmt::{Debug, Formatter};
 
 pub trait MetaStorage: Debug + Send + Sync {
     fn set_note(&mut self, key: &str, value: &str) -> Result<()>;
     fn get_note(&self, key: &str) -> Result<Option<String>>;
 
-    fn list_tags(&self ) -> Result<Vec<String>>;
+    fn list_tags(&self) -> Result<Vec<String>>;
     fn add_tag(&mut self, tag: &str) -> Result<()>;
     fn remove_tag(&mut self, tag: &str) -> Result<()>;
     fn set_tag(&mut self, key: &str, value: &str) -> Result<()>;
@@ -61,14 +61,10 @@ impl MetaStorage for InMemoryMetaStorage {
     }
 
     fn remove_tag(&mut self, tag: &str) -> Result<()> {
-       return  match self.tag_list.remove(tag) {
-            true => {
-                Ok(())
-            }
-            false => {
-                Err(anyhow!("error"))
-            }
-        }
+        return match self.tag_list.remove(tag) {
+            true => Ok(()),
+            false => Err(anyhow!("error")),
+        };
     }
 
     fn set_tag(&mut self, key: &str, value: &str) -> Result<()> {
@@ -84,17 +80,14 @@ impl MetaStorage for InMemoryMetaStorage {
     }
     fn get_do_not_spend(&self, key: &str) -> Result<Option<bool>> {
         return match self.do_not_spend_store.get(key) {
-            None => {
-                Ok(Some(true))
-            }
-            Some(value) => {
-                Ok(Some(value.clone()))
-            }
+            None => Ok(Some(true)),
+            Some(value) => Ok(Some(value.clone())),
         };
     }
 
     fn set_config(&mut self, deserialized_config: &str) -> Result<()> {
-        self.config_store.insert("config".to_string(), deserialized_config.to_string());
+        self.config_store
+            .insert("config".to_string(), deserialized_config.to_string());
         Ok(())
     }
     fn get_config(&self) -> Result<Option<NgAccountConfig>> {
