@@ -10,6 +10,7 @@ pub use bdk_wallet;
 pub use redb;
 
 mod db;
+pub mod bip39;
 
 const STOP_GAP: usize = 100;
 const BATCH_SIZE: usize = 5;

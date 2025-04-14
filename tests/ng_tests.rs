@@ -14,7 +14,7 @@ mod tests {
     use redb::backends::FileBackend;
     use std::path::{Path, PathBuf};
     use std::sync::{Arc, Mutex};
-
+    use ngwallet::bip39;
     use crate::*;
 
     #[test]
@@ -180,6 +180,12 @@ mod tests {
             .unwrap();
         println!("psbt-----> \nn\n {}", psbt);
         account.wallet.persist().unwrap();
+    }
+
+    #[test]
+    fn autocomplete_seedword() {
+        let suggestions = bip39::get_seedword_suggestions("fa", 3);
+        assert_eq!(suggestions, ["fabric", "face", "faculty"])
     }
 
     // #[test]
