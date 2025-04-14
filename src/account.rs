@@ -33,10 +33,13 @@ impl<P: WalletPersister> NgAccount<P> {
         db_path: Option<String>,
         bdk_persister: Arc<Mutex<P>>,
         meta_storage_backend: Option<impl StorageBackend>,
-        id:String,
+        id: String,
         date_synced: Option<String>,
     ) -> Self {
-        let meta = Arc::new(Mutex::new(RedbMetaStorage::new(db_path.clone(), meta_storage_backend)));
+        let meta = Arc::new(Mutex::new(RedbMetaStorage::new(
+            db_path.clone(),
+            meta_storage_backend,
+        )));
 
         let wallet = NgWallet::new_from_descriptor(
             internal_descriptor.clone(),
@@ -59,7 +62,7 @@ impl<P: WalletPersister> NgAccount<P> {
             network,
             id,
             date_synced,
-            db_path
+            db_path,
         );
         meta.lock()
             .unwrap()
@@ -85,7 +88,7 @@ impl<P: WalletPersister> NgAccount<P> {
             meta_storage_backend,
         )));
 
-        let config = meta_storage.lock().unwrap().get_config().unwrap().unwrap() ;
+        let config = meta_storage.lock().unwrap().get_config().unwrap().unwrap();
 
         let wallet = NgWallet::load(meta_storage.clone(), bdk_persister.clone()).unwrap();
         Self {
@@ -95,8 +98,8 @@ impl<P: WalletPersister> NgAccount<P> {
         }
     }
 
-    pub fn rename(&mut self,name: &str ) -> Result<(), Error> {
-        self.config.name  = name.to_string();
+    pub fn rename(&mut self, name: &str) -> Result<(), Error> {
+        self.config.name = name.to_string();
         self.persist()
     }
 

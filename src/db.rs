@@ -1,10 +1,10 @@
-use std::collections::HashSet;
-use std::sync::Arc;
+use crate::config::NgAccountConfig;
 use crate::store::MetaStorage;
 use anyhow::Result;
 use log::info;
 use redb::{AccessGuard, Builder, Database, Error, ReadableTable, StorageBackend, TableDefinition};
-use crate::config::NgAccountConfig;
+use std::collections::HashSet;
+use std::sync::Arc;
 
 const NOTE_TABLE: TableDefinition<&str, &str> = TableDefinition::new("notes");
 const TAG_TABLE: TableDefinition<&str, &str> = TableDefinition::new("tags");
@@ -13,7 +13,6 @@ const TAGS_LIST: TableDefinition<&str, &str> = TableDefinition::new("tags_list")
 const DO_NOT_SPEND_TABLE: TableDefinition<&str, bool> = TableDefinition::new("do_not_spend");
 
 const ACCOUNT_CONFIG: TableDefinition<&str, &str> = TableDefinition::new("config");
-
 
 #[derive(Debug)]
 pub struct RedbMetaStorage {
@@ -25,27 +24,27 @@ impl RedbMetaStorage {
         let db = {
             match backend {
                 None => {
-                    let file_path = path.clone().map(|p| format!("{}/wallet.meta", p)).unwrap_or("wallet.meta".to_string());
+                    let file_path = path
+                        .clone()
+                        .map(|p| format!("{}/wallet.meta", p))
+                        .unwrap_or("wallet.meta".to_string());
                     Builder::new().create(file_path).unwrap()
                 }
-                Some(b) => {
-                    Builder::new().create_with_backend(b).unwrap()
-                }
+                Some(b) => Builder::new().create_with_backend(b).unwrap(),
             }
         };
 
-        RedbMetaStorage {
-            db: Arc::new(db),
-        }
+        RedbMetaStorage { db: Arc::new(db) }
     }
 
     pub fn open(path: Option<String>) -> Self {
-        let file_path = path.map(|p| format!("{}/wallet.meta", p)).unwrap_or("wallet.meta".to_string());
+        let file_path = path
+            .map(|p| format!("{}/wallet.meta", p))
+            .unwrap_or("wallet.meta".to_string());
         RedbMetaStorage {
             db: Arc::new(Database::open(file_path).unwrap()),
         }
     }
-
 
     pub fn persist(&self) -> Result<Vec<u8>> {
         Ok(vec![])
@@ -67,27 +66,16 @@ impl MetaStorage for RedbMetaStorage {
     fn get_note(&self, key: &str) -> Result<Option<String>> {
         let read_txn = self.db.begin_read()?;
         match read_txn.open_table(NOTE_TABLE) {
-            Ok(table) => {
-                match table.get(key) {
-                    Ok(result) => {
-                        match result {
-                            None => {
-                                Ok(Some("".to_string()))
-                            }
-                            Some(value) => {
-                                Ok(Some(value.value().to_string()))
-                            }
-                        }
-                    }
-                    Err(e) => Err(anyhow::anyhow!(e.to_string())),
-                }
-            }
-            Err(error) => {
-                Ok(Some("".to_string()))
-            }
+            Ok(table) => match table.get(key) {
+                Ok(result) => match result {
+                    None => Ok(Some("".to_string())),
+                    Some(value) => Ok(Some(value.value().to_string())),
+                },
+                Err(e) => Err(anyhow::anyhow!(e.to_string())),
+            },
+            Err(error) => Ok(Some("".to_string())),
         }
     }
-
 
     fn list_tags(&self) -> Result<Vec<String>> {
         let read_txn = self.db.begin_read()?;
@@ -101,9 +89,7 @@ impl MetaStorage for RedbMetaStorage {
                 }
                 Ok(items)
             }
-            Err(err) => {
-                Err(anyhow::anyhow!(err.to_string()))
-            }
+            Err(err) => Err(anyhow::anyhow!(err.to_string())),
         }
     }
 
@@ -142,24 +128,14 @@ impl MetaStorage for RedbMetaStorage {
     fn get_tag(&self, key: &str) -> Result<Option<String>> {
         let read_txn = self.db.begin_read()?;
         match read_txn.open_table(TAG_TABLE) {
-            Ok(table) => {
-                match table.get(key) {
-                    Ok(v) => {
-                        match v {
-                            None => {
-                                Ok(Some("".to_string()))
-                            }
-                            Some(value) => {
-                                Ok(Some(value.value().to_string()))
-                            }
-                        }
-                    }
-                    Err(e) => Err(anyhow::anyhow!(e.to_string())),
-                }
-            }
-            Err(err) => {
-                Ok(Some("".to_string()))
-            }
+            Ok(table) => match table.get(key) {
+                Ok(v) => match v {
+                    None => Ok(Some("".to_string())),
+                    Some(value) => Ok(Some(value.value().to_string())),
+                },
+                Err(e) => Err(anyhow::anyhow!(e.to_string())),
+            },
+            Err(err) => Ok(Some("".to_string())),
         }
     }
 
@@ -176,24 +152,14 @@ impl MetaStorage for RedbMetaStorage {
     fn get_do_not_spend(&self, key: &str) -> Result<Option<bool>> {
         let read_txn = self.db.begin_read()?;
         match read_txn.open_table(DO_NOT_SPEND_TABLE) {
-            Ok(table) => {
-                match table.get(key) {
-                    Ok(v) => {
-                        match v {
-                            None => {
-                                Ok(Some(true))
-                            }
-                            Some(value) => {
-                                Ok(Some(value.value().clone()))
-                            }
-                        }
-                    }
-                    Err(e) => Err(anyhow::anyhow!(e.to_string())),
-                }
-            }
-            Err(_) => {
-                Ok(Some(true))
-            }
+            Ok(table) => match table.get(key) {
+                Ok(v) => match v {
+                    None => Ok(Some(true)),
+                    Some(value) => Ok(Some(value.value().clone())),
+                },
+                Err(e) => Err(anyhow::anyhow!(e.to_string())),
+            },
+            Err(_) => Ok(Some(true)),
         }
     }
 
@@ -211,18 +177,14 @@ impl MetaStorage for RedbMetaStorage {
     fn get_config(&self) -> Result<Option<NgAccountConfig>> {
         let read_txn = self.db.begin_read()?;
         match read_txn.open_table(ACCOUNT_CONFIG) {
-            Ok(table) => {
-                match table.get("config") {
-                    Ok(v) => {
-                        let config: NgAccountConfig = serde_json::from_str(v.unwrap().value()).unwrap();
-                        Ok(Some(config))
-                    }
-                    Err(e) => Err(anyhow::anyhow!(e.to_string())),
+            Ok(table) => match table.get("config") {
+                Ok(v) => {
+                    let config: NgAccountConfig = serde_json::from_str(v.unwrap().value()).unwrap();
+                    Ok(Some(config))
                 }
-            }
-            Err(_) => {
-                Ok(None)
-            }
+                Err(e) => Err(anyhow::anyhow!(e.to_string())),
+            },
+            Err(_) => Ok(None),
         }
     }
 

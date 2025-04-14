@@ -1,7 +1,6 @@
 use bdk_wallet::bitcoin::Network;
 use serde::{Deserialize, Serialize};
 
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 #[non_exhaustive]
 pub enum AddressType {
@@ -16,7 +15,6 @@ pub enum AddressType {
     /// Pay to taproot.
     P2tr,
 }
-
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct NgAccountConfig {
