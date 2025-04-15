@@ -1,15 +1,16 @@
 use crate::ngwallet::NgWallet;
-use anyhow::Result;
-use bdk_wallet::WalletPersister;
-use bdk_wallet::bitcoin::{Address, Amount, Psbt, ScriptBuf};
+use anyhow::{Result};
+use bdk_wallet::{WalletPersister};
+use bdk_wallet::bitcoin::{Address, Amount,  Psbt,  ScriptBuf,};
 use std::str::FromStr;
+
 
 #[cfg(feature = "envoy")]
 use {
     crate::transaction::Output,
-    bdk_electrum::electrum_client::bitcoin::consensus::encode::serialize_hex,
     bdk_wallet::error::CreateTxError::CoinSelection,
     bdk_wallet::psbt::PsbtUtils,
+    anyhow::{Error},
     bdk_wallet::{SignOptions, TxOrdering},
 };
 
@@ -20,7 +21,7 @@ impl<P: WalletPersister> NgWallet<P> {
         address: String,
         amount: u64,
         selected_outputs: Vec<Output>,
-    ) -> anyhow::Result<u64> {
+    ) -> Result<u64> {
         let utxos = self.unspend_outputs().unwrap();
         let balance = self.balance().unwrap().total().to_sat();
         let mut wallet = self.wallet.lock().unwrap();
@@ -35,7 +36,6 @@ impl<P: WalletPersister> NgWallet<P> {
         let mut do_not_spend_utxos: Vec<Output> = vec![];
         let mut spendables: Vec<Output> = vec![];
         for output in utxos {
-            println!("loop[ing ${}", output.do_not_spend);
             //choose all output that are not selected by the user,
             //this will create a pool of available utxo for tx builder.
             for selected_outputs in selected_outputs.clone() {
@@ -61,38 +61,30 @@ impl<P: WalletPersister> NgWallet<P> {
         }
 
         let mut spendable_balance = balance;
+        //deduct do_not_spend_amount from main balance,
+        //this will be the balance of spendable utxos combined
         if balance > 0 && do_not_spend_amount < balance {
             spendable_balance = balance - do_not_spend_amount;
+        }
+
+        if amount > spendable_balance {
+            return Err(Error::msg("Insufficient balance".to_string()));
         }
 
         let mut max_fee = spendable_balance - amount;
         let mut max_fee_rate = 1;
 
         let mut receive_amount = amount;
+        //if user is trying to sweep in order to find the max fee we set receive to min spend…
+        //amount which is dust limit
         if spendable_balance == amount {
             receive_amount = 573; //dust limit
             max_fee = spendable_balance - receive_amount.clone();
         }
+
         if max_fee == 0 {
             max_fee = 1;
         }
-        println!("\n\n<<<---->>>");
-        println!("--->      Amount              -> {}", amount.clone());
-        println!("--->      Address             -> {:?}", address.clone());
-        println!("--->      MaxFee              -> {:?}", max_fee.clone());
-        println!(
-            "--->      ReceiveAmount       -> {:?}",
-            receive_amount.clone()
-        );
-        println!(
-            "--->      DonotSpendAmount    -> {:?}",
-            do_not_spend_amount.clone()
-        );
-        println!(
-            "--->      SpendableAmount     -> {:?}",
-            spendable_balance.clone()
-        );
-        println!("<<<---->>>\n\n");
         loop {
             let mut builder = wallet.build_tx();
             builder.ordering(TxOrdering::Shuffle).only_witness_utxo();
@@ -101,24 +93,33 @@ impl<P: WalletPersister> NgWallet<P> {
             }
             builder.add_recipient(script.clone(), Amount::from_sat(receive_amount.clone()));
             builder.fee_absolute(Amount::from_sat(max_fee));
-            // builder.fee_rate(FeeRate::from_sat_per_vb(104).unwrap());
             let mut psbt = builder.finish();
             match psbt {
                 Ok(mut psbt) => {
                     let sign_options = SignOptions {
-                        trust_witness_utxo: true,
                         ..Default::default()
                     };
                     // Always try signing
-                    wallet.sign(&mut psbt, sign_options).unwrap_or(false);
-
+                    let finalized = wallet.sign(&mut psbt, sign_options).unwrap_or(false);
+                    println!("finalized: {}", finalized);
+                    // reset indexes since this is only for fee calc
+                    match psbt.clone().extract_tx() {
+                        Ok(tx) => {
+                            for tx_out in tx.output {
+                                let derivation = wallet.derivation_of_spk(tx_out.script_pubkey);
+                                match derivation {
+                                    None => {}
+                                    Some(path) => {
+                                        wallet.unmark_used(path.0, path.1);
+                                    }
+                                }
+                            }
+                        }
+                        Err(_) => {}
+                    }
                     match psbt.fee_rate() {
                         None => {}
                         Some(r) => {
-                            println!(
-                                "Serialized {:?}\n\n",
-                                serialize_hex(&psbt.extract_tx().unwrap())
-                            );
                             max_fee_rate = r.to_sat_per_vb_floor();
                             break;
                         }
@@ -128,13 +129,13 @@ impl<P: WalletPersister> NgWallet<P> {
                     CoinSelection(erorr) => {
                         max_fee = erorr.available.to_sat() - receive_amount.clone();
                     }
-                    _ => {
-                        break;
+                    err => {
+                        return Err(err.into());
                     }
                 },
             }
         }
-        println!("\n\n<<<---->>>");
+        println!("\n\n<<<--DEBUG-->>>");
         println!("--->      Amount              -> {}", amount.clone());
         println!("--->      Address             -> {:?}", address.clone());
         println!(
@@ -154,7 +155,7 @@ impl<P: WalletPersister> NgWallet<P> {
             "--->      MaxFeeRateFound     -> {:?}",
             max_fee_rate.clone()
         );
-        println!("<<<---->>>\n\n");
+        println!("<<<--DEBUG-->>>\n\n");
         Ok(max_fee)
     }
 
