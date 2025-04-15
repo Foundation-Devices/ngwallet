@@ -392,9 +392,17 @@ impl<P: WalletPersister> NgWallet<P> {
         Ok(self.wallet.lock().unwrap().balance())
     }
 
-    //TODO: fix, check descriptor
+    //check if the wallet got signers,
     pub fn is_hot(&self) -> bool {
-        true
+        let wallet = self.wallet.lock().unwrap();
+        !wallet
+            .get_signers(KeychainKind::Internal)
+            .signers()
+            .is_empty()
+            || !wallet
+                .get_signers(KeychainKind::External)
+                .signers()
+                .is_empty()
     }
 
     pub fn sign(&self, psbt: &str) -> Result<String> {
