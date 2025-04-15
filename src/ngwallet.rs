@@ -48,14 +48,21 @@ impl<P: WalletPersister> NgWallet<P> {
     ) -> Result<NgWallet<P>> {
         let wallet = match external_descriptor {
             None => Wallet::create_single(internal_descriptor.to_string()),
-            Some(external_descriptor) => {
-                Wallet::create(internal_descriptor.to_string(), external_descriptor)
-            }
+            Some(external_descriptor) => Wallet::create(external_descriptor, internal_descriptor),
         }
         .network(network)
         .create_wallet(&mut *bdk_persister.lock().unwrap())
-        .map_err(|_| anyhow::anyhow!("Couldn't create wallet "))
-        .unwrap();
+        .map_err(|e| match e {
+            CreateWithPersistError::Persist(_) => {
+                anyhow::anyhow!("Could not persist wallet")
+            }
+            CreateWithPersistError::DataAlreadyExists(_) => {
+                anyhow::anyhow!("Wallet already exist. Please use load method")
+            }
+            CreateWithPersistError::Descriptor(error) => {
+                anyhow::anyhow!("Could not create wallet from descriptor: {:?}", error)
+            }
+        })?;
 
         Ok(Self {
             wallet: Arc::new(Mutex::new(wallet)),
