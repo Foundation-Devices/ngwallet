@@ -1,5 +1,10 @@
+#[cfg(feature = "envoy")]
 const EXTERNAL_DESCRIPTOR: &str = "tr(tprv8ZgxMBicQKsPdrjwWCyXqqJ4YqcyG4DmKtjjsRt29v1PtD3r3PuFJAjWytzcvSTKnZAGAkPSmnrdnuHWxCAwy3i1iPhrtKAfXRH7dVCNGp6/86'/1'/0'/0/*)#g9xn7wf9";
+
+#[cfg(feature = "envoy")]
 const INTERNAL_DESCRIPTOR: &str = "tr(tprv8ZgxMBicQKsPdrjwWCyXqqJ4YqcyG4DmKtjjsRt29v1PtD3r3PuFJAjWytzcvSTKnZAGAkPSmnrdnuHWxCAwy3i1iPhrtKAfXRH7dVCNGp6/86'/1'/0'/1/*)#e3rjrmea";
+
+#[cfg(feature = "envoy")]
 const ELECTRUM_SERVER: &str = "ssl://mempool.space:60602";
 
 // TODO: make this unique to the descriptor
@@ -19,7 +24,6 @@ mod tests {
         redb::backends::FileBackend,
         std::sync::{Arc, Mutex},
     };
-
     #[test]
     #[cfg(feature = "envoy")]
     fn new_wallet() {
@@ -112,11 +116,11 @@ mod tests {
         account.wallet.persist().unwrap();
     }
 
-    // #[test]
-    // #[cfg(feature = "envoy")]
+    #[test]
+    #[cfg(feature = "envoy")]
     // fn open_wallet() {
     //     let wallet_file = "wallet.sqlite".to_string();
-    //     println!("Creating database at: {}", wallet_file);
+    //     println!("Opening database at: {}", wallet_file);
     //
     //     let connection = Connection::open(wallet_file).unwrap();
     //     // let connection = Connection::open_in_memory().unwrap();
@@ -168,17 +172,25 @@ mod tests {
     //         println!("Utxo After Do not Spend: {:?}", utxo_tag);
     //     }
     //     println!("Balance {:?}", balance);
-    //     // //
-    //     let psbt = account
+    //
+    //
+    //     match account
     //         .wallet
     //         .get_max_fee(
-    //             "tb1pkar3gerekw8f9gef9vn9xz0qypytgacp9wa5saelpksdgct33qdqs257jl".to_string(),
-    //             90032,
+    //             "tb1pffsyra2t3nut94yvdae9evz3feg7tel843pfcv76vt5cwewavtesl3gsph".to_string(),
+    //             30000,
     //             vec![],
-    //         )
-    //         .unwrap();
-    //     println!("psbt-----> \nn\n {}", psbt);
-    //     account.wallet.persist().unwrap();
+    //         ) {
+    //         Ok(max_fee) => {
+    //             println!("max fee calculated {}", max_fee)
+    //         }
+    //         Err(er) => {
+    //             println!("max fee error {} ", er.to_string())
+    //         }
+    //     }
+    //
+    //     account.wallet.persist().expect("Wallet persisted");
+    //     drop(account)
     // }
 
     #[test]
