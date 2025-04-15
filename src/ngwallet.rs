@@ -6,7 +6,7 @@ use std::sync::{Arc, Mutex};
 use anyhow::Result;
 use bdk_wallet::bitcoin::{Address, Network, OutPoint, Psbt, Txid};
 use bdk_wallet::chain::ChainPosition::{Confirmed, Unconfirmed};
-use bdk_wallet::{AddressInfo, PersistedWallet, SignOptions};
+use bdk_wallet::{AddressInfo, CreateWithPersistError, PersistedWallet, SignOptions};
 use bdk_wallet::{KeychainKind, WalletPersister};
 use bdk_wallet::{Update, Wallet};
 
@@ -89,7 +89,17 @@ impl<P: WalletPersister> NgWallet<P> {
         // #[cfg(feature = "envoy")]
         //     let mut persister = Connection::open(format!("{}/wallet.sqlite",db_path))?;
 
+        let config = meta_storage
+            .lock()
+            .unwrap()
+            .get_config()
+            .map_err(|e| anyhow::anyhow!("Could not get config from meta storage: {:?}", e))?
+            .unwrap();
+
         let wallet_opt = Wallet::load()
+            .descriptor(KeychainKind::Internal, Some(config.internal_descriptor))
+            .descriptor(KeychainKind::External, config.external_descriptor)
+            .extract_keys()
             .load_wallet(&mut *bdk_persister.lock().unwrap())
             .unwrap();
 
@@ -248,7 +258,12 @@ impl<P: WalletPersister> NgWallet<P> {
                 }
                 ret
             };
-
+            let vsize = tx.vsize() as f32;
+            let fee_rate = if vsize > 0.0 {
+                (fee as f32 / vsize) as u64
+            } else {
+                0
+            };
             storage.get_note(&tx_id).unwrap_or(None);
             transactions.push(BitcoinTransaction {
                 tx_id: tx_id.clone(),
@@ -256,6 +271,7 @@ impl<P: WalletPersister> NgWallet<P> {
                 confirmations,
                 is_confirmed: confirmations >= 3,
                 fee,
+                fee_rate,
                 amount,
                 inputs,
                 outputs,
