@@ -9,7 +9,11 @@ use std::str::FromStr;
 use crate::transaction::{BitcoinTransaction, Input, Output};
 #[cfg(feature = "envoy")]
 use {
-    bdk_electrum::BdkElectrumClient, bdk_electrum::electrum_client::Client,
+    crate::BATCH_SIZE,
+    bdk_electrum::BdkElectrumClient,
+    bdk_electrum::bdk_core::spk_client::SyncRequest,
+    bdk_electrum::electrum_client::Client,
+    bdk_electrum::electrum_client::{Config, Socks5Config},
     bdk_wallet::psbt::PsbtUtils,
 };
 
@@ -59,7 +63,7 @@ impl Spend {
         };
         Self {
             transaction: bitcoin_tx,
-            psbt_base64: BASE64_STANDARD.encode(&psbt.serialize()).to_string(),
+            psbt_base64: BASE64_STANDARD.encode(psbt.serialize()).to_string(),
         }
     }
 }
@@ -254,11 +258,11 @@ impl<P: WalletPersister> NgWallet<P> {
         for do_not_spend_utxo in do_not_spend_utxos.clone() {
             builder.add_unspendable(do_not_spend_utxo.get_outpoint());
         }
-        builder.add_recipient(script.clone(), Amount::from_sat(receive_amount.clone()));
-        builder.fee_rate(
-            FeeRate::from_sat_per_vb(fee_rate).unwrap_or(FeeRate::from_sat_per_vb_unchecked(1)),
-        );
-        let mut psbt = builder.finish();
+        builder.add_recipient(script.clone(), Amount::from_sat(receive_amount));
+        let fee_rate =
+            FeeRate::from_sat_per_vb(fee_rate).unwrap_or(FeeRate::from_sat_per_vb_unchecked(1));
+        builder.fee_rate(fee_rate);
+        let psbt = builder.finish();
         match psbt {
             Ok(mut psbt) => {
                 // Always try signing
@@ -268,18 +272,18 @@ impl<P: WalletPersister> NgWallet<P> {
                     ..Default::default()
                 };
                 // Always try signing
-                match wallet.sign(&mut psbt, sign_options) {
-                    Ok(_) => {}
-                    Err(_) => {}
-                }
+                let _ = wallet.sign(&mut psbt, sign_options).is_ok();
+
+                //extract outputs from tx and add tags and do_not_spend states
                 let outputs = transaction
                     .output
                     .clone()
                     .iter()
                     .enumerate()
                     .map(|(index, tx_out)| {
-                        let derivation = wallet.derivation_of_spk(tx_out.clone().script_pubkey);
-                        let address = Address::from_script(&tx_out.script_pubkey, wallet.network())
+                        let script = tx_out.script_pubkey.clone();
+                        let derivation = wallet.derivation_of_spk(script.clone());
+                        let address = Address::from_script(&script, wallet.network())
                             .unwrap()
                             .to_string();
 
@@ -324,27 +328,73 @@ impl<P: WalletPersister> NgWallet<P> {
     }
 
     #[cfg(feature = "envoy")]
-    pub fn broadcast_psbt(&mut self, spend: Spend, electrum_server: &str) -> Result<String> {
-        let client: BdkElectrumClient<Client> = BdkElectrumClient::new(
-            Client::new(electrum_server).map_err(|e| anyhow::anyhow!("{}", e))?,
-        );
+    pub fn broadcast_psbt(
+        &mut self,
+        spend: Spend,
+        electrum_server: &str,
+        socks_proxy: Option<&str>,
+    ) -> Result<String> {
+        let bdk_client = Self::build_electrum_client(electrum_server, socks_proxy);
+
         let tx = BASE64_STANDARD
             .decode(spend.psbt_base64)
             .map_err(|e| anyhow::anyhow!("Failed to decode PSBT: {}", e))?;
         let mut psbt = Psbt::deserialize(tx.as_slice())
             .map_err(|er| anyhow::anyhow!("Failed to deserialize PSBT: {}", er))?;
-        let account = self.wallet.lock().unwrap();
-
-        let sign = account
-            .sign(&mut psbt, SignOptions::default())
-            .map_err(|e| anyhow::anyhow!("Failed to sign PSBT: {}", e))?;
+        {
+            let account = self.wallet.lock().unwrap();
+            account
+                .sign(&mut psbt, SignOptions::default())
+                .map_err(|e| anyhow::anyhow!("Failed to sign PSBT: {}", e))?;
+        }
         let transaction = psbt
             .extract_tx()
             .map_err(|e| anyhow::anyhow!("Failed to extract transaction: {}", e))?;
 
-        let tx_id = client
+        let tx_id = bdk_client
             .transaction_broadcast(&transaction)
             .map_err(|e| anyhow::anyhow!("Failed to broadcast transaction: {}", e))?;
+        //sync wallet to get the new transaction
+        let mut sync_request: Option<SyncRequest<(KeychainKind, u32)>> = None;
+        {
+            let mut wallet = self.wallet.lock().unwrap();
+            sync_request = Some(wallet.start_sync_with_revealed_spks().build());
+        }
+        {
+            if sync_request.is_some() {
+                let response = Self::sync(sync_request.unwrap(), electrum_server, socks_proxy);
+                match response {
+                    Ok(sync_response) => {
+                        self.wallet
+                            .lock()
+                            .unwrap()
+                            .apply_update(sync_response)
+                            .unwrap();
+                    }
+                    Err(_) => {}
+                }
+            }
+        }
+        //set the note and tags if they exist
+        let tx = spend.transaction;
+        if tx.note.is_some() {
+            //we use unchecked note to avoid not finding transactions due sync failure
+            self.set_note_unchecked(
+                tx_id.clone().to_string().as_str(),
+                tx.note.as_ref().unwrap().as_str(),
+            )?;
+        }
+        for output in tx.outputs.iter() {
+            if output.tag.is_some() {
+                self.set_tag(&output.clone(), output.tag.as_ref().unwrap().as_str())
+                    .map_err(|e| anyhow::anyhow!("Failed to set tag: {}", e))?;
+            }
+            if output.do_not_spend {
+                self.set_do_not_spend(&output, true)
+                    .map_err(|e| anyhow::anyhow!("Failed to do_not_spend: {}", e))?;
+            }
+        }
+        self.persist().unwrap();
         Ok(tx_id.to_string())
     }
 
