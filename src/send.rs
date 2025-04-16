@@ -469,4 +469,42 @@ impl<P: WalletPersister> NgWallet<P> {
             }
         }
     }
+    fn transform_psbt_to_bitcointx(
+        psbt: Psbt,
+        address: String,
+        amount: i64,
+        outputs: Vec<Output>,
+        note: Option<String>,
+    ) -> BitcoinTransaction {
+        let transaction = psbt.clone().unsigned_tx;
+        let fee = psbt.fee().unwrap_or(Amount::from_sat(0)).to_sat();
+        let vsize = transaction.vsize() as f32;
+        let fee_rate = if vsize > 0.0 {
+            fee.checked_div(vsize as u64).unwrap_or(0)
+        } else {
+            0
+        };
+        BitcoinTransaction {
+            tx_id: transaction.clone().compute_txid().to_string(),
+            block_height: 0,
+            confirmations: 0,
+            is_confirmed: false,
+            fee: psbt.fee().unwrap_or(Amount::from_sat(0)).to_sat(),
+            fee_rate,
+            amount,
+            inputs: transaction
+                .input
+                .iter()
+                .map(|input| Input {
+                    tx_id: input.previous_output.txid.to_string(),
+                    vout: input.previous_output.vout,
+                })
+                .collect(),
+            address,
+            outputs,
+            note,
+            date: None,
+            vsize: 0,
+        }
+    }
 }
