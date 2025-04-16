@@ -491,6 +491,16 @@ impl<P: WalletPersister> NgWallet<P> {
         Ok(true)
     }
 
+    /// Sets a note for a transaction without checking if the transaction existence.
+    pub fn set_note_unchecked(&mut self, tx_id: &str, note: &str) -> Result<bool> {
+        self.meta_storage
+            .lock()
+            .unwrap()
+            .set_note(tx_id, note)
+            .map_err(|e| anyhow::anyhow!("Could not set note: {:?}", e))?;
+        Ok(true)
+    }
+
     pub fn set_tag(&mut self, output: &Output, tag: &str) -> Result<bool> {
         self.meta_storage
             .lock()
