@@ -303,17 +303,7 @@ impl<P: WalletPersister> NgWallet<P> {
         electrum_server: &str,
         socks_proxy: Option<&str>,
     ) -> Result<SyncResponse> {
-        let socks5_config = match socks_proxy {
-            Some(socks_proxy) => {
-                let socks5_config = Socks5Config::new(socks_proxy);
-                Some(socks5_config)
-            }
-            None => None,
-        };
-        let electrum_config = Config::builder().socks5(socks5_config.clone()).build();
-        let client = Client::from_config(electrum_server, electrum_config).unwrap();
-
-        let bdk_client: BdkElectrumClient<Client> = BdkElectrumClient::new(client);
+        let bdk_client = Self::build_electrum_client(electrum_server, socks_proxy);
         let update = bdk_client.sync(request, BATCH_SIZE, true)?;
         Ok(update)
     }
