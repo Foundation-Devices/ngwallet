@@ -21,6 +21,7 @@ mod tests {
         ngwallet::account::NgAccount,
         ngwallet::config::AddressType,
         ngwallet::ngwallet::NgWallet,
+        ngwallet::send::SpendParams,
         redb::backends::FileBackend,
         std::sync::{Arc, Mutex},
     };
@@ -201,31 +202,33 @@ mod tests {
         //     }
         // };
 
-        // match account
-        //     .wallet
-        //     .compose_psbt(
-        //         "tb1pe3kcs085e8qej9aqqx6qryv2qsfxzywy9xd8pryzwemv2dghdqgs4a490l".to_string(),
-        //         727,
-        //         1,
-        //         vec![],
-        //         Some("do not note the nought".to_string()),
-        //         Some("Tagg dis..".to_string()),
-        //         true,
-        //     ) {
-        //     Ok(spend) => {
-        //         match account.wallet.broadcast_psbt(spend, ELECTRUM_SERVER,None) {
-        //             Ok(spend) => {
-        //                 println!("Spend broadcasted successfully {:?} ", spend)
-        //             }
-        //             Err(errr) => {
-        //                 println!("Spend error {:?} ", errr)
-        //             }
-        //         }
-        //     }
-        //     Err(er) => {
-        //         println!("Spend error {} ", er.to_string())
-        //     }
-        // };
+        match account.wallet.compose_psbt(SpendParams {
+            address: "tb1phc8m8vansnl4utths947mjquprw20puwrrdfrwx8akeeu2tqwkls7l62u4".to_string(),
+            amount: 699,
+            fee_rate: 1,
+            selected_outputs: vec![],
+            note: Some("not a note".to_string()),
+            tag: Some("Tag dis".to_string()),
+            do_not_spend_change: true,
+        }) {
+            Ok(spend) => {
+                match account
+                    .wallet
+                    .broadcast_psbt(spend.clone(), ELECTRUM_SERVER, None)
+                {
+                    Ok(tx_id) => {
+                        assert_eq!(tx_id, spend.transaction.tx_id);
+                        println!("broadcast success {:?} ", spend)
+                    }
+                    Err(error) => {
+                        println!("Spend error {:?} ", error)
+                    }
+                }
+            }
+            Err(er) => {
+                println!("Spend error {} ", er.to_string())
+            }
+        };
 
         let transactions = account.wallet.transactions().unwrap();
         transactions.iter().for_each(|tx| {

@@ -23,6 +23,17 @@ pub struct Spend {
     pub psbt_base64: String,
 }
 
+#[derive(Debug, Clone)]
+pub struct SpendParams {
+    pub address: String,
+    pub amount: u64,
+    pub fee_rate: u64,
+    pub selected_outputs: Vec<Output>,
+    pub note: Option<String>,
+    pub tag: Option<String>,
+    pub do_not_spend_change: bool,
+}
+
 impl Spend {
     fn from(
         psbt: Psbt,
@@ -200,18 +211,21 @@ impl<P: WalletPersister> NgWallet<P> {
         Ok(max_fee_rate)
     }
 
-    pub fn compose_psbt(
-        &mut self,
-        address: String,
-        amount: u64,
-        fee_rate: u64,
-        selected_outputs: Vec<Output>,
-        note: Option<String>,
-        tag: Option<String>,
-        do_not_spend_change: bool,
-    ) -> Result<Spend> {
+    pub fn compose_psbt(&mut self, spend_params: SpendParams) -> Result<Spend> {
+        let address = spend_params.address;
+        let amount = spend_params.amount;
+        let fee_rate = spend_params.fee_rate;
+        let selected_outputs = spend_params.selected_outputs;
+        let note = spend_params.note;
+        let tag = spend_params.tag;
+        let do_not_spend_change = spend_params.do_not_spend_change;
+
+        //get current utxo set and balance
         let utxos = self.unspend_outputs().unwrap();
         let balance = self.balance().unwrap().total().to_sat();
+
+        // The wallet will be locked for the rest of the spend method,
+        // so calling other NgWallet APIs won't succeed.
         let mut wallet = self.wallet.lock().unwrap();
 
         let address = Address::from_str(&address)
@@ -222,6 +236,7 @@ impl<P: WalletPersister> NgWallet<P> {
 
         //do not spend
         let mut do_not_spend_utxos: Vec<Output> = vec![];
+        //spendable utxo pool, the tx builder chooses from this pool
         let mut spendables: Vec<Output> = vec![];
         Self::extract_spendable_do_not_spendable(
             selected_outputs,
@@ -248,8 +263,9 @@ impl<P: WalletPersister> NgWallet<P> {
         }
 
         let mut receive_amount = amount;
-        //if user is trying to sweep in order to find the max fee we set receive to min spend…
-        //amount which is dust limit
+        // If the user is trying to sweep in order to find the maximum fee,
+        // we set the receive amount to the minimum spendable amount,
+        // which is the dust limit.
         if spendable_balance == amount {
             receive_amount = 573; //dust limit
         }
@@ -262,8 +278,8 @@ impl<P: WalletPersister> NgWallet<P> {
         let fee_rate =
             FeeRate::from_sat_per_vb(fee_rate).unwrap_or(FeeRate::from_sat_per_vb_unchecked(1));
         builder.fee_rate(fee_rate);
-        let psbt = builder.finish();
-        match psbt {
+
+        match builder.finish() {
             Ok(mut psbt) => {
                 // Always try signing
                 let transaction = psbt.clone().extract_tx().unwrap();
@@ -321,7 +337,7 @@ impl<P: WalletPersister> NgWallet<P> {
                 ))
             }
             Err(e) => match e {
-                CoinSelection(erorr) => Err(erorr.into()),
+                CoinSelection(error) => Err(error.into()),
                 err => Err(err.into()),
             },
         }
