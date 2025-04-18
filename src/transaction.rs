@@ -1,5 +1,3 @@
-use bdk_electrum::bdk_core::bitcoin::Amount;
-use bdk_wallet::KeychainKind;
 use bdk_wallet::bitcoin::{OutPoint, Psbt, Txid};
 use std::str::FromStr;
 

@@ -9,7 +9,6 @@ const ELECTRUM_SERVER: &str = "ssl://mempool.space:60602";
 // TODO: make this unique to the descriptor
 #[cfg(test)]
 mod tests {
-    use bdk_wallet::{ChangeSet, KeychainKind, Wallet};
     use ngwallet::bip39;
 
     #[cfg(feature = "envoy")]
@@ -21,7 +20,7 @@ mod tests {
         ngwallet::account::NgAccount,
         ngwallet::config::AddressType,
         ngwallet::ngwallet::NgWallet,
-        ngwallet::send::SpendParams,
+        ngwallet::send::TransactionParams,
         redb::backends::FileBackend,
         std::sync::{Arc, Mutex},
     };
@@ -100,7 +99,6 @@ mod tests {
             assert_eq!(utxo_tag, tag);
 
             println!("\nSetting do not spend : {:?}", false);
-
             account.wallet.set_do_not_spend(first_utxo, false).unwrap();
 
             let utxos = account.wallet.unspend_outputs().unwrap_or(vec![]);
@@ -163,88 +161,98 @@ mod tests {
                 );
             });
         });
-        if !utxos.is_empty() {
-            let tag = "Test Tag".to_string();
-            println!("\nSetting tag: {:?}", tag);
-            let first_utxo = &utxos[0];
-            account.wallet.set_tag(first_utxo, tag.as_str()).unwrap();
-            let utxos = account.wallet.unspend_outputs().unwrap_or(vec![]);
-            let utxo_tag = utxos[0].tag.clone().unwrap_or("".to_string());
-            println!("Utxo tag: {:?}", utxo_tag);
-            assert_eq!(utxo_tag, tag);
-
-            println!("\nSetting do not spend : {:?}", true);
-
-            account.wallet.set_do_not_spend(first_utxo, true).unwrap();
-
-            let utxos = account.wallet.unspend_outputs().unwrap_or(vec![]);
-            let utxo_tag = &utxos[0];
-            println!("Utxo After Do not Spend: {:?}", utxo_tag);
-            let utxos = account.wallet.unspend_outputs().unwrap_or(vec![]);
-            let utxo_tag = &utxos[0];
-            println!("Utxo After Do not Spend: {:?}", utxo_tag);
+        for utxo in utxos {
+            account
+                .wallet
+                .set_tag(&utxo, format!("Tag {}", utxo.vout).as_str())
+                .unwrap();
         }
-        println!("Balance {:?}", balance);
-        //
-        //
-        // let max_fee = match account
-        //     .wallet
-        //     .get_max_fee(
-        //         "tb1pzvynlely05x82u40cts3znctmvyskue74xa5zwy0t5ueuv92726s0cz8g8".to_string(),
-        //         5000,
-        //         vec![],
-        //     ) {
-        //     Ok(max_fee) => {
-        //         println!("max fee calculated {}", max_fee)
-        //     }
-        //     Err(er) => {
-        //         println!("max fee error {} ", er.to_string())
-        //     }
-        // };
+        let utxos = account.wallet.unspend_outputs().unwrap();
 
-        match account.wallet.compose_psbt(SpendParams {
+        for utxo in utxos {
+            println!("Utxo: {} {:?}", utxo.amount, utxo.tag);
+        }
+        // if !utxos.is_empty() {
+        //     let tag = "Test Tag".to_string();
+        //     println!("\nSetting tag: {:?}", tag);
+        //     let first_utxo = &utxos[0];
+        //     account.wallet.set_tag(first_utxo, tag.as_str()).unwrap();
+        //     let utxos = account.wallet.unspend_outputs().unwrap_or(vec![]);
+        //     let utxo_tag = utxos[0].tag.clone().unwrap_or("".to_string());
+        //     println!("Utxo tag: {:?}", utxo_tag);
+        //     assert_eq!(utxo_tag, tag);
+        //
+        //     println!("\nSetting do not spend : {:?}", true);
+        //
+        //     account.wallet.set_do_not_spend(first_utxo, true).unwrap();
+        //
+        //     let utxos = account.wallet.unspend_outputs().unwrap_or(vec![]);
+        //     let utxo_tag = &utxos[0];
+        //     println!("Utxo After Do not Spend: {:?}", utxo_tag);
+        //     let utxos = account.wallet.unspend_outputs().unwrap_or(vec![]);
+        //     let utxo_tag = &utxos[0];
+        //     println!("Utxo After Do not Spend: {:?}", utxo_tag);
+        // }
+        println!("Balance {:?}", balance);
+
+        let param = TransactionParams {
             address: "tb1phc8m8vansnl4utths947mjquprw20puwrrdfrwx8akeeu2tqwkls7l62u4".to_string(),
-            amount: 699,
-            fee_rate: 1,
+            amount: 105117,
+            fee_rate: 2,
             selected_outputs: vec![],
             note: Some("not a note".to_string()),
-            tag: Some("Tag dis".to_string()),
+            tag: Some("hello".to_string()),
             do_not_spend_change: true,
-        }) {
+        };
+
+        let max_fee = match account.wallet.get_max_fee(param.clone()) {
+            Ok(tx_fee_calc) => {
+                println!(
+                    "max fee calculated {:?}",
+                    tx_fee_calc.prepared_transaction.transaction.fee
+                );
+            }
+            Err(er) => {
+                println!("max fee error {} ", er.to_string())
+            }
+        };
+
+        match account.wallet.compose_psbt(param.clone()) {
             Ok(spend) => {
-                match account
-                    .wallet
-                    .broadcast_psbt(spend.clone(), ELECTRUM_SERVER, None)
-                {
-                    Ok(tx_id) => {
-                        assert_eq!(tx_id, spend.transaction.tx_id);
-                        println!("broadcast success {:?} ", spend)
-                    }
-                    Err(error) => {
-                        println!("Spend error {:?} ", error)
-                    }
-                }
+                println!("Spend note: {:?}", spend.transaction.note);
+                // match account
+                //     .wallet
+                //     .broadcast_psbt(spend.clone(), ELECTRUM_SERVER, None)
+                // {
+                //     Ok(tx_id) => {
+                //         assert_eq!(tx_id, spend.transaction.tx_id);
+                //         println!("broadcast success {:?} ", spend)
+                //     }
+                //     Err(error) => {
+                //         println!("Spend error {:?} ", error)
+                //     }
+                // }
             }
             Err(er) => {
                 println!("Spend error {} ", er.to_string())
             }
         };
 
-        let transactions = account.wallet.transactions().unwrap();
-        transactions.iter().for_each(|tx| {
-            println!(
-                "\nTx: --> {:?} | Amount:{} | Note:{:?} |  ",
-                tx.address, tx.amount, tx.note
-            );
-            tx.outputs.iter().for_each(|utxo| {
-                println!(
-                    "Utxo: --> {:?} | Amount:{:?} | Tag:{:?} | DnS{:?}",
-                    utxo.address, utxo.amount, utxo.tag, utxo.do_not_spend
-                );
-            });
-        });
-
-        account.wallet.persist().expect("Wallet persisted");
+        // let transactions = account.wallet.transactions().unwrap();
+        // transactions.iter().for_each(|tx| {
+        //     println!(
+        //         "\nTx: --> {:?} | Amount:{} | Note:{:?} |  ",
+        //         tx.address, tx.amount, tx.note
+        //     );
+        //     tx.outputs.iter().for_each(|utxo| {
+        //         println!(
+        //             "Utxo: --> {:?} | Amount:{:?} | Tag:{:?} | DnS{:?}",
+        //             utxo.address, utxo.amount, utxo.tag, utxo.do_not_spend
+        //         );
+        //     });
+        // });
+        //
+        // account.wallet.persist().expect("Wallet persisted");
         drop(account)
     }
 

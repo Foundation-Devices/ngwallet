@@ -1,4 +1,4 @@
-use std::fmt::Debug;
+use std::fmt::{Debug, format};
 use std::result::Result::Ok;
 use std::str::FromStr;
 use std::sync::{Arc, Mutex};
@@ -23,7 +23,7 @@ use {
 };
 
 use crate::store::MetaStorage;
-use crate::transaction::{BitcoinTransaction, Input, Output};
+use crate::transaction::{BitcoinTransaction, Input, KeyChain, Output};
 
 #[derive(Debug)]
 pub struct PsbtInfo {
@@ -34,7 +34,7 @@ pub struct PsbtInfo {
 #[derive(Debug)]
 pub struct NgWallet<P: WalletPersister> {
     pub wallet: Arc<Mutex<PersistedWallet<P>>>,
-    meta_storage: Arc<Mutex<dyn MetaStorage>>,
+    pub(crate) meta_storage: Arc<Mutex<dyn MetaStorage>>,
     bdk_persister: Arc<Mutex<P>>,
 }
 
@@ -540,6 +540,15 @@ impl<P: WalletPersister> NgWallet<P> {
             .map_err(|_| anyhow::anyhow!("Could not set tag "))
             .unwrap();
         Ok(true)
+    }
+
+    pub fn get_tag(&self, output_id: &str) -> Option<String> {
+        self.meta_storage
+            .lock()
+            .unwrap()
+            .get_tag(output_id)
+            .map_err(|_| anyhow::anyhow!("Could not set tag "))
+            .unwrap()
     }
 
     pub fn list_tags(&self) -> Result<Vec<String>> {
