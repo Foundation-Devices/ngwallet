@@ -40,8 +40,5 @@ impl NgAccountConfig {
     pub fn deserialize(data: &str) -> Self {
         serde_json::from_str(data).unwrap()
     }
-    pub fn is_hot(&self) -> bool {
-        let descriptor = self.internal_descriptor.clone();
-        descriptor.contains("xprv") || descriptor.contains("xpri") || descriptor.contains("wif")
-    }
+
 }
