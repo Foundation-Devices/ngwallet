@@ -167,7 +167,24 @@ impl<P: WalletPersister> NgWallet<P> {
                 .map(|input| {
                     let tx_id = input.previous_output.txid.to_string();
                     let vout = input.previous_output.vout;
-                    Input { tx_id, vout }
+                    let amount = if wallet.get_utxo(input.previous_output).is_some() {
+                        wallet
+                            .get_utxo(input.previous_output)
+                            .unwrap()
+                            .txout
+                            .value
+                            .to_sat()
+                    } else {
+                        0
+                    };
+                    Input {
+                        tx_id: tx_id.clone(),
+                        vout,
+                        amount,
+                        tag: storage
+                            .get_tag(format!("{}{}", &tx_id, vout).as_str())
+                            .unwrap_or(None),
+                    }
                 })
                 .collect::<Vec<Input>>();
 
@@ -188,6 +205,15 @@ impl<P: WalletPersister> NgWallet<P> {
                             .to_string(),
                         tag: storage.get_tag(&tx_id).unwrap(),
                         do_not_spend,
+                        keychain: wallet
+                            .derivation_of_spk(output.script_pubkey.clone())
+                            .map(|x| {
+                                if x.0 == KeychainKind::External {
+                                    KeyChain::External
+                                } else {
+                                    KeyChain::Internal
+                                }
+                            }),
                         date,
                         is_confirmed: confirmations >= 3,
                     }
@@ -384,6 +410,15 @@ impl<P: WalletPersister> NgWallet<P> {
                 address: Address::from_script(&local_output.txout.script_pubkey, wallet.network())
                     .unwrap()
                     .to_string(),
+                keychain: wallet
+                    .derivation_of_spk(local_output.txout.script_pubkey.clone())
+                    .map(|x| {
+                        if x.0 == KeychainKind::External {
+                            KeyChain::External
+                        } else {
+                            KeyChain::Internal
+                        }
+                    }),
                 tag: meta_storage.get_tag(out_put_id.clone().as_str()).unwrap(),
                 do_not_spend,
                 date,

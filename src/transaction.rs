@@ -1,4 +1,6 @@
-use bdk_wallet::bitcoin::{OutPoint, Txid};
+use bdk_electrum::bdk_core::bitcoin::Amount;
+use bdk_wallet::KeychainKind;
+use bdk_wallet::bitcoin::{OutPoint, Psbt, Txid};
 use std::str::FromStr;
 
 // #[derive(Debug)]
@@ -27,6 +29,14 @@ use std::str::FromStr;
 pub struct Input {
     pub tx_id: String,
     pub vout: u32,
+    pub amount: u64,
+    pub tag: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum KeyChain {
+    External,
+    Internal,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -39,6 +49,7 @@ pub struct Output {
     pub is_confirmed: bool,
     pub address: String,
     pub do_not_spend: bool,
+    pub keychain: Option<KeyChain>,
 }
 
 impl Output {
