@@ -130,8 +130,8 @@ impl<P: WalletPersister> NgWallet<P> {
         let storage = self.meta_storage.lock().unwrap();
 
         //add date to transaction
-        let mut date: Option<u64> = None;
         for canonical_tx in wallet.transactions() {
+            let mut date: Option<u64> = None;
             let tx = canonical_tx.tx_node.tx;
             let tx_id = canonical_tx.tx_node.txid.to_string();
             let (sent, received) = wallet.sent_and_received(tx.as_ref());
