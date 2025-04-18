@@ -1,9 +1,8 @@
 use crate::ngwallet::NgWallet;
 use anyhow::{Error, Result};
 use base64::prelude::*;
-use bdk_electrum::bdk_core::bitcoin::Transaction;
 use bdk_wallet::bitcoin::secp256k1::Secp256k1;
-use bdk_wallet::bitcoin::{Address, Amount, FeeRate, Psbt, ScriptBuf};
+use bdk_wallet::bitcoin::{Address, Amount, FeeRate, Psbt, ScriptBuf, Transaction};
 use bdk_wallet::coin_selection::InsufficientFunds;
 use bdk_wallet::error::CreateTxError;
 use bdk_wallet::error::CreateTxError::CoinSelection;
@@ -23,6 +22,7 @@ use {
     bdk_electrum::electrum_client::Client,
     bdk_electrum::electrum_client::{Config, Socks5Config},
     bdk_wallet::psbt::PsbtUtils,
+
 };
 
 #[derive(Debug, Clone)]
