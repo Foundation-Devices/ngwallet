@@ -1,5 +1,5 @@
 use crate::ngwallet::NgWallet;
-use anyhow::{Error, Result};
+use anyhow::Result;
 use base64::prelude::*;
 use bdk_wallet::bitcoin::secp256k1::Secp256k1;
 use bdk_wallet::bitcoin::{Address, Amount, FeeRate, Psbt, ScriptBuf, Transaction};
@@ -7,18 +7,16 @@ use bdk_wallet::coin_selection::InsufficientFunds;
 use bdk_wallet::error::CreateTxError;
 use bdk_wallet::error::CreateTxError::CoinSelection;
 use bdk_wallet::miniscript::psbt::PsbtExt;
-use bdk_wallet::{KeychainKind, PersistedWallet, SignOptions, TxOrdering, Wallet, WalletPersister};
+use bdk_wallet::{KeychainKind, PersistedWallet, SignOptions, TxOrdering, WalletPersister};
 use log::info;
 use std::collections::HashSet;
 use std::str::FromStr;
-use std::sync::{Arc, Mutex, MutexGuard};
+use std::sync::{MutexGuard};
 
-use crate::store::MetaStorage;
 use crate::transaction::{BitcoinTransaction, Input, KeyChain, Output};
 #[cfg(feature = "envoy")]
 use {
     bdk_electrum::BdkElectrumClient,
-    bdk_electrum::bdk_core::spk_client::SyncRequest,
     bdk_electrum::electrum_client::Client,
     bdk_electrum::electrum_client::{Config, Socks5Config},
     bdk_wallet::psbt::PsbtUtils,
@@ -51,9 +49,10 @@ pub struct TransactionParams {
     pub do_not_spend_change: bool,
 }
 
-///TODO:: chore: cleanup duplicate code
-
+// TODO: chore: cleanup duplicate code
 impl<P: WalletPersister> NgWallet<P> {
+    //noinspection RsExternalLinter
+    //noinspection RsExternalLinter
     #[cfg(feature = "envoy")]
     pub fn get_max_fee(
         &self,
@@ -105,6 +104,9 @@ impl<P: WalletPersister> NgWallet<P> {
         }
 
         let mut max_fee = spendable_balance - amount;
+
+        // TODO: check if clippy is right about this one
+        #[allow(unused_assignments)]
         let mut max_fee_rate = 1;
 
         let mut receive_amount = amount;
@@ -112,7 +114,7 @@ impl<P: WalletPersister> NgWallet<P> {
         //amount which is dust limit
         if spendable_balance == amount {
             receive_amount = 573; //dust limit
-            max_fee = spendable_balance - receive_amount.clone();
+            max_fee = spendable_balance - receive_amount;
         }
 
         if max_fee == 0 {
@@ -120,7 +122,7 @@ impl<P: WalletPersister> NgWallet<P> {
         }
 
         loop {
-            let mut psbt = Self::prepare_psbt(
+            let psbt = Self::prepare_psbt(
                 &mut wallet,
                 script.clone(),
                 &mut do_not_spend_utxos,
@@ -137,19 +139,16 @@ impl<P: WalletPersister> NgWallet<P> {
                     // Always try signing
                     wallet.sign(&mut psbt, sign_options).unwrap_or(false);
                     // reset indexes since this is only for fee calc
-                    match psbt.clone().extract_tx() {
-                        Ok(tx) => {
-                            for tx_out in tx.output {
-                                let derivation = wallet.derivation_of_spk(tx_out.script_pubkey);
-                                match derivation {
-                                    None => {}
-                                    Some(path) => {
-                                        wallet.unmark_used(path.0, path.1);
-                                    }
+                    if let Ok(tx) = psbt.clone().extract_tx() {
+                        for tx_out in tx.output {
+                            let derivation = wallet.derivation_of_spk(tx_out.script_pubkey);
+                            match derivation {
+                                None => {}
+                                Some(path) => {
+                                    wallet.unmark_used(path.0, path.1);
                                 }
                             }
                         }
-                        Err(_) => {}
                     }
                     match psbt.fee_rate() {
                         None => {}
@@ -164,7 +163,7 @@ impl<P: WalletPersister> NgWallet<P> {
                         max_fee = erorr.available.to_sat() - receive_amount;
                     }
                     err => {
-                        return Err(err.into());
+                        return Err(err);
                     }
                 },
             }
@@ -184,7 +183,7 @@ impl<P: WalletPersister> NgWallet<P> {
             script,
             &mut do_not_spend_utxos,
             None,
-            Some(default_fee_rate.clone()),
+            Some(default_fee_rate),
             receive_amount,
         );
 
@@ -195,7 +194,7 @@ impl<P: WalletPersister> NgWallet<P> {
                     ..Default::default()
                 };
                 // Always try signing
-                let finlized = wallet.sign(&mut psbt, sign_options).unwrap_or(false);
+                wallet.sign(&mut psbt, sign_options).unwrap_or(false);
                 let outputs = Self::apply_meta_to_psbt_outputs(
                     &wallet,
                     utxos.clone(),
@@ -220,7 +219,7 @@ impl<P: WalletPersister> NgWallet<P> {
                         change_out_put_tag = output.tag.clone();
                     }
                 }
-                let mut input_tags: Vec<String> = inputs
+                let input_tags: Vec<String> = inputs
                     .clone()
                     .iter()
                     .map(|input| input.tag.clone().unwrap_or("".to_string()))
@@ -239,7 +238,7 @@ impl<P: WalletPersister> NgWallet<P> {
                     },
                 })
             }
-            Err(e) => Err(e.into()),
+            Err(e) => Err(e),
         }
     }
 
@@ -315,7 +314,7 @@ impl<P: WalletPersister> NgWallet<P> {
             script.clone(),
             &mut do_not_spend_utxos,
             None,
-            Some(fee_rate.clone()),
+            Some(fee_rate),
             receive_amount,
         );
 
@@ -357,7 +356,7 @@ impl<P: WalletPersister> NgWallet<P> {
                     }
                 }
 
-                let mut input_tags: Vec<String> = inputs
+                let input_tags: Vec<String> = inputs
                     .clone()
                     .iter()
                     .map(|input| input.tag.clone().unwrap_or("".to_string()))
@@ -374,7 +373,7 @@ impl<P: WalletPersister> NgWallet<P> {
             }
             Err(e) => {
                 info!("Error creating PSBT: {:?}", e);
-                Err(e.into())
+                Err(e)
             }
         }
     }
@@ -389,7 +388,7 @@ impl<P: WalletPersister> NgWallet<P> {
         let tx = BASE64_STANDARD
             .decode(spend.psbt_base64)
             .map_err(|e| anyhow::anyhow!("Failed to decode PSBT: {}", e))?;
-        let mut psbt = Psbt::deserialize(tx.as_slice())
+        let psbt = Psbt::deserialize(tx.as_slice())
             .map_err(|er| anyhow::anyhow!("Failed to deserialize PSBT: {}", er))?;
 
         let transaction = psbt
@@ -400,7 +399,7 @@ impl<P: WalletPersister> NgWallet<P> {
             .transaction_broadcast(&transaction)
             .map_err(|e| anyhow::anyhow!("Failed to broadcast transaction: {}", e))?;
 
-        let tx = spend.transaction;
+        //let tx = spend.transaction;
         Ok(tx_id.to_string())
     }
 
@@ -503,7 +502,7 @@ impl<P: WalletPersister> NgWallet<P> {
                 .map(|input| {
                     let tx_id = input.clone().previous_output.txid.to_string();
                     let utxo_id = format!("{}:{}", tx_id, input.previous_output.vout).to_string();
-                    wallet.get_utxo(input.previous_output).unwrap().txout.value;
+                    wallet.get_utxo(input.previous_output).unwrap();
                     let mut tag = "".to_string();
                     for utxo in utxos.clone() {
                         if utxo.get_id() == utxo_id {
@@ -612,24 +611,24 @@ impl<P: WalletPersister> NgWallet<P> {
     fn prepare_psbt(
         wallet: &mut MutexGuard<PersistedWallet<P>>,
         script: ScriptBuf,
-        do_not_spend_utxos: &mut Vec<Output>,
+        do_not_spend_utxos: &mut [Output],
         fee_absolute: Option<u64>,
         fee_rate: Option<FeeRate>,
-        mut receive_amount: u64,
+        receive_amount: u64,
     ) -> Result<Psbt, CreateTxError> {
         let mut builder = wallet.build_tx();
         builder.ordering(TxOrdering::Shuffle);
-        for do_not_spend_utxo in do_not_spend_utxos.clone() {
+        for do_not_spend_utxo in do_not_spend_utxos {
             builder.add_unspendable(do_not_spend_utxo.get_outpoint());
         }
-        builder.add_recipient(script.clone(), Amount::from_sat(receive_amount.clone()));
+        builder.add_recipient(script.clone(), Amount::from_sat(receive_amount));
 
-        if fee_absolute.is_some() {
-            builder.fee_absolute(Amount::from_sat(fee_absolute.unwrap()));
+        if let Some(fee_absolute) = fee_absolute {
+            builder.fee_absolute(Amount::from_sat(fee_absolute));
         }
 
-        if fee_rate.is_some() {
-            builder.fee_rate(fee_rate.unwrap());
+        if let Some(fee_rate) = fee_rate {
+            builder.fee_rate(fee_rate);
         }
 
         builder.finish()
