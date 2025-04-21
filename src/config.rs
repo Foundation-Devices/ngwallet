@@ -41,3 +41,33 @@ impl NgAccountConfig {
         serde_json::from_str(data).unwrap()
     }
 }
+
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct NgMultisigCosigner {
+    pub xfp: String,
+    pub wallet_path: String,
+    pub descriptor: String,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct NgMultisigConfig {
+    pub name: String,
+    pub color: String,
+    pub device_serial: Option<String>,
+    pub date_added: Option<String>,
+    pub address_type: AddressType,
+    pub derivation: String,
+    pub threshold_m: u32,
+    pub cosigners: Vec<NgMultisigCosigner>,
+    pub network: Network,
+}
+
+impl NgMultisigConfig {
+    pub fn serialize(&self) -> String {
+        serde_json::to_string_pretty(self).unwrap()
+    }
+
+    pub fn deserialize(data: &str) -> Self {
+        serde_json::from_str(data).unwrap()
+    }
+}
