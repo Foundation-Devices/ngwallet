@@ -1,4 +1,4 @@
-use bdk_wallet::bitcoin::{OutPoint, Psbt, Txid};
+use bdk_wallet::bitcoin::{OutPoint, Txid};
 use std::str::FromStr;
 
 // #[derive(Debug)]

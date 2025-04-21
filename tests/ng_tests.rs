@@ -14,7 +14,7 @@ mod tests {
     #[cfg(feature = "envoy")]
     use {
         crate::*,
-        bdk_wallet::bitcoin::{Address, Network, OutPoint},
+        bdk_wallet::bitcoin::{Network},
         bdk_wallet::rusqlite::Connection,
         bdk_wallet::{AddressInfo, Update},
         ngwallet::account::NgAccount,
@@ -62,7 +62,7 @@ mod tests {
         let balance = account.wallet.balance().unwrap();
         println!("Wallet balance: {} sat\n", balance.total().to_sat());
 
-        let transactions = account.wallet.transactions();
+        let transactions = account.wallet.transactions().unwrap();
         for tx in transactions {
             println!("Transaction: {:?}", tx);
         }
@@ -116,7 +116,8 @@ mod tests {
         account.wallet.persist().unwrap();
     }
 
-    // #[test]
+    //noinspection RsExternalLinter
+    #[test]
     #[cfg(feature = "envoy")]
     fn open_wallet() {
         let wallet_file = "wallet.sqlite".to_string();
@@ -144,11 +145,10 @@ mod tests {
         println!("Wallet balance: {} sat\n", balance.total().to_sat());
 
         let balance = account.wallet.balance().unwrap();
-        let transactions = account.wallet.transactions();
 
-        let utxos = account.wallet.unspend_outputs();
         let transactions = account.wallet.transactions().unwrap();
-        let utxos = account.wallet.unspend_outputs().unwrap_or(vec![]);
+        let utxos = account.wallet.unspend_outputs().unwrap_or_default();
+
         transactions.iter().for_each(|tx| {
             println!(
                 "\nTx: --> {:?} | Amount:{} | Note:{:?} |  ",
@@ -205,7 +205,7 @@ mod tests {
             do_not_spend_change: true,
         };
 
-        let max_fee = match account.wallet.get_max_fee(param.clone()) {
+        match account.wallet.get_max_fee(param.clone()) {
             Ok(tx_fee_calc) => {
                 println!(
                     "max fee calculated {:?}",
@@ -213,7 +213,7 @@ mod tests {
                 );
             }
             Err(er) => {
-                println!("max fee error {} ", er.to_string())
+                println!("max fee error {} ", er)
             }
         };
 
@@ -234,7 +234,7 @@ mod tests {
                 // }
             }
             Err(er) => {
-                println!("Spend error {} ", er.to_string())
+                println!("Spend error {} ", er)
             }
         };
 

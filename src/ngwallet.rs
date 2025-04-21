@@ -1,4 +1,4 @@
-use std::fmt::{Debug, format};
+use std::fmt::Debug;
 use std::result::Result::Ok;
 use std::str::FromStr;
 use std::sync::{Arc, Mutex};
