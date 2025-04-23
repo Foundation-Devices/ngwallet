@@ -37,7 +37,7 @@ pub enum KeyChain {
     Internal,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone)]
 pub struct Output {
     pub tx_id: String,
     pub vout: u32,
@@ -57,6 +57,11 @@ impl Output {
     pub fn get_outpoint(&self) -> OutPoint {
         let tx_id = Txid::from_str(self.tx_id.as_str()).unwrap();
         OutPoint::new(tx_id, self.vout)
+    }
+}
+impl PartialEq for Output {
+    fn eq(&self, other: &Self) -> bool {
+        self.get_id() == other.get_id()
     }
 }
 
