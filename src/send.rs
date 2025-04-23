@@ -430,6 +430,30 @@ impl<P: WalletPersister> NgWallet<P> {
         bdk_client
     }
 
+    pub fn decode_psbt(
+        prepared_transaction: PreparedTransaction,
+        psbt_base64: &str,
+    ) -> Result<PreparedTransaction> {
+        let psbt_bytes = BASE64_STANDARD
+            .decode(psbt_base64)
+            .map_err(|e| anyhow::anyhow!("Failed to decode PSBT: {}", e))?;
+        let psbt = Psbt::deserialize(psbt_bytes.as_slice())
+            .map_err(|e| anyhow::anyhow!("Failed to deserialize PSBT: {}", e))?;
+        let psbt_finalized = psbt
+            .finalize(&Secp256k1::verification_only())
+            .map_err(|(_, _)| anyhow::anyhow!("Failed to finalize PSBT"))?;
+        Ok(PreparedTransaction {
+            psbt_base64: BASE64_STANDARD
+                .encode(psbt_finalized.clone().serialize())
+                .to_string(),
+            is_finalized: psbt_finalized
+                .extract(&Secp256k1::verification_only())
+                .is_ok(),
+            input_tags: prepared_transaction.input_tags,
+            change_out_put_tag: prepared_transaction.change_out_put_tag,
+            transaction: prepared_transaction.transaction,
+        })
+    }
     pub fn create_send(&mut self, address: String, amount: u64) -> Result<Psbt> {
         let mut wallet = self.wallet.lock().unwrap();
         let address = Address::from_str(&address)
