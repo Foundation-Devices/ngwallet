@@ -16,6 +16,34 @@ pub enum AddressType {
     P2tr,
 }
 
+#[derive(Debug, Clone, Copy)]
+#[non_exhaustive]
+pub enum ExportMode {
+    Qr,
+    Ur2,
+    File,
+}
+
+#[derive(Debug, Clone, Copy)]
+#[non_exhaustive]
+pub enum ExportTarget {
+    Envoy,
+    BitcoinCore,
+    BitcoinKeeper,
+    BlueWallet,
+    BTCPay,
+    Casa,
+    Coinbits,
+    Electrum,
+    FullyNoded,
+    Nunchuk,
+    SimpleBitcoinWallet,
+    Sparrow,
+    Specter,
+    Theya,
+    Zeus,
+}
+
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct NgAccountConfig {
     pub name: String,
@@ -60,6 +88,7 @@ pub struct NgMultisigConfig {
     pub threshold_m: u32,
     pub cosigners: Vec<NgMultisigCosigner>,
     pub network: Network,
+    pub id: String,
 }
 
 impl NgMultisigConfig {
