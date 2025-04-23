@@ -11,7 +11,7 @@ use bdk_wallet::{KeychainKind, PersistedWallet, SignOptions, TxOrdering, WalletP
 use log::info;
 use std::collections::HashSet;
 use std::str::FromStr;
-use std::sync::{MutexGuard};
+use std::sync::MutexGuard;
 
 use crate::transaction::{BitcoinTransaction, Input, KeyChain, Output};
 #[cfg(feature = "envoy")]
@@ -20,7 +20,6 @@ use {
     bdk_electrum::electrum_client::Client,
     bdk_electrum::electrum_client::{Config, Socks5Config},
     bdk_wallet::psbt::PsbtUtils,
-
 };
 
 #[derive(Debug, Clone)]
@@ -117,9 +116,12 @@ impl<P: WalletPersister> NgWallet<P> {
             max_fee = spendable_balance - receive_amount;
         }
 
-        if max_fee == 0 {
-            max_fee = 1;
-        }
+        let mut max_fee = spendable_balance.checked_sub(amount).ok_or_else(|| {
+            CoinSelection(InsufficientFunds {
+                available: Amount::from_sat(spendable_balance),
+                needed: Amount::from_sat(amount),
+            })
+        })?;
 
         loop {
             let psbt = Self::prepare_psbt(
@@ -160,7 +162,16 @@ impl<P: WalletPersister> NgWallet<P> {
                 }
                 Err(e) => match e {
                     CoinSelection(erorr) => {
-                        max_fee = erorr.available.to_sat() - receive_amount;
+                        max_fee = erorr
+                            .available
+                            .to_sat()
+                            .checked_sub(receive_amount)
+                            .ok_or_else(|| {
+                                CoinSelection(InsufficientFunds {
+                                    available: Amount::from_sat(erorr.available.to_sat()),
+                                    needed: Amount::from_sat(receive_amount),
+                                })
+                            })?
                     }
                     err => {
                         return Err(err);
@@ -222,8 +233,7 @@ impl<P: WalletPersister> NgWallet<P> {
                 let input_tags: Vec<String> = inputs
                     .clone()
                     .iter()
-                    .map(|input| input.tag.clone().unwrap_or("".to_string()))
-                    .filter(|x| !x.is_empty())
+                    .map(|input| input.tag.clone().unwrap_or("untagged".to_string()))
                     .collect();
 
                 Ok(TransactionFeeResult {
@@ -359,8 +369,7 @@ impl<P: WalletPersister> NgWallet<P> {
                 let input_tags: Vec<String> = inputs
                     .clone()
                     .iter()
-                    .map(|input| input.tag.clone().unwrap_or("".to_string()))
-                    .filter(|x| !x.is_empty())
+                    .map(|input| input.tag.clone().unwrap_or("untagged".to_string()))
                     .collect();
 
                 Ok(PreparedTransaction {
@@ -445,13 +454,14 @@ impl<P: WalletPersister> NgWallet<P> {
             //choose all output that are not selected by the user,
             //this will create a pool of available utxo for tx builder.
             for selected_outputs in selected_outputs.clone() {
-                if output.get_id() != selected_outputs.get_id() {
-                    do_not_spend_utxos.push(output.clone())
+                if output.get_id() == selected_outputs.get_id() {
+                    spendables.push(output.clone());
+                    break;
                 }
             }
             //any out put that are already user marked as do not spend
-            if output.do_not_spend && !do_not_spend_utxos.contains(&output.clone()) {
-                do_not_spend_utxos.push(output.clone())
+            if output.do_not_spend {
+                do_not_spend_utxos.push(output.clone());
             }
             if !do_not_spend_utxos.contains(&output.clone()) {
                 spendables.push(output)
@@ -503,15 +513,14 @@ impl<P: WalletPersister> NgWallet<P> {
                     let tx_id = input.clone().previous_output.txid.to_string();
                     let utxo_id = format!("{}:{}", tx_id, input.previous_output.vout).to_string();
                     wallet.get_utxo(input.previous_output).unwrap();
-                    let mut tag = "".to_string();
+                    let mut tag = "untagged".to_string();
                     for utxo in utxos.clone() {
                         if utxo.get_id() == utxo_id {
-                            tag = utxo.tag.unwrap_or("".to_string());
+                            tag = utxo.tag.unwrap_or("untagged".to_string());
                         }
                     }
                     tag
                 })
-                .filter(|x| !x.is_empty())
                 .collect();
             let is_input_comes_from_same_tag =
                 tags.clone().iter().rev().collect::<HashSet<_>>().len() == 1;
