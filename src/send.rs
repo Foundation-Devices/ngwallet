@@ -102,9 +102,11 @@ impl<P: WalletPersister> NgWallet<P> {
             }));
         }
 
+        //clippy is wrong about max_fee unused_assignments
+        #[allow(unused_assignments)]
         let mut max_fee = spendable_balance - amount;
 
-        // TODO: check if clippy is right about this one
+        //clippy is wrong about  max_fee_rate unused_assignments
         #[allow(unused_assignments)]
         let mut max_fee_rate = 1;
 
@@ -113,15 +115,16 @@ impl<P: WalletPersister> NgWallet<P> {
         //amount which is dust limit
         if spendable_balance == amount {
             receive_amount = 573; //dust limit
-            max_fee = spendable_balance - receive_amount;
         }
 
-        let mut max_fee = spendable_balance.checked_sub(amount).ok_or_else(|| {
-            CoinSelection(InsufficientFunds {
-                available: Amount::from_sat(spendable_balance),
-                needed: Amount::from_sat(amount),
-            })
-        })?;
+        max_fee = spendable_balance
+            .checked_sub(receive_amount)
+            .ok_or_else(|| {
+                CoinSelection(InsufficientFunds {
+                    available: Amount::from_sat(spendable_balance),
+                    needed: Amount::from_sat(amount),
+                })
+            })?;
 
         loop {
             let psbt = Self::prepare_psbt(

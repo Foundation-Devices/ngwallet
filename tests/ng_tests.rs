@@ -14,7 +14,7 @@ mod tests {
     #[cfg(feature = "envoy")]
     use {
         crate::*,
-        bdk_wallet::bitcoin::{Network},
+        bdk_wallet::bitcoin::Network,
         bdk_wallet::rusqlite::Connection,
         bdk_wallet::{AddressInfo, Update},
         ngwallet::account::NgAccount,
