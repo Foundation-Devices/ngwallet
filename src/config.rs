@@ -16,34 +16,6 @@ pub enum AddressType {
     P2tr,
 }
 
-#[derive(Debug, Clone, Copy)]
-#[non_exhaustive]
-pub enum ExportMode {
-    Qr,
-    Ur2,
-    File,
-}
-
-#[derive(Debug, Clone, Copy)]
-#[non_exhaustive]
-pub enum ExportTarget {
-    Envoy,
-    BitcoinCore,
-    BitcoinKeeper,
-    BlueWallet,
-    BTCPay,
-    Casa,
-    Coinbits,
-    Electrum,
-    FullyNoded,
-    Nunchuk,
-    SimpleBitcoinWallet,
-    Sparrow,
-    Specter,
-    Theya,
-    Zeus,
-}
-
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct NgAccountConfig {
     pub name: String,
@@ -70,33 +42,30 @@ impl NgAccountConfig {
     }
 }
 
-#[derive(Serialize, Deserialize, Debug, Clone)]
-pub struct NgMultisigCosigner {
-    pub xfp: String,
-    pub wallet_path: String,
-    pub descriptor: String,
+#[derive(Debug, Clone, Copy)]
+#[non_exhaustive]
+pub enum ExportMode {
+    Qr,
+    Ur2,
+    File,
 }
 
-#[derive(Serialize, Deserialize, Debug, Clone)]
-pub struct NgMultisigConfig {
-    pub name: String,
-    pub color: String,
-    pub device_serial: Option<String>,
-    pub date_added: Option<String>,
-    pub address_type: AddressType,
-    pub derivation: String,
-    pub threshold_m: u32,
-    pub cosigners: Vec<NgMultisigCosigner>,
-    pub network: Network,
-    pub id: String,
-}
-
-impl NgMultisigConfig {
-    pub fn serialize(&self) -> String {
-        serde_json::to_string_pretty(self).unwrap()
-    }
-
-    pub fn deserialize(data: &str) -> Self {
-        serde_json::from_str(data).unwrap()
-    }
+#[derive(Debug, Clone, Copy)]
+#[non_exhaustive]
+pub enum ExportTarget {
+    Envoy,
+    BitcoinCore,
+    BitcoinKeeper,
+    BlueWallet,
+    BTCPay,
+    Casa,
+    Coinbits,
+    Electrum,
+    FullyNoded,
+    Nunchuk,
+    SimpleBitcoinWallet,
+    Sparrow,
+    Specter,
+    Theya,
+    Zeus,
 }
