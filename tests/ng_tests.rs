@@ -209,7 +209,7 @@ mod tests {
             Ok(tx_fee_calc) => {
                 println!(
                     "max fee calculated {:?}",
-                    tx_fee_calc.prepared_transaction.transaction.fee
+                    tx_fee_calc.draft_transaction.transaction.fee
                 );
             }
             Err(er) => {

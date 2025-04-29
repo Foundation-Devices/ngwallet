@@ -9,6 +9,7 @@ use bdk_wallet::chain::ChainPosition::{Confirmed, Unconfirmed};
 use bdk_wallet::{AddressInfo, CreateWithPersistError, PersistedWallet, SignOptions};
 use bdk_wallet::{KeychainKind, WalletPersister};
 use bdk_wallet::{Update, Wallet};
+use log::info;
 
 #[cfg(feature = "envoy")]
 use {
@@ -139,7 +140,8 @@ impl<P: WalletPersister> NgWallet<P> {
             let block_height = match canonical_tx.chain_position {
                 Confirmed { anchor, .. } => {
                     //to milliseconds
-                    date = Some(anchor.confirmation_time * 1000);
+                    date = Some(anchor.confirmation_time);
+                    info!("block height {}", anchor.confirmation_time);
                     let block_height = anchor.block_id.height;
                     if block_height > 0 { block_height } else { 0 }
                 }
@@ -148,7 +150,8 @@ impl<P: WalletPersister> NgWallet<P> {
                         None => {}
                         Some(last_seen) => {
                             //to milliseconds
-                            date = Some(last_seen * 1000);
+                            date = Some(last_seen);
+                            info!("block last_seen {}", last_seen);
                         }
                     }
                     0
@@ -390,7 +393,7 @@ impl<P: WalletPersister> NgWallet<P> {
                                 None => {}
                                 Some(last_seen) => {
                                     //to milliseconds
-                                    date = Some(last_seen * 1000);
+                                    date = Some(last_seen);
                                 }
                             }
                             0

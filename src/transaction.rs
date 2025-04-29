@@ -82,6 +82,17 @@ pub struct BitcoinTransaction {
     pub vsize: usize,
 }
 
+impl BitcoinTransaction {
+    pub fn get_change_output(&self) -> Option<Output> {
+        for output in &self.outputs {
+            if output.keychain == Some(KeyChain::Internal) {
+                return Some(output.clone());
+            }
+        }
+        None
+    }
+}
+
 // #[derive(Debug)]
 // pub struct NgTransaction {
 //     pub placeholder: Option<TransactionPlaceholder>,
