@@ -41,31 +41,3 @@ impl NgAccountConfig {
         serde_json::from_str(data).unwrap()
     }
 }
-
-#[derive(Debug, Clone, Copy)]
-#[non_exhaustive]
-pub enum ExportMode {
-    Qr,
-    Ur2,
-    File,
-}
-
-#[derive(Debug, Clone, Copy)]
-#[non_exhaustive]
-pub enum ExportTarget {
-    Envoy,
-    BitcoinCore,
-    BitcoinKeeper,
-    BlueWallet,
-    BTCPay,
-    Casa,
-    Coinbits,
-    Electrum,
-    FullyNoded,
-    Nunchuk,
-    SimpleBitcoinWallet,
-    Sparrow,
-    Specter,
-    Theya,
-    Zeus,
-}

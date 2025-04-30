@@ -9,6 +9,8 @@ use bdk_wallet::chain::ChainPosition::{Confirmed, Unconfirmed};
 use bdk_wallet::{AddressInfo, CreateWithPersistError, PersistedWallet, SignOptions};
 use bdk_wallet::{KeychainKind, WalletPersister};
 use bdk_wallet::{Update, Wallet};
+use miniscript::descriptor::DescriptorType;
+use miniscript::ForEachKey;
 
 #[cfg(feature = "envoy")]
 use {
@@ -29,6 +31,34 @@ use crate::transaction::{BitcoinTransaction, Input, KeyChain, Output};
 pub struct PsbtInfo {
     pub outputs: std::collections::HashMap<u64, String>,
     pub fee: u64,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+#[non_exhaustive]
+pub enum ExportMode {
+    Qr,
+    Ur2,
+    File,
+}
+
+#[derive(Debug, Clone, Copy)]
+#[non_exhaustive]
+pub enum ExportTarget {
+    Envoy,
+    BitcoinCore,
+    BitcoinKeeper,
+    BlueWallet,
+    BTCPay,
+    Casa,
+    Coinbits,
+    Electrum,
+    FullyNoded,
+    Nunchuk,
+    SimpleBitcoinWallet,
+    Sparrow,
+    Specter,
+    Theya,
+    Zeus,
 }
 
 #[derive(Debug)]
@@ -605,5 +635,142 @@ impl<P: WalletPersister> NgWallet<P> {
             .reveal_addresses_to(keychain, index);
         self.persist().unwrap();
         Ok(())
+    }
+
+    fn is_multisig(&self) -> bool {
+        // TODO: if we need to detect non-sorted multisigs or taproot multisigs, we'll need to re-implement desc_type()
+        match self.wallet
+            .lock()
+            .unwrap()
+            .public_descriptor(KeychainKind::Internal).desc_type()
+        {
+            DescriptorType::ShSortedMulti | DescriptorType::WshSortedMulti | DescriptorType::ShWshSortedMulti => true,
+            _ => false,
+        }
+    }
+
+    fn get_all_xfps(&self) -> Vec<String> {
+        let mut xfps: Vec<String> = Vec::new();
+        self.wallet
+            .lock()
+            .unwrap()
+            .public_descriptor(KeychainKind::Internal)
+            .for_each_key(|key| {
+                xfps.push(key.master_fingerprint().to_string());
+                true
+            });
+        xfps
+    }
+
+    fn get_xfp(&self) -> String {
+        // TODO: improve error handling
+        self.get_all_xfps()[0].clone()
+    }
+
+    fn get_all_derivation_paths(&self) -> Vec<Option<String>> {
+        let mut paths: Vec<Option<String>> = Vec::new();
+        self.wallet
+            .lock()
+            .unwrap()
+            .public_descriptor(KeychainKind::Internal)
+            .for_each_key(|key| {
+                paths.push(key.full_derivation_path().map(|path| path.to_string()));
+                true
+            });
+        paths
+    }
+
+    fn get_derivation_path(&self) -> String {
+        // TODO: improve error handling
+        self.get_all_derivation_paths()[0].clone().unwrap()
+    }
+
+    pub fn connection_export(&self, mode: ExportMode, target: ExportTarget) -> Result<String> {
+        let config = self.meta_storage
+            .lock()
+            .unwrap()
+            .get_config()
+            .map_err(|e| anyhow::anyhow!("Could not get config from meta storage: {:?}", e))?
+            .unwrap();
+
+        let wallet = self.wallet.lock().unwrap();
+
+        let is_multisig = self.is_multisig();
+
+        match target {
+            ExportTarget::Envoy => {
+                if is_multisig {
+                    return Err(anyhow::anyhow!("Envoy multisig is not supported"));
+                }
+
+                Ok(config.serialize())
+            }
+            ExportTarget::BitcoinCore => {
+                if is_multisig {
+                    return Err(anyhow::anyhow!("Bitcoin Core multisig is not supported"));
+                }
+
+                if mode != ExportMode::File {
+                    return Err(anyhow::anyhow!("Bitcoin Core only supports file exports"));
+                }
+
+                let xfp = self.get_xfp();
+
+                // TODO: need to capitalize network string
+                let chain = config.network.to_string();
+
+                let mut payload: Vec<serde_json::Value> = Vec::new();
+
+                if let Some(external_descriptor) = config.external_descriptor {
+                    payload.push(serde_json::json!(
+                        {
+                            "desc": format!("{}#{}", external_descriptor,  wallet.descriptor_checksum(KeychainKind::External)),
+                            "timestamp": "now",
+                            "range": [0,1000],
+                            "internal": false,
+                            "keypool": true,
+                            "watchonly": true
+                        }
+                    ));
+                }
+
+                payload.push(serde_json::json!(
+                    {
+                        "desc": format!("{}#{}", config.internal_descriptor,  wallet.descriptor_checksum(KeychainKind::Internal)),
+                        "timestamp": "now",
+                        "range": [0,1000],
+                        "internal": true,
+                        "keypool": true,
+                        "watchonly": true
+                    }
+                ));
+
+                let derivation_path = self.get_derivation_path();
+
+                let addresses = (0..3)
+                    .map(|i| format!("{}/{} => {}", derivation_path, i, wallet.peek_address(KeychainKind::External, i).to_string()))
+                    .collect::<Vec<String>>()
+                    .join("\n");
+
+                Ok(format!(
+"# Bitcoin Core Wallet Import File
+
+## For wallet with master key fingerprint: {}
+
+Wallet operates on blockchain: {}
+
+## Bitcoin Core RPC
+
+The following command can be entered after opening Window -> Console
+in Bitcoin Core, or using bitcoin-cli:
+
+importmulti '{}'
+
+## Resulting Addresses (first 3)
+
+{}", xfp, chain, serde_json::Value::Array(payload).to_string(), addresses))
+            }
+            _ => Err(anyhow::anyhow!("TODO")),
+        }
     }
 }
