@@ -530,6 +530,7 @@ dependencies = [
  "bdk_electrum",
  "bdk_wallet",
  "log",
+ "miniscript",
  "redb",
  "serde",
  "serde_json",
