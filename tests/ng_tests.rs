@@ -20,7 +20,6 @@ mod tests {
         ngwallet::account::NgAccount,
         ngwallet::config::AddressType,
         ngwallet::ngwallet::NgWallet,
-        ngwallet::send::TransactionParams,
         redb::backends::FileBackend,
         std::sync::{Arc, Mutex},
     };
@@ -28,11 +27,7 @@ mod tests {
     #[test]
     #[cfg(feature = "envoy")]
     fn new_wallet() {
-        let wallet_file = "wallet.sqlite".to_string();
-        println!("Creating database at: {}", wallet_file);
-
-        let connection = Connection::open(wallet_file).unwrap();
-        // let connection = Connection::open_in_memory().unwrap();
+        let connection = Connection::open_in_memory().unwrap();
         let mut account = NgAccount::new_from_descriptor(
             "Passport Prime".to_string(),
             "red".to_string(),
@@ -131,7 +126,7 @@ mod tests {
             Arc::new(Mutex::new(connection)),
             None::<FileBackend>,
         );
-
+        //
         let sync = account.wallet.sync_request();
         let syncr = NgWallet::<Connection>::sync(sync, ELECTRUM_SERVER, None).unwrap();
         account.wallet.apply(Update::from(syncr)).unwrap();
@@ -146,32 +141,35 @@ mod tests {
 
         let balance = account.wallet.balance().unwrap();
 
+        assert!(balance.total().to_sat() > 0);
         let transactions = account.wallet.transactions().unwrap();
         let utxos = account.wallet.unspend_outputs().unwrap_or_default();
 
-        transactions.iter().for_each(|tx| {
-            println!(
-                "\nTx: --> {:?} | Amount:{} | Note:{:?} |  ",
-                tx.address, tx.amount, tx.note
-            );
-            tx.outputs.iter().for_each(|utxo| {
-                println!(
-                    "Utxo: --> {:?} | Amount:{:?} | Tag:{:?} | DnS{:?}",
-                    utxo.address, utxo.amount, utxo.tag, utxo.do_not_spend
-                );
-            });
-        });
-        for utxo in utxos {
-            account
-                .wallet
-                .set_tag(&utxo, format!("Tag {}", utxo.vout).as_str())
-                .unwrap();
-        }
-        let utxos = account.wallet.unspend_outputs().unwrap();
-
-        for utxo in utxos {
-            println!("Utxo: {} {:?}", utxo.amount, utxo.tag);
-        }
+        assert!(!transactions.is_empty());
+        assert!(!utxos.is_empty());
+        // transactions.iter().for_each(|tx| {
+        //     println!(
+        //         "\nTx: --> {:?} | Amount:{} | Note:{:?} |  ",
+        //         tx.address, tx.amount, tx.note
+        //     );
+        //     tx.outputs.iter().for_each(|utxo| {
+        //         println!(
+        //             "Utxo: --> {:?} | Amount:{:?} | Tag:{:?} | DnS{:?}",
+        //             utxo.address, utxo.amount, utxo.tag, utxo.do_not_spend
+        //         );
+        //     });
+        // });
+        // for utxo in utxos {
+        //     account
+        //         .wallet
+        //         .set_tag(&utxo, format!("Tag {}", utxo.vout).as_str())
+        //         .unwrap();
+        // }
+        // let utxos = account.wallet.unspend_outputs().unwrap();
+        //
+        // for utxo in utxos {
+        //     println!("Utxo: {} {:?}", utxo.amount, utxo.tag);
+        // }
         // if !utxos.is_empty() {
         //     let tag = "Test Tag".to_string();
         //     println!("\nSetting tag: {:?}", tag);
@@ -193,50 +191,61 @@ mod tests {
         //     let utxo_tag = &utxos[0];
         //     println!("Utxo After Do not Spend: {:?}", utxo_tag);
         // }
-        println!("Balance {:?}", balance);
-
-        let param = TransactionParams {
-            address: "tb1phc8m8vansnl4utths947mjquprw20puwrrdfrwx8akeeu2tqwkls7l62u4".to_string(),
-            amount: 105117,
-            fee_rate: 2,
-            selected_outputs: vec![],
-            note: Some("not a note".to_string()),
-            tag: Some("hello".to_string()),
-            do_not_spend_change: true,
-        };
-
-        match account.wallet.get_max_fee(param.clone()) {
-            Ok(tx_fee_calc) => {
-                println!(
-                    "max fee calculated {:?}",
-                    tx_fee_calc.draft_transaction.transaction.fee
-                );
-            }
-            Err(er) => {
-                println!("max fee error {} ", er)
-            }
-        };
-
-        match account.wallet.compose_psbt(param.clone()) {
-            Ok(spend) => {
-                println!("Spend note: {:?}", spend.transaction.note);
-                // match account
-                //     .wallet
-                //     .broadcast_psbt(spend.clone(), ELECTRUM_SERVER, None)
-                // {
-                //     Ok(tx_id) => {
-                //         assert_eq!(tx_id, spend.transaction.tx_id);
-                //         println!("broadcast success {:?} ", spend)
-                //     }
-                //     Err(error) => {
-                //         println!("Spend error {:?} ", error)
-                //     }
-                // }
-            }
-            Err(er) => {
-                println!("Spend error {} ", er)
-            }
-        };
+        // println!("Balance {:?}", balance);
+        //
+        // let param = TransactionParams {
+        //     address: "tb1phc8m8vansnl4utths947mjquprw20puwrrdfrwx8akeeu2tqwkls7l62u4".to_string(),
+        //     amount: 800,
+        //     fee_rate: 2,
+        //     selected_outputs: vec![],
+        //     note: Some("not a note".to_string()),
+        //     tag: Some("hello".to_string()),
+        //     do_not_spend_change: true,
+        // };
+        //
+        // match account.wallet.get_max_fee(param.clone()) {
+        //     Ok(tx_fee_calc) => {
+        //         println!(
+        //             "max fee calculated {:?}",
+        //             tx_fee_calc.draft_transaction.transaction.fee
+        //         );
+        //     }
+        //     Err(er) => {
+        //         println!("max fee error {} ", er)
+        //     }
+        // };
+        // //
+        // match account.wallet.compose_psbt(param.clone()) {
+        //     Ok(spend) => {
+        //         println!("Spend note: {:?}", spend.transaction.note);
+        //         match  NgWallet::<Connection>::broadcast_psbt(spend.clone(), ELECTRUM_SERVER, None)
+        //         {
+        //             Ok(tx_id) => {
+        //                 let tx = spend.transaction.clone();
+        //                 if tx.note.is_some() {
+        //                     account.wallet.set_note_unchecked(&tx.tx_id.to_string(), &tx.note.unwrap()).unwrap();
+        //                 }
+        //                 for output in tx.outputs.iter() {
+        //                     if output.tag.is_some() {
+        //                         account.wallet.set_tag(output, &output.tag.clone().unwrap()).unwrap();
+        //                     }
+        //                 }
+        //                 let sync = account.wallet.sync_request();
+        //                 let syncr = NgWallet::<Connection>::sync(sync, ELECTRUM_SERVER, None).unwrap();
+        //                 account.wallet.apply(Update::from(syncr)).unwrap();
+        //                 assert_eq!(tx_id.clone(), spend.transaction.clone().tx_id);
+        //                 println!("broadcast success tx_id {:?} ", tx_id);
+        //                 println!("broadcast success {:?} ", spend)
+        //             }
+        //             Err(error) => {
+        //                 println!("Spend error {:?} ", error)
+        //             }
+        //         }
+        //     }
+        //     Err(er) => {
+        //         println!("Spend error {} ", er)
+        //     }
+        // };
 
         // let transactions = account.wallet.transactions().unwrap();
         // transactions.iter().for_each(|tx| {
@@ -253,6 +262,33 @@ mod tests {
         // });
         //
         // account.wallet.persist().expect("Wallet persisted");
+
+        let tx = transactions
+            .iter()
+            .find(|tx| {
+                tx.tx_id == "91b4047c62a7b8b183ed8e71ebcefdad622f4f5063905cb80f63c1f2e99033d9"
+            })
+            .unwrap();
+
+        let cancel_draft = account.wallet.compose_cancellation_tx(tx.clone()).unwrap();
+
+        let cancel_tx = cancel_draft.transaction;
+        for input in cancel_tx.inputs {
+            println!(
+                "\n\nCancel tx input \n {:?} {:?}",
+                input.tx_id, input.amount
+            );
+        }
+
+        for output in cancel_tx.outputs.clone() {
+            println!(
+                "\n\nCancel tx outs\n {:?} {:?}",
+                output.address, output.amount
+            );
+        }
+        //cancel tx only has one output
+        assert_eq!(cancel_tx.outputs.len(), 1);
+
         drop(account)
     }
 

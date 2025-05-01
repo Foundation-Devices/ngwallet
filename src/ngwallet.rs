@@ -141,7 +141,6 @@ impl<P: WalletPersister> NgWallet<P> {
                 Confirmed { anchor, .. } => {
                     //to milliseconds
                     date = Some(anchor.confirmation_time);
-                    info!("block height {}", anchor.confirmation_time);
                     let block_height = anchor.block_id.height;
                     if block_height > 0 { block_height } else { 0 }
                 }

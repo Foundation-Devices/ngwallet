@@ -12,7 +12,6 @@ pub use redb;
 
 pub mod bip39;
 mod db;
-
 #[cfg(feature = "envoy")]
 const STOP_GAP: usize = 100;
 
