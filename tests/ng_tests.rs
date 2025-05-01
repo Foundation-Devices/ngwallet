@@ -9,20 +9,42 @@ const ELECTRUM_SERVER: &str = "ssl://mempool.space:60602";
 // TODO: make this unique to the descriptor
 #[cfg(test)]
 mod tests {
-    use ngwallet::bip39;
+    use {
+        bdk_wallet::bitcoin::Network,
+        bdk_wallet::WalletPersister,
+        bdk_wallet::ChangeSet,
+        ngwallet::account::NgAccount,
+        ngwallet::bip39,
+        ngwallet::config::AddressType,
+        ngwallet::ngwallet::{ExportMode, ExportTarget},
+        redb::backends::FileBackend,
+        std::sync::{Arc, Mutex},
+    };
+
+    struct MockPersister;
+
+    impl WalletPersister for MockPersister {
+        type Error = ();
+
+        fn initialize(_persister: &mut Self) -> Result<ChangeSet, Self::Error> {
+            Ok(ChangeSet::default())
+        }
+
+        fn persist(
+            _persister: &mut Self,
+            _changeset: &ChangeSet,
+        ) -> Result<(), Self::Error> {
+            Ok(())
+        }
+    }
 
     #[cfg(feature = "envoy")]
     use {
         crate::*,
-        bdk_wallet::bitcoin::Network,
-        bdk_wallet::rusqlite::Connection,
         bdk_wallet::{AddressInfo, Update},
-        ngwallet::account::NgAccount,
-        ngwallet::config::AddressType,
+        bdk_wallet::rusqlite::Connection,
         ngwallet::ngwallet::NgWallet,
         ngwallet::send::TransactionParams,
-        redb::backends::FileBackend,
-        std::sync::{Arc, Mutex},
     };
 
     #[test]
@@ -263,5 +285,35 @@ mod tests {
 
         let suggestions = bip39::get_seedword_suggestions("xy", 3);
         assert_eq!(suggestions, Vec::<&str>::new());
+    }
+
+    const SEGWIT_EXTERNAL: &str = "wpkh([ab88de89/84h/0h/0h]xpub6CikkQWpo5GK4aDK8KCkmZcHKdANfNorMPfVz2QoS4x6FMg38SeTahR8i666uEUk1ZoZhyM5uctHf1Rpddbbf4YpoaVcieYvZWRG6UU7gzN/0/*)#rru0km0r";
+
+    const SEGWIT_INTERNAL: &str = "wpkh([ab88de89/84h/0h/0h]xpub6CikkQWpo5GK4aDK8KCkmZcHKdANfNorMPfVz2QoS4x6FMg38SeTahR8i666uEUk1ZoZhyM5uctHf1Rpddbbf4YpoaVcieYvZWRG6UU7gzN/1/*)#jhewtwlm";
+
+    #[test]
+    fn connection_export() {
+        let connection = MockPersister;
+        let account = NgAccount::new_from_descriptor(
+            "Passport Prime".to_string(),
+            "red".to_string(),
+            None,
+            None,
+            Network::Bitcoin,
+            AddressType::P2tr,
+            SEGWIT_INTERNAL.to_string(),
+            Some(SEGWIT_EXTERNAL.to_string()),
+            0,
+            None,
+            Arc::new(Mutex::new(connection)),
+            None::<FileBackend>,
+            "".to_string(),
+            None,
+        );
+
+        assert_eq!(String::from("AB88DE89"), account.wallet.get_xfp());
+        assert_eq!(String::from("84'/0'/0'/0"), account.wallet.get_derivation_path());
+
+        assert_eq!(String::from("# Bitcoin Core Wallet Import File\n\n## For wallet with master key fingerprint: AB88DE89\n\nWallet operates on blockchain: bitcoin\n\n## Bitcoin Core RPC\n\nThe following command can be entered after opening Window -> Console\nin Bitcoin Core, or using bitcoin-cli:\n\nimportmulti '[{\"desc\":\"wpkh([ab88de89/84h/0h/0h]xpub6CikkQWpo5GK4aDK8KCkmZcHKdANfNorMPfVz2QoS4x6FMg38SeTahR8i666uEUk1ZoZhyM5uctHf1Rpddbbf4YpoaVcieYvZWRG6UU7gzN/0/*)#rru0km0r\",\"internal\":false,\"keypool\":true,\"range\":[0,1000],\"timestamp\":\"now\",\"watchonly\":true},{\"desc\":\"wpkh([ab88de89/84h/0h/0h]xpub6CikkQWpo5GK4aDK8KCkmZcHKdANfNorMPfVz2QoS4x6FMg38SeTahR8i666uEUk1ZoZhyM5uctHf1Rpddbbf4YpoaVcieYvZWRG6UU7gzN/1/*)#jhewtwlm\",\"internal\":true,\"keypool\":true,\"range\":[0,1000],\"timestamp\":\"now\",\"watchonly\":true}]'\n\n## Resulting Addresses (first 3)\n\nm/84'/0'/0'/0/0 => bc1qm6aw3ek0jvsngylhu3rnw66wv9g67ukah2lenl\nm/84'/0'/0'/0/1 => bc1qagpt03nf6ffhaps7lhs88m25l5sxhu3np602dy\nm/84'/0'/0'/0/2 => bc1qtjq8fhatmu8f4u2tp5kqx3n5964npj4pku5fsx"), account.wallet.connection_export(ExportMode::File, ExportTarget::BitcoinCore).unwrap());
     }
 }

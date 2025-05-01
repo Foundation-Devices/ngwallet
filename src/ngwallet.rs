@@ -649,30 +649,30 @@ impl<P: WalletPersister> NgWallet<P> {
         }
     }
 
-    fn get_all_xfps(&self) -> Vec<String> {
+    pub fn get_all_xfps(&self) -> Vec<String> {
         let mut xfps: Vec<String> = Vec::new();
         self.wallet
             .lock()
             .unwrap()
             .public_descriptor(KeychainKind::Internal)
             .for_each_key(|key| {
-                xfps.push(key.master_fingerprint().to_string());
+                xfps.push(key.master_fingerprint().to_string().to_uppercase());
                 true
             });
         xfps
     }
 
-    fn get_xfp(&self) -> String {
+    pub fn get_xfp(&self) -> String {
         // TODO: improve error handling
         self.get_all_xfps()[0].clone()
     }
 
-    fn get_all_derivation_paths(&self) -> Vec<Option<String>> {
+    pub fn get_all_derivation_paths(&self) -> Vec<Option<String>> {
         let mut paths: Vec<Option<String>> = Vec::new();
         self.wallet
             .lock()
             .unwrap()
-            .public_descriptor(KeychainKind::Internal)
+            .public_descriptor(KeychainKind::External)
             .for_each_key(|key| {
                 paths.push(key.full_derivation_path().map(|path| path.to_string()));
                 true
@@ -680,7 +680,7 @@ impl<P: WalletPersister> NgWallet<P> {
         paths
     }
 
-    fn get_derivation_path(&self) -> String {
+    pub fn get_derivation_path(&self) -> String {
         // TODO: improve error handling
         self.get_all_derivation_paths()[0].clone().unwrap()
     }
@@ -692,8 +692,6 @@ impl<P: WalletPersister> NgWallet<P> {
             .get_config()
             .map_err(|e| anyhow::anyhow!("Could not get config from meta storage: {:?}", e))?
             .unwrap();
-
-        let wallet = self.wallet.lock().unwrap();
 
         let is_multisig = self.is_multisig();
 
@@ -721,36 +719,40 @@ impl<P: WalletPersister> NgWallet<P> {
 
                 let mut payload: Vec<serde_json::Value> = Vec::new();
 
-                if let Some(external_descriptor) = config.external_descriptor {
+                let derivation_path = self.get_derivation_path();
+
+                let addresses = {
+                    let wallet = self.wallet.lock().unwrap();
+
+                    if let Some(external_descriptor) = config.external_descriptor {
+                        payload.push(serde_json::json!(
+                            {
+                                "desc": external_descriptor,
+                                "timestamp": "now",
+                                "range": [0,1000],
+                                "internal": false,
+                                "keypool": true,
+                                "watchonly": true
+                            }
+                        ));
+                    }
+
                     payload.push(serde_json::json!(
                         {
-                            "desc": format!("{}#{}", external_descriptor,  wallet.descriptor_checksum(KeychainKind::External)),
+                            "desc": config.internal_descriptor,
                             "timestamp": "now",
                             "range": [0,1000],
-                            "internal": false,
+                            "internal": true,
                             "keypool": true,
                             "watchonly": true
                         }
                     ));
-                }
 
-                payload.push(serde_json::json!(
-                    {
-                        "desc": format!("{}#{}", config.internal_descriptor,  wallet.descriptor_checksum(KeychainKind::Internal)),
-                        "timestamp": "now",
-                        "range": [0,1000],
-                        "internal": true,
-                        "keypool": true,
-                        "watchonly": true
-                    }
-                ));
-
-                let derivation_path = self.get_derivation_path();
-
-                let addresses = (0..3)
-                    .map(|i| format!("{}/{} => {}", derivation_path, i, wallet.peek_address(KeychainKind::External, i).to_string()))
-                    .collect::<Vec<String>>()
-                    .join("\n");
+                    (0..3)
+                        .map(|i| format!("m/{}/{} => {}", derivation_path, i, wallet.peek_address(KeychainKind::External, i).to_string()))
+                        .collect::<Vec<String>>()
+                        .join("\n")
+                };
 
                 Ok(format!(
 "# Bitcoin Core Wallet Import File
