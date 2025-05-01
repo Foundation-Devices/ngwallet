@@ -2,19 +2,15 @@ use crate::ngwallet::NgWallet;
 use anyhow::Result;
 use base64::prelude::*;
 use bdk_wallet::bitcoin::secp256k1::Secp256k1;
-use bdk_wallet::bitcoin::{
-    Address, Amount, FeeRate, Psbt, ScriptBuf, Transaction,  Txid,
-};
+use bdk_wallet::bitcoin::{Address, Amount, FeeRate, Psbt, ScriptBuf, Transaction, Txid};
 use bdk_wallet::coin_selection::InsufficientFunds;
+use bdk_wallet::error::CreateTxError;
 use bdk_wallet::error::CreateTxError::CoinSelection;
-use bdk_wallet::error::{ CreateTxError};
 use bdk_wallet::miniscript::psbt::PsbtExt;
-use bdk_wallet::{
-    KeychainKind, PersistedWallet,
-    SignOptions, TxOrdering,  WalletPersister
-};
+use bdk_wallet::psbt::PsbtUtils;
+use bdk_wallet::{KeychainKind, PersistedWallet, SignOptions, TxOrdering, WalletPersister};
 use log::info;
-use std::collections::{ HashSet};
+use std::collections::HashSet;
 use std::str::FromStr;
 use std::sync::MutexGuard;
 
@@ -24,7 +20,6 @@ use {
     bdk_electrum::BdkElectrumClient,
     bdk_electrum::electrum_client::Client,
     bdk_electrum::electrum_client::{Config, Socks5Config},
-    bdk_wallet::psbt::PsbtUtils,
 };
 
 #[derive(Debug, Clone)]
@@ -56,7 +51,6 @@ pub struct TransactionParams {
 
 // TODO: chore: cleanup duplicate code
 impl<P: WalletPersister> NgWallet<P> {
-
     //noinspection RsExternalLinter
     pub fn get_max_fee(
         &self,
@@ -97,11 +91,11 @@ impl<P: WalletPersister> NgWallet<P> {
 
         //clippy is wrong about max_fee unused_assignments
         #[allow(unused_assignments)]
-            let mut max_fee = spendable_balance - amount;
+        let mut max_fee = spendable_balance - amount;
 
         //clippy is wrong about  max_fee_rate unused_assignments
         #[allow(unused_assignments)]
-            let mut max_fee_rate = 1;
+        let mut max_fee_rate = 1;
 
         let mut receive_amount = amount;
         //if user is trying to sweep in order to find the max fee we set receive to min spend…

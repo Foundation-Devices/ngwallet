@@ -3,26 +3,18 @@ use anyhow::Result;
 use base64::prelude::*;
 use bdk_wallet::bitcoin::policy::DEFAULT_INCREMENTAL_RELAY_FEE;
 use bdk_wallet::bitcoin::secp256k1::Secp256k1;
-use bdk_wallet::bitcoin::{
-    Address, Amount, FeeRate, OutPoint, Psbt, Txid,
-};
+use bdk_wallet::bitcoin::{Address, Amount, FeeRate, OutPoint, Psbt, Txid};
+use bdk_wallet::error::CreateTxError::CoinSelection;
 use bdk_wallet::error::{BuildFeeBumpError, CreateTxError};
 use bdk_wallet::miniscript::psbt::PsbtExt;
-use bdk_wallet::{
-    AddressInfo, KeychainKind,
-    SignOptions, WalletPersister,
-};
+use bdk_wallet::psbt::PsbtUtils;
+use bdk_wallet::{AddressInfo, KeychainKind, SignOptions, WalletPersister};
 use log::info;
 use std::str::FromStr;
-use bdk_wallet::error::CreateTxError::CoinSelection;
 
 use crate::rbf::BumpFeeError::ComposeTxError;
 use crate::send::{DraftTransaction, TransactionFeeResult};
 use crate::transaction::{BitcoinTransaction, Input, KeyChain, Output};
-#[cfg(feature = "envoy")]
-use {
-    bdk_wallet::psbt::PsbtUtils,
-};
 
 #[derive(Debug)]
 pub enum BumpFeeError {
@@ -150,7 +142,8 @@ impl<P: WalletPersister> NgWallet<P> {
                         let address = Address::from_script(&script, wallet.network())
                             .unwrap()
                             .to_string();
-                        let out_put_tag: Option<String> = original_transaction.clone().get_change_tag();
+                        let out_put_tag: Option<String> =
+                            original_transaction.clone().get_change_tag();
                         //if the output belongs to the wallet
                         Output {
                             tx_id: transaction.compute_txid().to_string(),
@@ -254,7 +247,7 @@ impl<P: WalletPersister> NgWallet<P> {
 
         // TODO: check if clippy is right about this one
         #[allow(unused_assignments)]
-            let mut max_fee_rate = 1000;
+        let mut max_fee_rate = 1000;
 
         let mut tries = 0;
         loop {
@@ -450,14 +443,18 @@ impl<P: WalletPersister> NgWallet<P> {
                     })
                     .collect::<Vec<Output>>();
 
-                let inputs = transaction.input.clone()
+                let inputs = transaction
+                    .input
+                    .clone()
                     .iter()
                     .map(|input| {
                         let utxo_tx = transactions
                             .clone()
                             .into_iter()
-                            .find(|tx| tx.tx_id == input.previous_output.txid.to_string()).unwrap();
-                        let out = utxo_tx.outputs
+                            .find(|tx| tx.tx_id == input.previous_output.txid.to_string())
+                            .unwrap();
+                        let out = utxo_tx
+                            .outputs
                             .clone()
                             .into_iter()
                             .find(|tx| tx.vout == input.previous_output.vout)
@@ -479,7 +476,8 @@ impl<P: WalletPersister> NgWallet<P> {
                             amount: out.amount,
                             tag: input_tag,
                         }
-                    }).collect::<Vec<Input>>();
+                    })
+                    .collect::<Vec<Input>>();
 
                 let transaction = Self::transform_psbt_to_bitcointx(
                     psbt.clone(),
