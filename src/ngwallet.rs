@@ -205,7 +205,7 @@ impl<P: WalletPersister> NgWallet<P> {
                         address: Address::from_script(&output.script_pubkey, wallet.network())
                             .unwrap()
                             .to_string(),
-                        tag: storage.get_tag(&tx_id).unwrap(),
+                        tag: storage.get_tag(&format!("{}:{}", &tx_id, index)).unwrap(),
                         do_not_spend,
                         keychain: wallet
                             .derivation_of_spk(output.script_pubkey.clone())
