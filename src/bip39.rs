@@ -11,10 +11,28 @@ pub enum DescriptorType {
 }
 
 pub struct Descriptors {
-    descriptor: String,
-    change_descriptor: String,
+    descriptor_xprv: String,
+    change_descriptor_xprv: String,
     descriptor_xpub: String,
     change_descriptor_xpub: String,
+}
+
+impl Descriptors {
+    pub fn descriptor_xprv(&self) -> &str {
+        &self.descriptor_xprv
+    }
+
+    pub fn change_descriptor_xprv(&self) -> &str {
+        &self.change_descriptor_xprv
+    }
+
+    pub fn descriptor_xpub(&self) -> &str {
+        &self.descriptor_xpub
+    }
+
+    pub fn change_descriptor_xpub(&self) -> &str {
+        &self.change_descriptor_xpub
+    }
 }
 
 pub fn get_seedword_suggestions(input: &str, nr_of_suggestions: usize) -> Vec<&str> {
@@ -57,8 +75,8 @@ pub fn get_descriptors(
     };
 
     Ok(Descriptors {
-        descriptor: descriptor.to_string_with_secret(&key_map),
-        change_descriptor: change_descriptor.to_string_with_secret(&change_key_map),
+        descriptor_xprv: descriptor.to_string_with_secret(&key_map),
+        change_descriptor_xprv: change_descriptor.to_string_with_secret(&change_key_map),
         descriptor_xpub: descriptor.to_string(),
         change_descriptor_xpub: change_descriptor.to_string(),
     })
@@ -78,8 +96,8 @@ mod test {
         
         let descriptors = get_descriptors(mnemonic, Bip84, Network::Bitcoin, None).unwrap();
 
-        assert_eq!(descriptors.descriptor, "wpkh(xprv9s21ZrQH143K2v9ABLJujuoqaJoMuazgoH6Yg4CceWQr86hPGbE5g6ivqRnPPGTnt6GqZVTFecYEUzkB9rzj79jGenWLW9GVsG5i6CKmMAE/84'/0'/0'/0/*)#5aaucexa".to_owned());
-        assert_eq!(descriptors.change_descriptor, "wpkh(xprv9s21ZrQH143K2v9ABLJujuoqaJoMuazgoH6Yg4CceWQr86hPGbE5g6ivqRnPPGTnt6GqZVTFecYEUzkB9rzj79jGenWLW9GVsG5i6CKmMAE/84'/0'/0'/1/*)#9fca9vk9".to_owned());
+        assert_eq!(descriptors.descriptor_xprv, "wpkh(xprv9s21ZrQH143K2v9ABLJujuoqaJoMuazgoH6Yg4CceWQr86hPGbE5g6ivqRnPPGTnt6GqZVTFecYEUzkB9rzj79jGenWLW9GVsG5i6CKmMAE/84'/0'/0'/0/*)#5aaucexa".to_owned());
+        assert_eq!(descriptors.change_descriptor_xprv, "wpkh(xprv9s21ZrQH143K2v9ABLJujuoqaJoMuazgoH6Yg4CceWQr86hPGbE5g6ivqRnPPGTnt6GqZVTFecYEUzkB9rzj79jGenWLW9GVsG5i6CKmMAE/84'/0'/0'/1/*)#9fca9vk9".to_owned());
         assert_eq!(descriptors.descriptor_xpub, "wpkh([be83839f/84'/0'/0']xpub6DMcCzuF7QuZJwR7XxqukyLf7rsVvN2wESKFjduCBwGXAHeFufQUJAMnA2h3Fey1KVHDCbiXsXiGgbk2YpsdFPH9sJetbGzYGrhN8VhDTQG/0/*)#wvlf8l45".to_owned());
         assert_eq!(descriptors.change_descriptor_xpub, "wpkh([be83839f/84'/0'/0']xpub6DMcCzuF7QuZJwR7XxqukyLf7rsVvN2wESKFjduCBwGXAHeFufQUJAMnA2h3Fey1KVHDCbiXsXiGgbk2YpsdFPH9sJetbGzYGrhN8VhDTQG/1/*)#lc6g629v".to_owned());
     }
