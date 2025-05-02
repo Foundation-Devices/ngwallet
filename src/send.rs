@@ -20,6 +20,7 @@ use {
     bdk_electrum::BdkElectrumClient,
     bdk_electrum::electrum_client::Client,
     bdk_electrum::electrum_client::{Config, Socks5Config},
+    bdk_electrum::electrum_client::Error
 };
 
 #[derive(Debug, Clone)]
@@ -390,24 +391,19 @@ impl<P: WalletPersister> NgWallet<P> {
         spend: DraftTransaction,
         electrum_server: &str,
         socks_proxy: Option<&str>,
-    ) -> Result<String> {
+    ) -> std::result::Result<Txid, Error> {
         let bdk_client = Self::build_electrum_client(electrum_server, socks_proxy);
         let tx = BASE64_STANDARD
-            .decode(spend.psbt_base64)
-            .map_err(|e| anyhow::anyhow!("Failed to decode PSBT: {}", e))?;
+            .decode(spend.psbt_base64).expect("Failed to decode PSBT");
         let psbt = Psbt::deserialize(tx.as_slice())
-            .map_err(|er| anyhow::anyhow!("Failed to deserialize PSBT: {}", er))?;
+            .expect("Failed to deserialize PSBT:");
 
         let transaction = psbt
             .extract_tx()
-            .map_err(|e| anyhow::anyhow!("Failed to extract transaction: {}", e))?;
+            .expect("Failed to extract transaction from PSBT");
 
-        let tx_id = bdk_client
+        bdk_client
             .transaction_broadcast(&transaction)
-            .map_err(|e| anyhow::anyhow!("Failed to broadcast transaction: {}", e))?;
-
-        //let tx = spend.transaction;
-        Ok(tx_id.to_string())
     }
 
     #[cfg(feature = "envoy")]
