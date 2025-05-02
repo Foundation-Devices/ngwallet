@@ -93,7 +93,7 @@ mod test {
         let mnemonic =
             "aim bunker wash balance finish force paper analyst cabin spoon stable organ"
                 .to_owned();
-        
+
         let descriptors = get_descriptors(mnemonic, Bip84, Network::Bitcoin, None).unwrap();
 
         assert_eq!(descriptors.descriptor_xprv, "wpkh(xprv9s21ZrQH143K2v9ABLJujuoqaJoMuazgoH6Yg4CceWQr86hPGbE5g6ivqRnPPGTnt6GqZVTFecYEUzkB9rzj79jGenWLW9GVsG5i6CKmMAE/84'/0'/0'/0/*)#5aaucexa".to_owned());
@@ -101,7 +101,6 @@ mod test {
         assert_eq!(descriptors.descriptor_xpub, "wpkh([be83839f/84'/0'/0']xpub6DMcCzuF7QuZJwR7XxqukyLf7rsVvN2wESKFjduCBwGXAHeFufQUJAMnA2h3Fey1KVHDCbiXsXiGgbk2YpsdFPH9sJetbGzYGrhN8VhDTQG/0/*)#wvlf8l45".to_owned());
         assert_eq!(descriptors.change_descriptor_xpub, "wpkh([be83839f/84'/0'/0']xpub6DMcCzuF7QuZJwR7XxqukyLf7rsVvN2wESKFjduCBwGXAHeFufQUJAMnA2h3Fey1KVHDCbiXsXiGgbk2YpsdFPH9sJetbGzYGrhN8VhDTQG/1/*)#lc6g629v".to_owned());
     }
-    
 
     #[test]
     fn test_get_random_seed() {
