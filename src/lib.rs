@@ -1,6 +1,7 @@
 pub mod account;
 pub mod config;
 pub mod ngwallet;
+pub mod rbf;
 pub mod send;
 mod store;
 pub mod transaction;
@@ -11,7 +12,6 @@ pub use redb;
 
 pub mod bip39;
 mod db;
-
 #[cfg(feature = "envoy")]
 const STOP_GAP: usize = 100;
 

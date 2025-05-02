@@ -59,6 +59,7 @@ impl Output {
         OutPoint::new(tx_id, self.vout)
     }
 }
+
 impl PartialEq for Output {
     fn eq(&self, other: &Self) -> bool {
         self.get_id() == other.get_id()
@@ -80,6 +81,28 @@ pub struct BitcoinTransaction {
     pub note: Option<String>,
     pub date: Option<u64>,
     pub vsize: usize,
+}
+
+impl BitcoinTransaction {
+    pub fn get_change_output(&self) -> Option<Output> {
+        for output in &self.outputs.clone() {
+            if output.keychain == Some(KeyChain::Internal) {
+                return Some(output.clone());
+            }
+        }
+        None
+    }
+
+    pub fn get_change_tag(&self) -> Option<String> {
+        for output in &self.outputs {
+            if output.keychain == Some(KeyChain::Internal) {
+                if let Some(tag) = &output.tag {
+                    return Some(tag.clone());
+                }
+            }
+        }
+        None
+    }
 }
 
 // #[derive(Debug)]
