@@ -81,6 +81,8 @@ impl<P: WalletPersister> NgWallet<P> {
     }
 
     pub fn load(
+        internal_descriptor: String,
+        external_descriptor: Option<String>,
         meta_storage: Arc<Mutex<dyn MetaStorage>>,
         bdk_persister: Arc<Mutex<P>>,
     ) -> Result<NgWallet<P>>
@@ -90,16 +92,9 @@ impl<P: WalletPersister> NgWallet<P> {
         // #[cfg(feature = "envoy")]
         //     let mut persister = Connection::open(format!("{}/wallet.sqlite",db_path))?;
 
-        let config = meta_storage
-            .lock()
-            .unwrap()
-            .get_config()
-            .map_err(|e| anyhow::anyhow!("Could not get config from meta storage: {:?}", e))?
-            .unwrap();
-
         let wallet_opt = Wallet::load()
-            .descriptor(KeychainKind::Internal, Some(config.internal_descriptor))
-            .descriptor(KeychainKind::External, config.external_descriptor)
+            .descriptor(KeychainKind::Internal, Some(internal_descriptor))
+            .descriptor(KeychainKind::External, external_descriptor)
             .extract_keys()
             .load_wallet(&mut *bdk_persister.lock().unwrap())
             .unwrap();
@@ -112,16 +107,6 @@ impl<P: WalletPersister> NgWallet<P> {
             }),
             None => Err(anyhow::anyhow!("Failed to load wallet database.")),
         }
-    }
-
-    pub fn next_address(&mut self) -> Result<AddressInfo> {
-        let address: AddressInfo = self
-            .wallet
-            .lock()
-            .unwrap()
-            .next_unused_address(KeychainKind::External);
-        self.persist()?;
-        Ok(address)
     }
 
     pub fn transactions(&self) -> Result<Vec<BitcoinTransaction>> {
@@ -312,10 +297,7 @@ impl<P: WalletPersister> NgWallet<P> {
 
         Ok(transactions)
     }
-    #[cfg(feature = "envoy")]
-    pub fn full_scan_request(&self) -> FullScanRequest<KeychainKind> {
-        self.wallet.lock().unwrap().start_full_scan().build()
-    }
+
     #[cfg(feature = "envoy")]
     pub fn sync_request(&self) -> SyncRequest<(KeychainKind, u32)> {
         self.wallet
@@ -428,18 +410,6 @@ impl<P: WalletPersister> NgWallet<P> {
             });
         }
         Ok(unspents)
-    }
-
-    pub fn apply(&mut self, update: Update) -> Result<()> {
-        self.wallet
-            .lock()
-            .unwrap()
-            .apply_update(update)
-            .map_err(|e| anyhow::anyhow!(e))
-    }
-
-    pub fn balance(&self) -> Result<bdk_wallet::Balance> {
-        Ok(self.wallet.lock().unwrap().balance())
     }
 
     //check if the wallet got signers,

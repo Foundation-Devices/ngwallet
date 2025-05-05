@@ -1,5 +1,6 @@
 use bdk_wallet::bitcoin::Network;
 use serde::{Deserialize, Serialize};
+use crate::account::Descriptor;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 #[non_exhaustive]
@@ -24,8 +25,7 @@ pub struct NgAccountConfig {
     pub date_added: Option<String>,
     pub address_type: AddressType,
     pub index: u32,
-    pub internal_descriptor: String,
-    pub external_descriptor: Option<String>,
+    pub descriptors: Vec<Descriptor>,
     pub date_synced: Option<String>,
     pub wallet_path: Option<String>,
     pub network: Network,
