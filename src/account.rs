@@ -3,18 +3,19 @@ use std::iter::Sum;
 use std::sync::{Arc, Mutex};
 
 use anyhow::Error;
+use bdk_electrum::bdk_core::bitcoin::{OutPoint, Txid};
 use bdk_electrum::bdk_core::spk_client::FullScanRequest;
-use bdk_wallet::{AddressInfo, Balance, KeychainKind, Update, WalletPersister};
 use bdk_wallet::bitcoin::Network;
 use bdk_wallet::chain::local_chain::CannotConnectError;
+use bdk_wallet::{AddressInfo, Balance, KeychainKind, Update, WalletPersister};
 use redb::StorageBackend;
 
 use crate::config::{AddressType, NgAccountConfig};
 use crate::db::RedbMetaStorage;
 use crate::ngwallet::NgWallet;
 use crate::store::MetaStorage;
-use serde::{Deserialize, Serialize};
 use crate::transaction::{BitcoinTransaction, Output};
+use serde::{Deserialize, Serialize};
 
 #[derive(Debug)]
 pub struct NgAccount<P: WalletPersister> {
@@ -116,7 +117,7 @@ impl<P: WalletPersister> NgAccount<P> {
                 bdk_persister.clone(),
             )
             .unwrap();
-            
+
             wallets.push(wallet);
         }
 
@@ -143,7 +144,7 @@ impl<P: WalletPersister> NgAccount<P> {
             .set_config(self.config.serialize().as_str())
             .map_err(|e| anyhow::anyhow!(e))
     }
-    
+
     pub fn get_backup(&self) -> Vec<u8> {
         vec![]
     }
@@ -151,38 +152,35 @@ impl<P: WalletPersister> NgAccount<P> {
     pub fn next_address(&mut self) -> anyhow::Result<Vec<AddressInfo>> {
         let mut addresses = vec![];
         for wallet in self.wallets.iter_mut() {
-            let address: AddressInfo = wallet.wallet
+            let address: AddressInfo = wallet
+                .wallet
                 .lock()
                 .unwrap()
                 .next_unused_address(KeychainKind::External);
-            
+
             addresses.push(address);
         }
 
         self.persist()?;
-        
+
         Ok(addresses)
     }
 
     #[cfg(feature = "envoy")]
     pub fn full_scan_request(&self) -> Vec<FullScanRequest<KeychainKind>> {
         let mut requests = vec![];
-        
+
         for wallet in self.wallets.iter() {
             let request = wallet.wallet.lock().unwrap().start_full_scan().build();
             requests.push(request);
         }
-        
+
         requests
     }
 
     pub fn apply(&mut self, update: Update) -> anyhow::Result<()> {
-        
         for wallet in &self.wallets {
-            match wallet.wallet
-                .lock()
-                .unwrap()
-                .apply_update(update.clone()) {
+            match wallet.wallet.lock().unwrap().apply_update(update.clone()) {
                 Ok(_) => {
                     println!("updated the wallet");
                     return Ok(());
@@ -192,32 +190,31 @@ impl<P: WalletPersister> NgAccount<P> {
                 }
             }
         }
-        
+
         Ok(())
     }
 
-
     pub fn balance(&self) -> anyhow::Result<bdk_wallet::Balance> {
         let mut balance = Balance::default();
-        
+
         for wallet in self.wallets.iter() {
-            let wallet_balance= wallet.wallet.lock().unwrap().balance();
-            
+            let wallet_balance = wallet.wallet.lock().unwrap().balance();
+
             balance.confirmed += wallet_balance.confirmed;
             balance.immature += wallet_balance.immature;
             balance.trusted_pending += wallet_balance.trusted_pending;
             balance.untrusted_pending += wallet_balance.untrusted_pending;
         }
-        
+
         Ok(balance)
     }
-    
+
     pub fn transactions(&self) -> anyhow::Result<Vec<BitcoinTransaction>> {
         let mut transactions = vec![];
         for wallet in self.wallets.iter() {
             transactions.extend(wallet.transactions()?);
         }
-        
+
         Ok(transactions)
     }
 
@@ -229,5 +226,36 @@ impl<P: WalletPersister> NgAccount<P> {
 
         Ok(utxos)
     }
-}
 
+    pub fn set_note(&mut self, tx_id: &str, note: &str) -> anyhow::Result<bool> {
+        self.meta_storage
+            .lock()
+            .unwrap()
+            .set_note(&tx_id.to_string(), note)
+            .map_err(|e| anyhow::anyhow!("Could not set note: {:?}", e))?;
+        Ok(true)
+    }
+
+    pub fn set_tag(&mut self, output: &Output, tag: &str) -> anyhow::Result<bool> {
+        self.meta_storage
+            .lock()
+            .unwrap()
+            .set_tag(output.get_id().as_str(), tag)
+            .map_err(|_| anyhow::anyhow!("Could not set tag "))
+            .unwrap();
+        self.meta_storage
+            .lock()
+            .unwrap()
+            .add_tag(tag.to_string().as_str())
+            .map_err(|_| anyhow::anyhow!("Could not set tag "))
+            .unwrap();
+        Ok(true)
+    }
+
+    pub fn set_do_not_spend(&mut self, output: &Output, state: bool) -> anyhow::Result<()> {
+        self.meta_storage
+            .lock()
+            .unwrap()
+            .set_do_not_spend(output.get_id().as_str(), state)
+    }
+}

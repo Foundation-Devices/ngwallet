@@ -1,6 +1,6 @@
+use crate::account::Descriptor;
 use bdk_wallet::bitcoin::Network;
 use serde::{Deserialize, Serialize};
-use crate::account::Descriptor;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 #[non_exhaustive]

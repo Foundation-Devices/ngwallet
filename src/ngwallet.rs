@@ -467,27 +467,6 @@ impl<P: WalletPersister> NgWallet<P> {
         Ok(())
     }
 
-    pub fn set_note(&mut self, tx_id: &str, note: &str) -> Result<bool> {
-        let tx_id = Txid::from_str(tx_id).map_err(|e| anyhow::anyhow!("Invalid Txid: {:?}", e))?;
-        let tx = self
-            .wallet
-            .lock()
-            .unwrap()
-            .get_tx(tx_id)
-            .ok_or_else(|| anyhow::anyhow!("Transaction not found"))?
-            .tx_node
-            .tx
-            .compute_txid();
-
-        self.meta_storage
-            .lock()
-            .unwrap()
-            .set_note(&tx.to_string(), note)
-            .map_err(|e| anyhow::anyhow!("Could not set note: {:?}", e))?;
-
-        Ok(true)
-    }
-
     /// Sets a note for a transaction without checking if the transaction existence.
     pub fn set_note_unchecked(&mut self, tx_id: &str, note: &str) -> Result<bool> {
         self.meta_storage

@@ -50,86 +50,79 @@ mod tests {
             "".to_string(),
             None,
         );
-        let address= account.next_address().unwrap();
+        let address = account.next_address().unwrap();
         println!(
             "Generated address {} at index {}",
             address[0].address, address[0].index
         );
 
         let request = account.full_scan_request();
-        
+
         for request in request {
             let update = NgWallet::<Connection>::scan(request, ELECTRUM_SERVER, None).unwrap();
             account.apply(Update::from(update)).unwrap();
         }
-        
+
         let balance = account.balance().unwrap();
         println!("Wallet balance: {} sat\n", balance.total().to_sat());
-        
+
         let transactions = account.transactions().unwrap();
         for tx in transactions {
             println!("Transaction: {:?}", tx);
         }
-        
+
         let utxos = account.utxos();
         utxos.unwrap().iter().for_each(|utxo| {
             println!("Utxo: {:?}", utxo);
         });
-        
+
         let transactions = account.transactions().unwrap();
-        // 
-        // if !transactions.is_empty() {
-        //     let message = "Test Message".to_string();
-        //     println!("\nSetting note: {:?}", message);
-        //     account
-        //         .wallet
-        //         .set_note(&transactions[0].tx_id, &message.clone())
-        //         .unwrap();
-        //     let transactions = account.wallet.transactions().unwrap();
-        //     let firs_tx = transactions[0].note.clone().unwrap_or("".to_string());
-        //     println!("Transaction note: {:?}", firs_tx);
-        //     assert_eq!(firs_tx, message);
-        // }
-        // 
-        // let utxos = account.wallet.unspend_outputs().unwrap_or(vec![]);
-        // if !utxos.is_empty() {
-        //     let tag = "Test Tag".to_string();
-        //     println!("\nSetting tag: {:?}", tag);
-        //     let first_utxo = &utxos[0];
-        //     account.wallet.set_tag(first_utxo, tag.as_str()).unwrap();
-        //     let utxos = account.wallet.unspend_outputs().unwrap_or(vec![]);
-        //     let utxo_tag = utxos[0].tag.clone().unwrap_or("".to_string());
-        //     println!("Utxo tag: {:?}", utxo_tag);
-        //     assert_eq!(utxo_tag, tag);
-        // 
-        //     println!("\nSetting do not spend : {:?}", false);
-        //     account.wallet.set_do_not_spend(first_utxo, false).unwrap();
-        // 
-        //     let utxos = account.wallet.unspend_outputs().unwrap_or(vec![]);
-        //     let utxo_tag = &utxos[0];
-        //     println!("Utxo After Do not Spend: {:?}", utxo_tag);
-        // 
-        //     println!("\nSetting do not spend : {:?}", true);
-        //     account.wallet.set_do_not_spend(first_utxo, false).unwrap();
-        // 
-        //     let utxos = account.wallet.unspend_outputs().unwrap_or(vec![]);
-        //     let utxo_tag = &utxos[0];
-        //     println!("Utxo After Do not Spend: {:?}", utxo_tag);
-        // }
+        //
+        if !transactions.is_empty() {
+            let message = "Test Message".to_string();
+            println!("\nSetting note: {:?}", message);
+            account
+                .set_note(&transactions[0].tx_id, &message.clone())
+                .unwrap();
+            let transactions = account.transactions().unwrap();
+            let firs_tx = transactions[0].note.clone().unwrap_or("".to_string());
+            println!("Transaction note: {:?}", firs_tx);
+            assert_eq!(firs_tx, message);
+        }
+        //
+        let utxos = account.utxos().unwrap_or(vec![]);
+        if !utxos.is_empty() {
+            let tag = "Test Tag".to_string();
+            println!("\nSetting tag: {:?}", tag);
+            let first_utxo = &utxos[0];
+            account.set_tag(first_utxo, tag.as_str()).unwrap();
+            let utxos = account.utxos().unwrap_or(vec![]);
+            let utxo_tag = utxos[0].tag.clone().unwrap_or("".to_string());
+            println!("Utxo tag: {:?}", utxo_tag);
+            assert_eq!(utxo_tag, tag);
+
+            println!("\nSetting do not spend : {:?}", false);
+            account.set_do_not_spend(first_utxo, true).unwrap();
+
+            let utxos = account.utxos().unwrap_or(vec![]);
+            let utxo_tag = &utxos[0];
+            assert_eq!(utxo_tag.do_not_spend, true);
+            println!("Utxo After Do not Spend: {:?}", utxo_tag);
+        }
         // println!("Balance {:?}", balance);
         // account.wallet.persist().unwrap();
     }
-    // 
+    //
     // //noinspection RsExternalLinter
     // #[test]
     // #[cfg(feature = "envoy")]
     // fn open_wallet() {
     //     let wallet_file = "wallet.sqlite".to_string();
     //     println!("Opening database at: {}", wallet_file);
-    // 
+    //
     //     let connection = Connection::open(wallet_file).unwrap();
     //     // let connection = Connection::open_in_memory().unwrap();
-    // 
+    //
     //     let mut account = NgAccount::open_account(
     //         "./".to_string(),
     //         Arc::new(Mutex::new(connection)),
@@ -139,7 +132,7 @@ mod tests {
     //     let sync = account.wallet.sync_request();
     //     let syncr = NgWallet::<Connection>::sync(sync, ELECTRUM_SERVER, None).unwrap();
     //     account.wallet.apply(Update::from(syncr)).unwrap();
-    // 
+    //
     //     let address: AddressInfo = account.wallet.next_address().unwrap();
     //     println!(
     //         "Generated address {} at index {}",
@@ -147,13 +140,13 @@ mod tests {
     //     );
     //     let balance = account.wallet.balance().unwrap();
     //     println!("Wallet balance: {} sat\n", balance.total().to_sat());
-    // 
+    //
     //     let balance = account.wallet.balance().unwrap();
-    // 
+    //
     //     assert!(balance.total().to_sat() > 0);
     //     let transactions = account.wallet.transactions().unwrap();
     //     let utxos = account.wallet.unspend_outputs().unwrap_or_default();
-    // 
+    //
     //     assert!(!transactions.is_empty());
     //     assert!(!utxos.is_empty());
     //     // transactions.iter().for_each(|tx| {
@@ -255,7 +248,7 @@ mod tests {
     //     //         println!("Spend error {} ", er)
     //     //     }
     //     // };
-    // 
+    //
     //     // let transactions = account.wallet.transactions().unwrap();
     //     // transactions.iter().for_each(|tx| {
     //     //     println!(
@@ -271,16 +264,16 @@ mod tests {
     //     // });
     //     //
     //     // account.wallet.persist().expect("Wallet persisted");
-    // 
+    //
     //     let tx = transactions
     //         .iter()
     //         .find(|tx| {
     //             tx.tx_id == "91b4047c62a7b8b183ed8e71ebcefdad622f4f5063905cb80f63c1f2e99033d9"
     //         })
     //         .unwrap();
-    // 
+    //
     //     let cancel_draft = account.wallet.compose_cancellation_tx(tx.clone()).unwrap();
-    // 
+    //
     //     let cancel_tx = cancel_draft.transaction;
     //     for input in cancel_tx.inputs {
     //         println!(
@@ -288,7 +281,7 @@ mod tests {
     //             input.tx_id, input.amount
     //         );
     //     }
-    // 
+    //
     //     for output in cancel_tx.outputs.clone() {
     //         println!(
     //             "\n\nCancel tx outs\n {:?} {:?}",
@@ -297,7 +290,7 @@ mod tests {
     //     }
     //     //cancel tx only has one output
     //     assert_eq!(cancel_tx.outputs.len(), 1);
-    // 
+    //
     //     drop(account)
     // }
 
