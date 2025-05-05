@@ -57,7 +57,7 @@ impl<P: WalletPersister> NgWallet<P> {
         &self,
         transaction_params: TransactionParams,
     ) -> Result<TransactionFeeResult, CreateTxError> {
-        let utxos = self.unspend_outputs().unwrap();
+        let utxos = self.utxos().unwrap();
         let mut wallet = self.wallet.lock().unwrap();
         let address = transaction_params.address;
         let tag = transaction_params.tag;
@@ -260,7 +260,7 @@ impl<P: WalletPersister> NgWallet<P> {
         let do_not_spend_change = spend_params.do_not_spend_change;
 
         //get current utxo set and balance
-        let utxos = self.unspend_outputs().unwrap();
+        let utxos = self.utxos().unwrap();
 
         // The wallet will be locked for the rest of the spend method,
         // so calling other NgWallet APIs won't succeed.

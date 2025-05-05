@@ -46,7 +46,7 @@ impl<P: WalletPersister> NgWallet<P> {
         &self,
         original_transaction: BitcoinTransaction,
     ) -> Result<DraftTransaction, BumpFeeError> {
-        let unspend_outputs = self.unspend_outputs().unwrap();
+        let unspend_outputs = self.utxos().unwrap();
         let transactions = self.transactions().unwrap();
         let tx_id = Txid::from_str(original_transaction.tx_id.as_str())
             .map_err(|_| BumpFeeError::TransactionNotFound())?;
@@ -202,7 +202,7 @@ impl<P: WalletPersister> NgWallet<P> {
         selected_outputs: Vec<Output>,
         bitcoin_transaction: BitcoinTransaction,
     ) -> Result<TransactionFeeResult, BumpFeeError> {
-        let unspend_outputs = self.unspend_outputs().unwrap();
+        let unspend_outputs = self.utxos().unwrap();
         let transactions = self.transactions().unwrap();
 
         //check if transaction is output is locked
@@ -513,7 +513,7 @@ impl<P: WalletPersister> NgWallet<P> {
         fee_rate: u64,
         fee_absolute: Option<u64>,
     ) -> Result<Psbt, BumpFeeError> {
-        let unspend_outputs = self.unspend_outputs().unwrap();
+        let unspend_outputs = self.utxos().unwrap();
         let transactions = self.transactions().unwrap();
         let mut wallet = self.wallet.lock().unwrap();
         let tx_id = Txid::from_str(bitcoin_transaction.clone().tx_id.as_str())

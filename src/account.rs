@@ -14,6 +14,7 @@ use crate::db::RedbMetaStorage;
 use crate::ngwallet::NgWallet;
 use crate::store::MetaStorage;
 use serde::{Deserialize, Serialize};
+use crate::transaction::{BitcoinTransaction, Output};
 
 #[derive(Debug)]
 pub struct NgAccount<P: WalletPersister> {
@@ -209,6 +210,24 @@ impl<P: WalletPersister> NgAccount<P> {
         }
         
         Ok(balance)
+    }
+    
+    pub fn transactions(&self) -> anyhow::Result<Vec<BitcoinTransaction>> {
+        let mut transactions = vec![];
+        for wallet in self.wallets.iter() {
+            transactions.extend(wallet.transactions()?);
+        }
+        
+        Ok(transactions)
+    }
+
+    pub fn utxos(&self) -> anyhow::Result<Vec<Output>> {
+        let mut utxos = vec![];
+        for wallet in self.wallets.iter() {
+            utxos.extend(wallet.utxos()?);
+        }
+
+        Ok(utxos)
     }
 }
 

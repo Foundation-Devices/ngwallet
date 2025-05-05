@@ -339,7 +339,7 @@ impl<P: WalletPersister> NgWallet<P> {
         Ok(update)
     }
 
-    pub fn unspend_outputs(&self) -> Result<Vec<Output>> {
+    pub fn utxos(&self) -> Result<Vec<Output>> {
         let wallet = self.wallet.lock().unwrap();
         let mut unspents: Vec<Output> = vec![];
         let tip_height = wallet.latest_checkpoint().height();
@@ -533,7 +533,7 @@ impl<P: WalletPersister> NgWallet<P> {
             .remove_tag(target_tag)
             .map_err(|e| anyhow::anyhow!("Error {}", e))
             .unwrap();
-        self.unspend_outputs()
+        self.utxos()
             .map_err(|e| anyhow::anyhow!("Error {}", e))
             .unwrap()
             .iter()
