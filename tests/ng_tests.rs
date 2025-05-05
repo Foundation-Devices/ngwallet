@@ -16,26 +16,27 @@ mod tests {
         crate::*,
         bdk_wallet::bitcoin::Network,
         bdk_wallet::rusqlite::Connection,
-        bdk_wallet::{AddressInfo, Update},
+        bdk_wallet::{ Update},
         ngwallet::account::Descriptor,
         ngwallet::account::NgAccount,
         ngwallet::config::AddressType,
         ngwallet::ngwallet::NgWallet,
         redb::backends::FileBackend,
-        std::sync::{Arc, Mutex},
     };
 
     #[test]
     #[cfg(feature = "envoy")]
     fn new_wallet() {
-        let connection = Connection::open_in_memory().unwrap();
+        let connection = Connection::open("wallet.sqlite").unwrap();
 
-        let descriptors = vec![Descriptor {
-            internal: INTERNAL_DESCRIPTOR.to_string(),
-            external: Some(EXTERNAL_DESCRIPTOR.to_string()),
-        }];
+        let descriptors = vec![
+            Descriptor {
+                internal: INTERNAL_DESCRIPTOR.to_string(),
+                external: Some(EXTERNAL_DESCRIPTOR.to_string()),
+            }
+        ];
 
-        let mut account = NgAccount::new_from_descriptor(
+        let mut account: NgAccount<Connection> = NgAccount::new_from_descriptors(
             "Passport Prime".to_string(),
             "red".to_string(),
             None,
@@ -45,7 +46,6 @@ mod tests {
             descriptors,
             0,
             None,
-            Arc::new(Mutex::new(connection)),
             None::<FileBackend>,
             "".to_string(),
             None,

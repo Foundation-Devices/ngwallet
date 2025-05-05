@@ -24,8 +24,8 @@ impl RedbMetaStorage {
                 None => {
                     let file_path = path
                         .clone()
-                        .map(|p| format!("{}/wallet.meta", p))
-                        .unwrap_or("wallet.meta".to_string());
+                        .map(|p| format!("{}/account.meta", p))
+                        .unwrap_or("account.meta".to_string());
                     Builder::new().create(file_path).unwrap()
                 }
                 Some(b) => Builder::new().create_with_backend(b).unwrap(),
@@ -33,17 +33,6 @@ impl RedbMetaStorage {
         };
 
         RedbMetaStorage { db: Arc::new(db) }
-    }
-
-    //TODO: remove open
-    #[allow(dead_code)]
-    pub fn open(path: Option<String>) -> Self {
-        let file_path = path
-            .map(|p| format!("{}/wallet.meta", p))
-            .unwrap_or("wallet.meta".to_string());
-        RedbMetaStorage {
-            db: Arc::new(Database::open(file_path).unwrap()),
-        }
     }
 
     //TODO: fix persist

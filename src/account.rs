@@ -1,5 +1,6 @@
-use std::fmt::Debug;
+use std::fmt::{Debug, format};
 use std::iter::Sum;
+use std::path::Path;
 use std::sync::{Arc, Mutex};
 
 use anyhow::Error;
@@ -8,7 +9,9 @@ use bdk_electrum::bdk_core::spk_client::FullScanRequest;
 use bdk_wallet::bitcoin::Network;
 use bdk_wallet::chain::local_chain::CannotConnectError;
 use bdk_wallet::{AddressInfo, Balance, KeychainKind, Update, WalletPersister};
+use bdk_wallet::rusqlite::Connection;
 use redb::StorageBackend;
+use bdk_wallet::bitcoin::hashes::{sha256, Hash};
 
 use crate::config::{AddressType, NgAccountConfig};
 use crate::db::RedbMetaStorage;
@@ -30,9 +33,27 @@ pub struct Descriptor {
     pub external: Option<String>,
 }
 
+impl Descriptor {
+    fn id(&self) -> String {
+        let internal_id = Self::get_last_eight_chars(&self.internal).unwrap_or("".to_string());
+        let external_id = Self::get_last_eight_chars(&self.external.clone()
+            .unwrap_or("".to_string()))
+            .unwrap_or("".to_string());
+        format!("{}_{}", internal_id, external_id)
+    }
+
+    fn get_last_eight_chars(s: &str) -> Option<String> {
+        if s.chars().count() >= 6 {
+            Some(s.chars().skip(s.chars().count() - 6).collect())
+        } else {
+            None
+        }
+    }
+}
+
 impl<P: WalletPersister> NgAccount<P> {
     #![allow(clippy::too_many_arguments)]
-    pub fn new_from_descriptor(
+    pub fn new_from_descriptors(
         name: String,
         color: String,
         device_serial: Option<String>,
@@ -42,7 +63,6 @@ impl<P: WalletPersister> NgAccount<P> {
         descriptors: Vec<Descriptor>,
         index: u32,
         db_path: Option<String>,
-        bdk_persister: Arc<Mutex<P>>,
         meta_storage_backend: Option<impl StorageBackend>,
         id: String,
         date_synced: Option<String>,
@@ -52,17 +72,28 @@ impl<P: WalletPersister> NgAccount<P> {
             meta_storage_backend,
         )));
 
-        let mut wallets = vec![];
+        let mut wallets:Vec<NgWallet<P>> = vec![];
 
         for descriptor in descriptors.clone() {
+            #[cfg(feature = "envoy")]
+                let bdk_persister = match db_path.clone() {
+                None => {
+                    Connection::open_in_memory().unwrap()
+                }
+                Some(path) => {
+                    let bdk_db_path = Path::new(&path).join(format!("{}.sqlite", descriptor.id()));
+                    Connection::open(bdk_db_path).unwrap()
+                }
+            };
+
             let wallet = NgWallet::new_from_descriptor(
                 descriptor.internal.clone(),
                 descriptor.external.clone(),
                 network,
                 meta.clone(),
-                bdk_persister.clone(),
+                Arc::new(Mutex::new(bdk_persister)),
             )
-            .unwrap();
+                .unwrap();
 
             wallets.push(wallet);
         }
@@ -96,8 +127,8 @@ impl<P: WalletPersister> NgAccount<P> {
         bdk_persister: Arc<Mutex<P>>,
         meta_storage_backend: Option<impl StorageBackend>,
     ) -> Self
-    where
-        <P as WalletPersister>::Error: Debug,
+        where
+            <P as WalletPersister>::Error: Debug,
     {
         let meta_storage = Arc::new(Mutex::new(RedbMetaStorage::new(
             Some(db_path.clone()),
@@ -116,7 +147,7 @@ impl<P: WalletPersister> NgAccount<P> {
                 meta_storage.clone(),
                 bdk_persister.clone(),
             )
-            .unwrap();
+                .unwrap();
 
             wallets.push(wallet);
         }
@@ -135,7 +166,7 @@ impl<P: WalletPersister> NgAccount<P> {
 
     pub fn persist(&mut self) -> Result<(), Error> {
         for wallet in &mut self.wallets {
-            wallet.persist().map_err(|e| anyhow::anyhow!(e))?;
+            wallet.persist()?;
         }
 
         self.meta_storage
