@@ -2,13 +2,8 @@ use bdk_wallet::KeychainKind;
 use bdk_wallet::bitcoin::Network;
 use bdk_wallet::bitcoin::bip32::Xpriv;
 use bdk_wallet::keys::bip39::{Language, Mnemonic};
-use bdk_wallet::template::{Bip84, Bip86, DescriptorTemplate};
+use bdk_wallet::template::{Bip44, Bip49, Bip84, Bip86, DescriptorTemplate};
 use std::cmp::min;
-
-pub enum DescriptorType {
-    Bip84,
-    Bip86,
-}
 
 pub struct Descriptors {
     descriptor_xprv: String,
@@ -48,43 +43,52 @@ pub fn get_random_seed() -> anyhow::Result<String> {
 
 pub fn get_descriptors(
     seed: String,
-    descriptor_type: DescriptorType,
     network: Network,
     passphrase: Option<String>,
-) -> anyhow::Result<Descriptors> {
+) -> anyhow::Result<Vec<Descriptors>> {
     let mnemonic = Mnemonic::parse(seed)?;
     let seed = mnemonic.to_seed(passphrase.unwrap_or("".to_owned()));
 
     let xprv: Xpriv = Xpriv::new_master(network, &seed)?;
 
-    let (descriptor, key_map, change_descriptor, change_key_map) = {
-        match descriptor_type {
-            DescriptorType::Bip84 => {
-                let external = Bip84(xprv, KeychainKind::External).build(network)?;
-                let internal = Bip84(xprv, KeychainKind::Internal).build(network)?;
+    let mut descriptors = vec![];
 
-                (external.0, external.1, internal.0, internal.1)
-            }
-            DescriptorType::Bip86 => {
-                let external = Bip86(xprv, KeychainKind::External).build(network)?;
-                let internal = Bip86(xprv, KeychainKind::Internal).build(network)?;
+    let descriptor_templates = vec![
+        (
+            Bip49(xprv, KeychainKind::External).build(network)?,
+            Bip49(xprv, KeychainKind::Internal).build(network)?,
+        ),
+        (
+            Bip44(xprv, KeychainKind::External).build(network)?,
+            Bip49(xprv, KeychainKind::Internal).build(network)?,
+        ),
+        (
+            Bip84(xprv, KeychainKind::External).build(network)?,
+            Bip49(xprv, KeychainKind::Internal).build(network)?,
+        ),
+        (
+            Bip86(xprv, KeychainKind::External).build(network)?,
+            Bip49(xprv, KeychainKind::Internal).build(network)?,
+        ),
+    ];
 
-                (external.0, external.1, internal.0, internal.1)
-            }
-        }
-    };
+    for template in descriptor_templates {
+        let (descriptor, key_map, change_descriptor, change_key_map) =
+            (template.0.0, template.0.1, template.1.0, template.1.1);
 
-    Ok(Descriptors {
-        descriptor_xprv: descriptor.to_string_with_secret(&key_map),
-        change_descriptor_xprv: change_descriptor.to_string_with_secret(&change_key_map),
-        descriptor_xpub: descriptor.to_string(),
-        change_descriptor_xpub: change_descriptor.to_string(),
-    })
+        descriptors.push(Descriptors {
+            descriptor_xprv: descriptor.to_string_with_secret(&key_map),
+            change_descriptor_xprv: change_descriptor.to_string_with_secret(&change_key_map),
+            descriptor_xpub: descriptor.to_string(),
+            change_descriptor_xpub: change_descriptor.to_string(),
+        });
+    }
+
+    Ok(descriptors)
 }
 
 #[cfg(test)]
 mod test {
-    use crate::bip39::DescriptorType::Bip84;
     use crate::bip39::{get_descriptors, get_random_seed};
     use bdk_wallet::bitcoin::Network;
 
@@ -94,12 +98,12 @@ mod test {
             "aim bunker wash balance finish force paper analyst cabin spoon stable organ"
                 .to_owned();
 
-        let descriptors = get_descriptors(mnemonic, Bip84, Network::Bitcoin, None).unwrap();
+        let descriptors = get_descriptors(mnemonic, Network::Bitcoin, None).unwrap();
 
-        assert_eq!(descriptors.descriptor_xprv, "wpkh(xprv9s21ZrQH143K2v9ABLJujuoqaJoMuazgoH6Yg4CceWQr86hPGbE5g6ivqRnPPGTnt6GqZVTFecYEUzkB9rzj79jGenWLW9GVsG5i6CKmMAE/84'/0'/0'/0/*)#5aaucexa".to_owned());
-        assert_eq!(descriptors.change_descriptor_xprv, "wpkh(xprv9s21ZrQH143K2v9ABLJujuoqaJoMuazgoH6Yg4CceWQr86hPGbE5g6ivqRnPPGTnt6GqZVTFecYEUzkB9rzj79jGenWLW9GVsG5i6CKmMAE/84'/0'/0'/1/*)#9fca9vk9".to_owned());
-        assert_eq!(descriptors.descriptor_xpub, "wpkh([be83839f/84'/0'/0']xpub6DMcCzuF7QuZJwR7XxqukyLf7rsVvN2wESKFjduCBwGXAHeFufQUJAMnA2h3Fey1KVHDCbiXsXiGgbk2YpsdFPH9sJetbGzYGrhN8VhDTQG/0/*)#wvlf8l45".to_owned());
-        assert_eq!(descriptors.change_descriptor_xpub, "wpkh([be83839f/84'/0'/0']xpub6DMcCzuF7QuZJwR7XxqukyLf7rsVvN2wESKFjduCBwGXAHeFufQUJAMnA2h3Fey1KVHDCbiXsXiGgbk2YpsdFPH9sJetbGzYGrhN8VhDTQG/1/*)#lc6g629v".to_owned());
+        assert_eq!(descriptors[0].descriptor_xprv, "sh(wpkh(xprv9s21ZrQH143K2v9ABLJujuoqaJoMuazgoH6Yg4CceWQr86hPGbE5g6ivqRnPPGTnt6GqZVTFecYEUzkB9rzj79jGenWLW9GVsG5i6CKmMAE/49'/0'/0'/0/*))#a63aag5e".to_owned());
+        assert_eq!(descriptors[0].change_descriptor_xprv, "sh(wpkh(xprv9s21ZrQH143K2v9ABLJujuoqaJoMuazgoH6Yg4CceWQr86hPGbE5g6ivqRnPPGTnt6GqZVTFecYEUzkB9rzj79jGenWLW9GVsG5i6CKmMAE/49'/0'/0'/1/*))#meecx9ld".to_owned());
+        assert_eq!(descriptors[0].descriptor_xpub, "sh(wpkh([be83839f/49'/0'/0']xpub6DVS1Y45d3QdMLPGT8U1sRRe5XRQJx89xPY7MMqRUzjD7euk63KCKvq4Nxzu9mHdQGLcBmhM8A3nSprmMQLZqQaciMEQUVxBm4hU7H3z35x/0/*))#z0v4lv5h".to_owned());
+        assert_eq!(descriptors[0].change_descriptor_xpub, "sh(wpkh([be83839f/49'/0'/0']xpub6DVS1Y45d3QdMLPGT8U1sRRe5XRQJx89xPY7MMqRUzjD7euk63KCKvq4Nxzu9mHdQGLcBmhM8A3nSprmMQLZqQaciMEQUVxBm4hU7H3z35x/1/*))#hwzr8npg".to_owned());
     }
 
     #[test]
