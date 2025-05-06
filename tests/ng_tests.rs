@@ -10,7 +10,6 @@ const ELECTRUM_SERVER: &str = "ssl://mempool.space:60602";
 #[cfg(test)]
 mod tests {
     use std::sync::{Arc, Mutex};
-    use bdk_wallet::AddressInfo;
     use ngwallet::bip39;
 
     #[cfg(feature = "envoy")]
@@ -25,17 +24,17 @@ mod tests {
         ngwallet::ngwallet::NgWallet,
         redb::backends::FileBackend,
     };
+    use ngwallet::account::get_persister_file_name;
 
     #[test]
     #[cfg(feature = "envoy")]
     fn new_wallet() {
-        let connection = Connection::open("wallet.sqlite").unwrap();
 
         let descriptors = vec![
             Descriptor {
                 internal: INTERNAL_DESCRIPTOR.to_string(),
                 external: Some(EXTERNAL_DESCRIPTOR.to_string()),
-                bdk_persister: Arc::new(Mutex::new(connection))
+                bdk_persister: Arc::new(Mutex::new(Connection::open_in_memory().unwrap()))
             }
         ];
 
@@ -114,13 +113,15 @@ mod tests {
         }
         println!("Balance {:?}", balance);
         account.persist().unwrap();
+
     }
     
     //noinspection RsExternalLinter
     #[test]
     #[cfg(feature = "envoy")]
     fn open_wallet() {
-        let wallet_file = "wallet.sqlite".to_string();
+        let wallet_file = get_persister_file_name(
+            INTERNAL_DESCRIPTOR  ,Some(EXTERNAL_DESCRIPTOR));
         println!("Opening database at: {}", wallet_file);
     
         let connection = Connection::open(wallet_file).unwrap();

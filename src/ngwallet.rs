@@ -4,6 +4,9 @@ use std::str::FromStr;
 use std::sync::{Arc, Mutex};
 
 use anyhow::Result;
+use base64::Engine;
+use base64::prelude::BASE64_STANDARD;
+use bdk_electrum::electrum_client::Error;
 use bdk_wallet::bitcoin::{Address, Network, OutPoint, Psbt, Txid};
 use bdk_wallet::chain::ChainPosition::{Confirmed, Unconfirmed};
 use bdk_wallet::{AddressInfo, CreateWithPersistError, PersistedWallet, SignOptions};
@@ -22,6 +25,7 @@ use {
     bdk_electrum::electrum_client::Client,
     bdk_electrum::electrum_client::{Config, Socks5Config},
 };
+use crate::send::DraftTransaction;
 
 use crate::store::MetaStorage;
 use crate::transaction::{BitcoinTransaction, Input, KeyChain, Output};
@@ -317,6 +321,26 @@ impl<P: WalletPersister> NgWallet<P> {
         let update = bdk_client.sync(request, BATCH_SIZE, true)?;
         Ok(update)
     }
+
+    ///TODO: chore, clean up
+    #[cfg(feature = "envoy")]
+    pub(crate) fn build_electrum_client(
+        electrum_server: &str,
+        socks_proxy: Option<&str>,
+    ) -> BdkElectrumClient<Client> {
+        let socks5_config = match socks_proxy {
+            Some(socks_proxy) => {
+                let socks5_config = Socks5Config::new(socks_proxy);
+                Some(socks5_config)
+            }
+            None => None,
+        };
+        let electrum_config = Config::builder().socks5(socks5_config.clone()).build();
+        let client = Client::from_config(electrum_server, electrum_config).unwrap();
+        let bdk_client: BdkElectrumClient<Client> = BdkElectrumClient::new(client);
+        bdk_client
+    }
+
 
     #[cfg(feature = "envoy")]
     pub fn scan(

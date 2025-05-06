@@ -28,14 +28,8 @@ pub struct Descriptor<P: WalletPersister> {
     pub bdk_persister: Arc<Mutex<P>>
 }
 
-impl <P: WalletPersister> Descriptor<P> {
-    fn id(&self) -> String {
-        let internal_id = Self::get_last_eight_chars(&self.internal).unwrap_or("".to_string());
-        let external_id = Self::get_last_eight_chars(&self.external.clone()
-            .unwrap_or("".to_string()))
-            .unwrap_or("".to_string());
-        format!("{}_{}", internal_id, external_id)
-    }
+
+pub fn get_persister_file_name(internal: &str, external:Option<&str>) -> String {
 
     fn get_last_eight_chars(s: &str) -> Option<String> {
         if s.chars().count() >= 6 {
@@ -44,7 +38,13 @@ impl <P: WalletPersister> Descriptor<P> {
             None
         }
     }
+    let internal_id =  get_last_eight_chars(internal).unwrap_or("".to_string());
+    let external_id =  get_last_eight_chars(external.clone()
+        .unwrap_or(&"".to_string()))
+        .unwrap_or("".to_string());
+    format!("{}_{}.sqlite", internal_id, external_id)
 }
+
 
 impl<P: WalletPersister> NgAccount<P> {
     #![allow(clippy::too_many_arguments)]
