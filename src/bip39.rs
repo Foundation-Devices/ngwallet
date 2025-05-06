@@ -1,9 +1,12 @@
 use bdk_wallet::KeychainKind;
 use bdk_wallet::bitcoin::Network;
-use bdk_wallet::bitcoin::bip32::Xpriv;
+use bdk_wallet::bitcoin::bip32::{DerivationPath, Xpriv};
+use bdk_wallet::bitcoin::secp256k1::Secp256k1;
 use bdk_wallet::keys::bip39::{Language, Mnemonic};
-use bdk_wallet::template::{Bip44, Bip49, Bip84, Bip86, DescriptorTemplate};
+use bdk_wallet::keys::{DerivableKey, DescriptorKey, ExtendedKey};
+use bdk_wallet::template::{Bip44, Bip49, Bip84, Bip86, DescriptorTemplate, P2Wpkh_P2Sh};
 use std::cmp::min;
+use std::str::FromStr;
 
 pub struct Descriptors {
     descriptor_xprv: String,
@@ -51,6 +54,14 @@ pub fn get_descriptors(
 
     let xprv: Xpriv = Xpriv::new_master(network, &seed)?;
 
+    let secp = Secp256k1::new();
+    let bip48_2_descriptor: DescriptorKey<bdk_wallet::descriptor::Segwitv0> =
+        xprv.into_descriptor_key(None, DerivationPath::from_str("m/48'/0'/0'/2")?)?;
+    let (bip48_2_xpub, _, _) = bip48_2_descriptor.extract(&secp)?;
+
+    // TODO: get this right
+    println!("bip48_2 = {}", bip48_2_xpub);
+
     let mut descriptors = vec![];
 
     let descriptor_templates = vec![
@@ -60,15 +71,15 @@ pub fn get_descriptors(
         ),
         (
             Bip44(xprv, KeychainKind::External).build(network)?,
-            Bip49(xprv, KeychainKind::Internal).build(network)?,
+            Bip44(xprv, KeychainKind::Internal).build(network)?,
         ),
         (
             Bip84(xprv, KeychainKind::External).build(network)?,
-            Bip49(xprv, KeychainKind::Internal).build(network)?,
+            Bip84(xprv, KeychainKind::Internal).build(network)?,
         ),
         (
             Bip86(xprv, KeychainKind::External).build(network)?,
-            Bip49(xprv, KeychainKind::Internal).build(network)?,
+            Bip86(xprv, KeychainKind::Internal).build(network)?,
         ),
     ];
 
@@ -95,15 +106,15 @@ mod test {
     #[test]
     fn test_get_descriptor_from_seed() {
         let mnemonic =
-            "aim bunker wash balance finish force paper analyst cabin spoon stable organ"
+            "axis minimum please frozen option smooth alone identify term fatigue crisp entry"
                 .to_owned();
 
         let descriptors = get_descriptors(mnemonic, Network::Bitcoin, None).unwrap();
 
-        assert_eq!(descriptors[0].descriptor_xprv, "sh(wpkh(xprv9s21ZrQH143K2v9ABLJujuoqaJoMuazgoH6Yg4CceWQr86hPGbE5g6ivqRnPPGTnt6GqZVTFecYEUzkB9rzj79jGenWLW9GVsG5i6CKmMAE/49'/0'/0'/0/*))#a63aag5e".to_owned());
-        assert_eq!(descriptors[0].change_descriptor_xprv, "sh(wpkh(xprv9s21ZrQH143K2v9ABLJujuoqaJoMuazgoH6Yg4CceWQr86hPGbE5g6ivqRnPPGTnt6GqZVTFecYEUzkB9rzj79jGenWLW9GVsG5i6CKmMAE/49'/0'/0'/1/*))#meecx9ld".to_owned());
-        assert_eq!(descriptors[0].descriptor_xpub, "sh(wpkh([be83839f/49'/0'/0']xpub6DVS1Y45d3QdMLPGT8U1sRRe5XRQJx89xPY7MMqRUzjD7euk63KCKvq4Nxzu9mHdQGLcBmhM8A3nSprmMQLZqQaciMEQUVxBm4hU7H3z35x/0/*))#z0v4lv5h".to_owned());
-        assert_eq!(descriptors[0].change_descriptor_xpub, "sh(wpkh([be83839f/49'/0'/0']xpub6DVS1Y45d3QdMLPGT8U1sRRe5XRQJx89xPY7MMqRUzjD7euk63KCKvq4Nxzu9mHdQGLcBmhM8A3nSprmMQLZqQaciMEQUVxBm4hU7H3z35x/1/*))#hwzr8npg".to_owned());
+        assert_eq!(descriptors[0].descriptor_xprv, "sh(wpkh(xprv9s21ZrQH143K4EyEi77g3rpPu5byQ3EnnMJ4Y2KRNFp5Z4hin7er2j1VEtW92DfDyLGaXvv7LAnMbeHLwWSkv3WJjNhXDhjV7up579LwqWK/49'/0'/0'/0/*))#ujfh5d2y".to_owned());
+        assert_eq!(descriptors[0].change_descriptor_xprv, "sh(wpkh(xprv9s21ZrQH143K4EyEi77g3rpPu5byQ3EnnMJ4Y2KRNFp5Z4hin7er2j1VEtW92DfDyLGaXvv7LAnMbeHLwWSkv3WJjNhXDhjV7up579LwqWK/49'/0'/0'/1/*))#63pj0qps".to_owned());
+        assert_eq!(descriptors[0].descriptor_xpub, "sh(wpkh([ab88de89/49'/0'/0']xpub6CpdbYf1vdUMh5ryZWEQBoBVvmTTFYdi92VvknfMeVsgjiXXnmyDrCdkUKLzvEUYgBJrvyb3pmW488dctFrfJ1RaVNPa1T1nmraemfFCbuY/0/*))#k4daxnp5".to_owned());
+        assert_eq!(descriptors[0].change_descriptor_xpub, "sh(wpkh([ab88de89/49'/0'/0']xpub6CpdbYf1vdUMh5ryZWEQBoBVvmTTFYdi92VvknfMeVsgjiXXnmyDrCdkUKLzvEUYgBJrvyb3pmW488dctFrfJ1RaVNPa1T1nmraemfFCbuY/1/*))#r5rt7v5t".to_owned());
     }
 
     #[test]

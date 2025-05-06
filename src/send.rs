@@ -19,8 +19,8 @@ use crate::transaction::{BitcoinTransaction, Input, KeyChain, Output};
 use {
     bdk_electrum::BdkElectrumClient,
     bdk_electrum::electrum_client::Client,
+    bdk_electrum::electrum_client::Error,
     bdk_electrum::electrum_client::{Config, Socks5Config},
-    bdk_electrum::electrum_client::Error
 };
 
 #[derive(Debug, Clone)]
@@ -394,16 +394,15 @@ impl<P: WalletPersister> NgWallet<P> {
     ) -> std::result::Result<Txid, Error> {
         let bdk_client = Self::build_electrum_client(electrum_server, socks_proxy);
         let tx = BASE64_STANDARD
-            .decode(spend.psbt_base64).expect("Failed to decode PSBT");
-        let psbt = Psbt::deserialize(tx.as_slice())
-            .expect("Failed to deserialize PSBT:");
+            .decode(spend.psbt_base64)
+            .expect("Failed to decode PSBT");
+        let psbt = Psbt::deserialize(tx.as_slice()).expect("Failed to deserialize PSBT:");
 
         let transaction = psbt
             .extract_tx()
             .expect("Failed to extract transaction from PSBT");
 
-        bdk_client
-            .transaction_broadcast(&transaction)
+        bdk_client.transaction_broadcast(&transaction)
     }
 
     #[cfg(feature = "envoy")]
