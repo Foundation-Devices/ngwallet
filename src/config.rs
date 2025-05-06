@@ -18,6 +18,12 @@ pub enum AddressType {
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct NgDescriptor{
+    pub internal: String,
+    pub external: Option<String>,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct NgAccountConfig {
     pub name: String,
     pub color: String,
@@ -25,7 +31,7 @@ pub struct NgAccountConfig {
     pub date_added: Option<String>,
     pub address_type: AddressType,
     pub index: u32,
-    pub descriptors: Vec<Descriptor>,
+    pub descriptors: Vec<NgDescriptor>,
     pub date_synced: Option<String>,
     pub wallet_path: Option<String>,
     pub network: Network,
