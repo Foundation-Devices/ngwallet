@@ -1,4 +1,3 @@
-use crate::account::Descriptor;
 use bdk_wallet::bitcoin::Network;
 use serde::{Deserialize, Serialize};
 
