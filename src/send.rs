@@ -1,6 +1,8 @@
 use crate::ngwallet::NgWallet;
 use anyhow::Result;
 use base64::prelude::*;
+use bdk_electrum::bdk_core::bitcoin::{Weight, psbt};
+use bdk_wallet::bitcoin::psbt::IndexOutOfBoundsError::TxInput;
 use bdk_wallet::bitcoin::secp256k1::Secp256k1;
 use bdk_wallet::bitcoin::{Address, Amount, FeeRate, Psbt, ScriptBuf, Transaction, Txid};
 use bdk_wallet::coin_selection::InsufficientFunds;
@@ -8,14 +10,16 @@ use bdk_wallet::error::CreateTxError;
 use bdk_wallet::error::CreateTxError::CoinSelection;
 use bdk_wallet::miniscript::psbt::PsbtExt;
 use bdk_wallet::psbt::PsbtUtils;
-use bdk_wallet::{KeychainKind, PersistedWallet, SignOptions, TxOrdering, WalletPersister};
+use bdk_wallet::{
+    KeychainKind, LocalOutput, PersistedWallet, SignOptions, TxOrdering, WalletPersister,
+};
 use log::info;
+use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
 use std::str::FromStr;
 use std::sync::MutexGuard;
-use bdk_electrum::bdk_core::bitcoin::{psbt, Weight};
-use bdk_wallet::bitcoin::psbt::IndexOutOfBoundsError::TxInput;
 
+use crate::account::NgAccount;
 use crate::transaction::{BitcoinTransaction, Input, KeyChain, Output};
 #[cfg(feature = "envoy")]
 use {
@@ -24,9 +28,8 @@ use {
     bdk_electrum::electrum_client::Error,
     bdk_electrum::electrum_client::{Config, Socks5Config},
 };
-use crate::account::NgAccount;
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DraftTransaction {
     pub transaction: BitcoinTransaction,
     pub psbt_base64: String,
@@ -35,7 +38,7 @@ pub struct DraftTransaction {
     pub is_finalized: bool,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct TransactionFeeResult {
     pub max_fee_rate: u64,
     pub min_fee_rate: u64,
@@ -95,11 +98,11 @@ impl<P: WalletPersister> NgAccount<P> {
 
         //clippy is wrong about max_fee unused_assignments
         #[allow(unused_assignments)]
-            let mut max_fee = spendable_balance - amount;
+        let mut max_fee = spendable_balance - amount;
 
         //clippy is wrong about  max_fee_rate unused_assignments
         #[allow(unused_assignments)]
-            let mut max_fee_rate = 1;
+        let mut max_fee_rate = 1;
 
         let mut receive_amount = amount;
         //if user is trying to sweep in order to find the max fee we set receive to min spend…
@@ -136,20 +139,15 @@ impl<P: WalletPersister> NgAccount<P> {
                         ..Default::default()
                     };
                     // Always try signing
-                    coordinator_wallet.sign(&mut psbt, sign_options).unwrap_or(false);
+                    let _ = coordinator_wallet
+                        .sign(&mut psbt, sign_options.clone())
+                        .is_ok();
                     coordinator_wallet.cancel_tx(&psbt.clone().unsigned_tx);
-                    // reset indexes since this is only for fee calc
-                    if let Ok(tx) = psbt.clone().extract_tx() {
-                        for tx_out in tx.output {
-                            let derivation = coordinator_wallet.derivation_of_spk(tx_out.script_pubkey);
-                            match derivation {
-                                None => {}
-                                Some(path) => {
-                                    coordinator_wallet.unmark_used(path.0, path.1);
-                                }
-                            }
-                        }
-                    }
+                    Self::sign_psbt(
+                        self.non_coordinator_wallets(),
+                        &mut psbt,
+                        sign_options.clone(),
+                    );
                     match psbt.fee_rate() {
                         None => {}
                         Some(r) => {
@@ -205,8 +203,16 @@ impl<P: WalletPersister> NgAccount<P> {
                     ..Default::default()
                 };
                 // Always try signing
-                coordinator_wallet.sign(&mut psbt, sign_options).unwrap_or(false);
+                let _ = coordinator_wallet
+                    .sign(&mut psbt, sign_options.clone())
+                    .is_ok();
                 coordinator_wallet.cancel_tx(&psbt.clone().unsigned_tx);
+                Self::sign_psbt(
+                    self.non_coordinator_wallets(),
+                    &mut psbt,
+                    sign_options.clone(),
+                );
+
                 let outputs = Self::apply_meta_to_psbt_outputs(
                     &coordinator_wallet,
                     utxos.clone(),
@@ -214,8 +220,11 @@ impl<P: WalletPersister> NgAccount<P> {
                     false,
                     psbt.clone().unsigned_tx,
                 );
-                let inputs =
-                    Self::apply_meta_to_inputs(&coordinator_wallet, psbt.clone().unsigned_tx, utxos.clone());
+                let inputs = Self::apply_meta_to_inputs(
+                    &coordinator_wallet,
+                    psbt.clone().unsigned_tx,
+                    utxos.clone(),
+                );
                 let transaction = Self::transform_psbt_to_bitcointx(
                     psbt.clone(),
                     address.clone().to_string(),
@@ -302,6 +311,8 @@ impl<P: WalletPersister> NgAccount<P> {
             spendable_balance -= do_not_spend_amount
         }
 
+        println!("spendable_balance: {}", spendable_balance);
+        println!("do_not_spend_amount: {}", do_not_spend_amount);
         if amount > spendable_balance {
             return Err(CoinSelection(InsufficientFunds {
                 available: Amount::from_sat(spendable_balance),
@@ -332,8 +343,15 @@ impl<P: WalletPersister> NgAccount<P> {
                 };
 
                 // Always try signing
-                let _ = coordinator_wallet.sign(&mut psbt, sign_options).is_ok();
+                let _ = coordinator_wallet
+                    .sign(&mut psbt, sign_options.clone())
+                    .is_ok();
                 coordinator_wallet.cancel_tx(&psbt.clone().unsigned_tx);
+                Self::sign_psbt(
+                    self.non_coordinator_wallets(),
+                    &mut psbt,
+                    sign_options.clone(),
+                );
                 //extract outputs from tx and add tags and do_not_spend states
                 let outputs = Self::apply_meta_to_psbt_outputs(
                     &coordinator_wallet,
@@ -342,8 +360,11 @@ impl<P: WalletPersister> NgAccount<P> {
                     do_not_spend_change,
                     psbt.clone().unsigned_tx,
                 );
-                let inputs =
-                    Self::apply_meta_to_inputs(&coordinator_wallet, psbt.clone().unsigned_tx, utxos.clone());
+                let inputs = Self::apply_meta_to_inputs(
+                    &coordinator_wallet,
+                    psbt.clone().unsigned_tx,
+                    utxos.clone(),
+                );
                 let transaction = Self::transform_psbt_to_bitcointx(
                     psbt.clone(),
                     address.clone().to_string(),
@@ -663,15 +684,14 @@ impl<P: WalletPersister> NgAccount<P> {
             let outpoint = spendable_utxo.get_outpoint();
             match self.get_utxo_input(spendable_utxo) {
                 None => {}
-                Some((input,weight)) => {
-                    builder.add_foreign_utxo(
-                        outpoint,
-                        input,
-                        weight,
-                    ).map_err(|e| {
-                        println!("Error adding foreign UTXO: {:?}", e);
-                        CreateTxError::NoUtxosSelected
-                    })?;
+                Some((input, weight)) => {
+                    println!("Adding foreign UTXO: {:?}", outpoint);
+                    builder
+                        .add_foreign_utxo(outpoint, input, weight)
+                        .map_err(|e| {
+                            println!("Error adding foreign UTXO: {:?}", e);
+                            CreateTxError::NoUtxosSelected
+                        })?;
                 }
             }
         }
@@ -699,34 +719,44 @@ impl<P: WalletPersister> NgAccount<P> {
         let mut input_for_fore: Option<(psbt::Input, Weight)> = None;
         for wallet in self.non_coordinator_wallets() {
             let mut wallet = wallet.wallet.lock().unwrap();
-            let local_output = wallet.get_utxo(output.get_outpoint()).unwrap();
-            let input = wallet.get_psbt_input(local_output, None, true);
-
-            match input {
-                Ok(input) => {
-                    let mut weight:Option<Weight> = None;
-                    for (_, descriptor) in wallet.keychains() {
-                        match descriptor.max_weight_to_satisfy() {
-                            Ok(weight) => {
-                                input_for_fore = Some((input.clone(), weight));
-                            }
-                            Err(e) => {
-                                println!("Error getting max weight to satisfy: {:?}", e);
+            let local_output = wallet.get_utxo(output.get_outpoint());
+            match local_output {
+                None => {}
+                Some(local_output) => {
+                    let input = wallet.get_psbt_input(local_output, None, false);
+                    match input {
+                        Ok(input) => {
+                            for (_, descriptor) in wallet.keychains() {
+                                match descriptor.max_weight_to_satisfy() {
+                                    Ok(weight) => {
+                                        input_for_fore = Some((input.clone(), weight));
+                                    }
+                                    Err(e) => {
+                                        println!("Error getting max weight to satisfy: {:?}", e);
+                                    }
+                                }
                             }
                         }
+                        Err(e) => {
+                            println!("Error getting max weight to satisfy: {:?}", e);
+                        }
                     }
-                }
-                Err(e) => {
-                    println!("Error getting max weight to satisfy: {:?}", e);
                 }
             }
         }
         input_for_fore
     }
-    fn non_coordinator_wallets(
-        &self,
-    ) -> Vec<&NgWallet<P>> {
-        self.wallets.iter().skip(1)
-            .collect()
+    fn non_coordinator_wallets(&self) -> Vec<&NgWallet<P>> {
+        self.wallets.iter().skip(1).collect()
+    }
+
+    fn sign_psbt(wallets: Vec<&NgWallet<P>>, psbt: &mut Psbt, sign_options: SignOptions) {
+        for wallet in wallets {
+            let mut wallet = wallet.wallet.lock().unwrap();
+            wallet.sign(psbt, sign_options.clone()).unwrap_or(false);
+            //why cancel? cancel will resets index, we increment index only
+            //if tx is broadcast
+            wallet.cancel_tx(&psbt.clone().unsigned_tx);
+        }
     }
 }
