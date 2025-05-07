@@ -18,7 +18,7 @@ pub enum AddressType {
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
-pub struct NgDescriptor{
+pub struct NgDescriptor {
     pub internal: String,
     pub external: Option<String>,
 }

@@ -3,10 +3,10 @@ use bdk_wallet::bitcoin::Network;
 use bdk_wallet::bitcoin::bip32::Xpriv;
 use bdk_wallet::keys::bip39::{Language, Mnemonic};
 use bdk_wallet::template::{Bip44, Bip49, Bip84, Bip86, DescriptorTemplate};
-use std::cmp::min;
 use serde::{Deserialize, Serialize};
+use std::cmp::min;
 
-#[derive(Debug,Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct Descriptors {
     descriptor_xprv: String,
     change_descriptor_xprv: String,
@@ -43,7 +43,7 @@ pub fn get_random_seed() -> anyhow::Result<String> {
     Ok(mnemonic.to_string())
 }
 
-pub fn  get_descriptors(
+pub fn get_descriptors(
     seed: String,
     network: Network,
     passphrase: Option<String>,

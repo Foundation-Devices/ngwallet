@@ -1,17 +1,17 @@
-use std::fmt::{Debug};
-use std::sync::{Arc, Mutex};
+use std::fmt::Debug;
+use std::sync::{Arc, Mutex, MutexGuard};
 
-use anyhow::Error;
-use bdk_wallet::chain::spk_client::FullScanRequest;
-use bdk_wallet::bitcoin::Network;
-use bdk_wallet::{AddressInfo, Balance, KeychainKind, Update, WalletPersister};
-use redb::StorageBackend;
-use bdk_wallet::chain::spk_client::SyncRequest;
 use crate::config::{AddressType, NgAccountConfig, NgDescriptor};
 use crate::db::RedbMetaStorage;
 use crate::ngwallet::NgWallet;
 use crate::store::MetaStorage;
 use crate::transaction::{BitcoinTransaction, Output};
+use anyhow::Error;
+use bdk_wallet::bitcoin::Network;
+use bdk_wallet::chain::spk_client::FullScanRequest;
+use bdk_wallet::chain::spk_client::SyncRequest;
+use bdk_wallet::{AddressInfo, Balance, KeychainKind, PersistedWallet, Update, WalletPersister};
+use redb::StorageBackend;
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug)]
@@ -25,12 +25,10 @@ pub struct NgAccount<P: WalletPersister> {
 pub struct Descriptor<P: WalletPersister> {
     pub internal: String,
     pub external: Option<String>,
-    pub bdk_persister: Arc<Mutex<P>>
+    pub bdk_persister: Arc<Mutex<P>>,
 }
 
-
-pub fn get_persister_file_name(internal: &str, external:Option<&str>) -> String {
-
+pub fn get_persister_file_name(internal: &str, external: Option<&str>) -> String {
     fn get_last_eight_chars(s: &str) -> Option<String> {
         if s.chars().count() >= 6 {
             Some(s.chars().skip(s.chars().count() - 6).collect())
@@ -38,13 +36,11 @@ pub fn get_persister_file_name(internal: &str, external:Option<&str>) -> String 
             None
         }
     }
-    let internal_id =  get_last_eight_chars(internal).unwrap_or("".to_string());
-    let external_id =  get_last_eight_chars(external.clone()
-        .unwrap_or(&"".to_string()))
-        .unwrap_or("".to_string());
+    let internal_id = get_last_eight_chars(internal).unwrap_or("".to_string());
+    let external_id =
+        get_last_eight_chars(external.clone().unwrap_or(&"".to_string())).unwrap_or("".to_string());
     format!("{}_{}.sqlite", internal_id, external_id)
 }
-
 
 impl<P: WalletPersister> NgAccount<P> {
     #![allow(clippy::too_many_arguments)]
@@ -67,11 +63,15 @@ impl<P: WalletPersister> NgAccount<P> {
             meta_storage_backend,
         )));
 
-        let ng_descriptors = descriptors.iter().map(|d|NgDescriptor{
-            external: d.external.clone(), internal: d.internal.clone()}).collect();
+        let ng_descriptors = descriptors
+            .iter()
+            .map(|d| NgDescriptor {
+                external: d.external.clone(),
+                internal: d.internal.clone(),
+            })
+            .collect();
 
-
-        let mut wallets:Vec<NgWallet<P>> = vec![];
+        let mut wallets: Vec<NgWallet<P>> = vec![];
 
         for descriptor in descriptors {
             let wallet = NgWallet::new_from_descriptor(
@@ -198,27 +198,22 @@ impl<P: WalletPersister> NgAccount<P> {
     }
 
     pub fn apply(&mut self, update: Update) -> anyhow::Result<()> {
-        for wallet in &self.wallets {
-            match wallet.wallet.lock().unwrap().apply_update(update.clone()) {
-                Ok(_) => {
-                    println!("updated the wallet");
-                    return Ok(());
-                }
-                Err(e) => {
-                    println!("{:?}", e);
-                }
-            }
+        for wallet in self.wallets.iter_mut() {
+            let mut wallet = wallet.wallet.lock().unwrap();
+            println!(
+                "Applying update to wallet: {:?}",
+                wallet.public_descriptor(KeychainKind::External)
+            );
+            wallet.apply_update(update.clone()).unwrap()
         }
-
         Ok(())
     }
 
-    pub fn balance(&self) -> anyhow::Result<bdk_wallet::Balance> {
+    pub fn balance(&self) -> anyhow::Result<Balance> {
         let mut balance = Balance::default();
 
         for wallet in self.wallets.iter() {
             let wallet_balance = wallet.wallet.lock().unwrap().balance();
-
             balance.confirmed += wallet_balance.confirmed;
             balance.immature += wallet_balance.immature;
             balance.trusted_pending += wallet_balance.trusted_pending;
@@ -226,6 +221,35 @@ impl<P: WalletPersister> NgAccount<P> {
         }
 
         Ok(balance)
+    }
+    pub fn wallet_balances(&self) -> anyhow::Result<Vec<(AddressType, Balance)>> {
+        let mut balances: Vec<(AddressType, Balance)> = vec![];
+
+        for wallet in self.wallets.iter() {
+            let wallet = wallet.wallet.lock().unwrap();
+            let balance = wallet.balance();
+            balances.push((
+                Self::get_address_type(wallet),
+                balance,
+            ));
+        }
+        Ok(balances)
+    }
+
+
+    fn get_address_type(wallet: MutexGuard<PersistedWallet<P>>)-> AddressType {
+        let descriptor = wallet.public_descriptor(KeychainKind::External).to_string();
+        if descriptor.contains("pkh(") {
+            AddressType::P2pkh
+        } else if descriptor.contains("wpkh(") {
+            AddressType::P2wpkh
+        } else if descriptor.contains("sh(") {
+            AddressType::P2sh
+        } else if descriptor.contains("tr(") {
+            AddressType::P2tr
+        }else {
+            AddressType::P2tr
+        }
     }
 
     pub fn transactions(&self) -> anyhow::Result<Vec<BitcoinTransaction>> {

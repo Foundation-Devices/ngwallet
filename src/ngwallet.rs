@@ -14,6 +14,7 @@ use bdk_wallet::{KeychainKind, WalletPersister};
 use bdk_wallet::{Update, Wallet};
 use log::info;
 
+use crate::send::DraftTransaction;
 #[cfg(feature = "envoy")]
 use {
     crate::{BATCH_SIZE, STOP_GAP},
@@ -25,7 +26,6 @@ use {
     bdk_electrum::electrum_client::Client,
     bdk_electrum::electrum_client::{Config, Socks5Config},
 };
-use crate::send::DraftTransaction;
 
 use crate::store::MetaStorage;
 use crate::transaction::{BitcoinTransaction, Input, KeyChain, Output};
@@ -340,7 +340,6 @@ impl<P: WalletPersister> NgWallet<P> {
         let bdk_client: BdkElectrumClient<Client> = BdkElectrumClient::new(client);
         bdk_client
     }
-
 
     #[cfg(feature = "envoy")]
     pub fn scan(
