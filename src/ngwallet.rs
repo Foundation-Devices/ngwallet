@@ -4,17 +4,14 @@ use std::str::FromStr;
 use std::sync::{Arc, Mutex};
 
 use anyhow::Result;
-use base64::Engine;
-use base64::prelude::BASE64_STANDARD;
-use bdk_electrum::electrum_client::Error;
-use bdk_wallet::bitcoin::{Address, Network, OutPoint, Psbt, Txid};
+use bdk_wallet::Wallet;
+use bdk_wallet::bitcoin::{Address, Amount, Network, OutPoint, Psbt, Txid};
 use bdk_wallet::chain::ChainPosition::{Confirmed, Unconfirmed};
-use bdk_wallet::{AddressInfo, CreateWithPersistError, PersistedWallet, SignOptions};
+use bdk_wallet::{CreateWithPersistError, PersistedWallet, SignOptions};
 use bdk_wallet::{KeychainKind, WalletPersister};
-use bdk_wallet::{Update, Wallet};
 use log::info;
 
-use crate::send::DraftTransaction;
+use crate::config::AddressType;
 #[cfg(feature = "envoy")]
 use {
     crate::{BATCH_SIZE, STOP_GAP},
@@ -26,7 +23,6 @@ use {
     bdk_electrum::electrum_client::Client,
     bdk_electrum::electrum_client::{Config, Socks5Config},
 };
-use crate::config::AddressType;
 
 use crate::store::MetaStorage;
 use crate::transaction::{BitcoinTransaction, Input, KeyChain, Output};
@@ -58,20 +54,25 @@ impl<P: WalletPersister> NgWallet<P> {
             None => Wallet::create_single(internal_descriptor.to_string()),
             Some(external_descriptor) => Wallet::create(external_descriptor, internal_descriptor),
         }
-            .network(network)
-            .create_wallet(&mut *bdk_persister.lock().unwrap())
-            .map_err(|e| match e {
-                CreateWithPersistError::Persist(_) => {
-                    anyhow::anyhow!("Could not persist wallet")
-                }
-                CreateWithPersistError::DataAlreadyExists(_) => {
-                    anyhow::anyhow!("Wallet already exist. Please use load method")
-                }
-                CreateWithPersistError::Descriptor(error) => {
-                    anyhow::anyhow!("Could not create wallet from descriptor: {:?}", error)
-                }
-            })?;
-        let address_type = utils::get_address_type(wallet.public_descriptor(KeychainKind::External).to_string().as_str());
+        .network(network)
+        .create_wallet(&mut *bdk_persister.lock().unwrap())
+        .map_err(|e| match e {
+            CreateWithPersistError::Persist(_) => {
+                anyhow::anyhow!("Could not persist wallet")
+            }
+            CreateWithPersistError::DataAlreadyExists(_) => {
+                anyhow::anyhow!("Wallet already exist. Please use load method")
+            }
+            CreateWithPersistError::Descriptor(error) => {
+                anyhow::anyhow!("Could not create wallet from descriptor: {:?}", error)
+            }
+        })?;
+        let address_type = utils::get_address_type(
+            wallet
+                .public_descriptor(KeychainKind::External)
+                .to_string()
+                .as_str(),
+        );
         Ok(Self {
             bdk_wallet: Arc::new(Mutex::new(wallet)),
             bdk_persister,
@@ -94,8 +95,8 @@ impl<P: WalletPersister> NgWallet<P> {
         meta_storage: Arc<Mutex<dyn MetaStorage>>,
         bdk_persister: Arc<Mutex<P>>,
     ) -> Result<NgWallet<P>>
-        where
-            <P as WalletPersister>::Error: Debug,
+    where
+        <P as WalletPersister>::Error: Debug,
     {
         // #[cfg(feature = "envoy")]
         //     let mut persister = Connection::open(format!("{}/wallet.sqlite",db_path))?;
@@ -109,16 +110,15 @@ impl<P: WalletPersister> NgWallet<P> {
 
         match wallet_opt {
             Some(wallet) => {
-                let address_type = utils::get_address_type(&wallet
-                    .public_descriptor(KeychainKind::External)
-                    .to_string());
+                let address_type = utils::get_address_type(
+                    &wallet.public_descriptor(KeychainKind::External).to_string(),
+                );
                 Ok(Self {
                     bdk_wallet: Arc::new(Mutex::new(wallet)),
                     bdk_persister,
                     meta_storage,
                     address_type,
-                }
-                )
+                })
             }
             None => Err(anyhow::anyhow!("Failed to load wallet database.")),
         }
@@ -136,7 +136,10 @@ impl<P: WalletPersister> NgWallet<P> {
             let tx = canonical_tx.tx_node.tx;
             let tx_id = canonical_tx.tx_node.txid.to_string();
             let (sent, received) = wallet.sent_and_received(tx.as_ref());
-            let fee = wallet.calculate_fee(tx.as_ref()).unwrap().to_sat();
+            let fee = wallet
+                .calculate_fee(tx.as_ref())
+                .unwrap_or(Amount::from_sat(0))
+                .to_sat();
             let block_height = match canonical_tx.chain_position {
                 Confirmed { anchor, .. } => {
                     //to milliseconds
@@ -328,28 +331,9 @@ impl<P: WalletPersister> NgWallet<P> {
         electrum_server: &str,
         socks_proxy: Option<&str>,
     ) -> Result<SyncResponse> {
-        let bdk_client = Self::build_electrum_client(electrum_server, socks_proxy);
+        let bdk_client = utils::build_electrum_client(electrum_server, socks_proxy);
         let update = bdk_client.sync(request, BATCH_SIZE, true)?;
         Ok(update)
-    }
-
-    ///TODO: chore, clean up
-    #[cfg(feature = "envoy")]
-    pub(crate) fn build_electrum_client(
-        electrum_server: &str,
-        socks_proxy: Option<&str>,
-    ) -> BdkElectrumClient<Client> {
-        let socks5_config = match socks_proxy {
-            Some(socks_proxy) => {
-                let socks5_config = Socks5Config::new(socks_proxy);
-                Some(socks5_config)
-            }
-            None => None,
-        };
-        let electrum_config = Config::builder().socks5(socks5_config.clone()).build();
-        let client = Client::from_config(electrum_server, electrum_config).unwrap();
-        let bdk_client: BdkElectrumClient<Client> = BdkElectrumClient::new(client);
-        bdk_client
     }
 
     #[cfg(feature = "envoy")]
@@ -454,9 +438,9 @@ impl<P: WalletPersister> NgWallet<P> {
             .signers()
             .is_empty()
             || !wallet
-            .get_signers(KeychainKind::External)
-            .signers()
-            .is_empty()
+                .get_signers(KeychainKind::External)
+                .signers()
+                .is_empty()
     }
 
     pub fn sign(&self, psbt: &str) -> Result<String> {
