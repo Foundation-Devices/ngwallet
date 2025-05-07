@@ -1,4 +1,5 @@
 use bdk_wallet::bitcoin::{OutPoint, Txid};
+use serde::{Deserialize, Serialize};
 use std::str::FromStr;
 
 // #[derive(Debug)]
@@ -23,7 +24,7 @@ use std::str::FromStr;
 //     Azteco,
 // }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Input {
     pub tx_id: String,
     pub vout: u32,
@@ -31,13 +32,13 @@ pub struct Input {
     pub tag: Option<String>,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum KeyChain {
     External,
     Internal,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Output {
     pub tx_id: String,
     pub vout: u32,
@@ -66,7 +67,7 @@ impl PartialEq for Output {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BitcoinTransaction {
     pub tx_id: String,
     pub block_height: u32,

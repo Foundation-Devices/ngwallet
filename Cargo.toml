@@ -4,7 +4,7 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-bdk_wallet = { version = "1.1.0", features = ["keys-bip39"] }
+bdk_wallet = { version = "1.1.0", features = ["keys-bip39","test-utils"] }
 bdk_electrum = { version = "0.21.0", optional = true }
 anyhow = "1.0.97"
 redb = "2.4.0"
