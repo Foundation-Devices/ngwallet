@@ -11,6 +11,7 @@ use bdk_wallet::psbt::PsbtUtils;
 use bdk_wallet::{AddressInfo, KeychainKind, SignOptions, WalletPersister};
 use log::info;
 use std::str::FromStr;
+use crate::account::NgAccount;
 
 use crate::rbf::BumpFeeError::ComposeTxError;
 use crate::send::{DraftTransaction, TransactionFeeResult};
@@ -36,9 +37,9 @@ pub enum BumpFeeError {
 }
 
 // TODO: chore: cleanup duplicate code
-impl<P: WalletPersister> NgWallet<P> {
+impl<P: WalletPersister> NgAccount<P> {
     // fn get_address(&self, key_chain: KeychainKind) -> AddressInfo {
-    //     self.wallet.lock().unwrap().reveal_next_address(key_chain)
+    //     self.get_coordinator_wallet().bdk_wallet.lock().unwrap().reveal_next_address(key_chain)
     // }
     //
     // #[cfg(feature = "envoy")]
@@ -515,7 +516,7 @@ impl<P: WalletPersister> NgWallet<P> {
     // ) -> Result<Psbt, BumpFeeError> {
     //     let unspend_outputs = self.utxos().unwrap();
     //     let transactions = self.transactions().unwrap();
-    //     let mut wallet = self.wallet.lock().unwrap();
+    //     let mut wallet = self.get_coordinator_wallet().bdk_wallet.lock().unwrap();
     //     let tx_id = Txid::from_str(bitcoin_transaction.clone().tx_id.as_str())
     //         .map_err(|_| BumpFeeError::TransactionNotFound())?;
     //     let mut tx_builder = wallet

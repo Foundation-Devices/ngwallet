@@ -1,5 +1,5 @@
 use std::fmt::Debug;
-use std::sync::{Arc, Mutex, MutexGuard};
+use std::sync::{Arc, Mutex};
 
 use crate::config::{AddressType, NgAccountConfig, NgDescriptor};
 use crate::db::RedbMetaStorage;
@@ -13,6 +13,8 @@ use bdk_wallet::chain::spk_client::SyncRequest;
 use bdk_wallet::{AddressInfo, Balance, KeychainKind, PersistedWallet, Update, WalletPersister};
 use redb::StorageBackend;
 use serde::{Deserialize, Serialize};
+use crate::utils;
+use crate::utils::get_address_type;
 
 #[derive(Debug)]
 pub struct NgAccount<P: WalletPersister> {
@@ -38,7 +40,7 @@ pub fn get_persister_file_name(internal: &str, external: Option<&str>) -> String
     }
     let internal_id = get_last_eight_chars(internal).unwrap_or("".to_string());
     let external_id =
-        get_last_eight_chars(external.clone().unwrap_or(&"".to_string())).unwrap_or("".to_string());
+        get_last_eight_chars(external.unwrap_or(&"".to_string())).unwrap_or("".to_string());
     format!("{}_{}.sqlite", internal_id, external_id)
 }
 
@@ -50,7 +52,7 @@ impl<P: WalletPersister> NgAccount<P> {
         device_serial: Option<String>,
         date_added: Option<String>,
         network: Network,
-        address_type: AddressType,
+        preferred_address_type: AddressType,
         descriptors: Vec<Descriptor<P>>,
         index: u32,
         db_path: Option<String>,
@@ -62,6 +64,7 @@ impl<P: WalletPersister> NgAccount<P> {
             db_path.clone(),
             meta_storage_backend,
         )));
+
 
         let ng_descriptors = descriptors
             .iter()
@@ -82,8 +85,14 @@ impl<P: WalletPersister> NgAccount<P> {
                 descriptor.bdk_persister,
             )
                 .unwrap();
-
             wallets.push(wallet);
+        }
+
+        let coordinator_wallet = wallets.iter()
+            .find(|w| w.address_type == preferred_address_type);
+
+        if coordinator_wallet.is_none() {
+            panic!("No wallet found with the preferred address type");
         }
 
         let account_config = NgAccountConfig {
@@ -93,7 +102,7 @@ impl<P: WalletPersister> NgAccount<P> {
             date_added,
             index,
             descriptors: ng_descriptors,
-            address_type,
+            preferred_address_type,
             network,
             id,
             date_synced,
@@ -172,7 +181,7 @@ impl<P: WalletPersister> NgAccount<P> {
         let mut addresses = vec![];
         for wallet in self.wallets.iter_mut() {
             let address: AddressInfo = wallet
-                .wallet
+                .bdk_wallet
                 .lock()
                 .unwrap()
                 .next_unused_address(KeychainKind::External);
@@ -190,7 +199,7 @@ impl<P: WalletPersister> NgAccount<P> {
         let mut requests = vec![];
 
         for wallet in self.wallets.iter() {
-            let request = wallet.wallet.lock().unwrap().start_full_scan().build();
+            let request = wallet.bdk_wallet.lock().unwrap().start_full_scan().build();
             requests.push(request);
         }
 
@@ -199,7 +208,7 @@ impl<P: WalletPersister> NgAccount<P> {
 
     pub fn apply(&mut self, update: Update) -> anyhow::Result<()> {
         for wallet in self.wallets.iter_mut() {
-            let mut wallet = wallet.wallet.lock().unwrap();
+            let mut wallet = wallet.bdk_wallet.lock().unwrap();
             println!(
                 "Applying update to wallet: {:?}",
                 wallet.public_descriptor(KeychainKind::External)
@@ -213,7 +222,7 @@ impl<P: WalletPersister> NgAccount<P> {
         let mut balance = Balance::default();
 
         for wallet in self.wallets.iter() {
-            let wallet_balance = wallet.wallet.lock().unwrap().balance();
+            let wallet_balance = wallet.bdk_wallet.lock().unwrap().balance();
             balance.confirmed += wallet_balance.confirmed;
             balance.immature += wallet_balance.immature;
             balance.trusted_pending += wallet_balance.trusted_pending;
@@ -222,34 +231,18 @@ impl<P: WalletPersister> NgAccount<P> {
 
         Ok(balance)
     }
+
     pub fn wallet_balances(&self) -> anyhow::Result<Vec<(AddressType, Balance)>> {
         let mut balances: Vec<(AddressType, Balance)> = vec![];
-
         for wallet in self.wallets.iter() {
-            let wallet = wallet.wallet.lock().unwrap();
+            let wallet = wallet.bdk_wallet.lock().unwrap();
             let balance = wallet.balance();
             balances.push((
-                Self::get_address_type(wallet),
+                get_address_type(&wallet.public_descriptor(KeychainKind::External).to_string()),
                 balance,
             ));
         }
         Ok(balances)
-    }
-
-
-    fn get_address_type(wallet: MutexGuard<PersistedWallet<P>>)-> AddressType {
-        let descriptor = wallet.public_descriptor(KeychainKind::External).to_string();
-        if descriptor.contains("pkh(") {
-            AddressType::P2pkh
-        } else if descriptor.contains("wpkh(") {
-            AddressType::P2wpkh
-        } else if descriptor.contains("sh(") {
-            AddressType::P2sh
-        } else if descriptor.contains("tr(") {
-            AddressType::P2tr
-        }else {
-            AddressType::P2tr
-        }
     }
 
     pub fn transactions(&self) -> anyhow::Result<Vec<BitcoinTransaction>> {
@@ -274,7 +267,7 @@ impl<P: WalletPersister> NgAccount<P> {
         self.meta_storage
             .lock()
             .unwrap()
-            .set_note(&tx_id.to_string(), note)
+            .set_note(&tx_id, note)
             .map_err(|e| anyhow::anyhow!("Could not set note: {:?}", e))?;
         Ok(true)
     }
@@ -310,5 +303,25 @@ impl<P: WalletPersister> NgAccount<P> {
         }
 
         requests
+    }
+
+    pub(crate) fn get_coordinator_wallet(&self) -> &NgWallet<P> {
+        let address_type = self.config.preferred_address_type;
+        let mut coordinator: &NgWallet<P> = self.wallets.first().unwrap();
+        for wallet in &self.wallets {
+            if wallet.address_type == address_type {
+                coordinator = &wallet;
+            }
+        }
+        coordinator
+    }
+
+    pub(crate) fn non_coordinator_wallets(&self) -> Vec<&NgWallet<P>> {
+        let address_type = self.config.preferred_address_type;
+        self.wallets
+            .iter()
+            .filter(
+                |wallet| wallet.address_type != address_type,
+            ).collect()
     }
 }

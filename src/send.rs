@@ -64,7 +64,7 @@ impl<P: WalletPersister> NgAccount<P> {
         transaction_params: TransactionParams,
     ) -> Result<TransactionFeeResult, CreateTxError> {
         let utxos = self.utxos().unwrap();
-        let mut coordinator_wallet = self.wallets[0].wallet.lock().unwrap();
+        let mut coordinator_wallet = self.get_coordinator_wallet().bdk_wallet.lock().unwrap();
         let address = transaction_params.address;
         let tag = transaction_params.tag;
         let default_fee = transaction_params.fee_rate;
@@ -278,7 +278,7 @@ impl<P: WalletPersister> NgAccount<P> {
 
         // The wallet will be locked for the rest of the spend method,
         // so calling other NgWallet APIs won't succeed.
-        let mut coordinator_wallet = self.wallets[0].wallet.lock().unwrap();
+        let mut coordinator_wallet = self.get_coordinator_wallet().bdk_wallet.lock().unwrap();
 
         let address = Address::from_str(&address)
             .unwrap()
@@ -406,7 +406,7 @@ impl<P: WalletPersister> NgAccount<P> {
     //mark utxo as used, this must called after transaction is broadcast
     pub fn mark_utxo_as_used(&self, transaction: Transaction) {
         for wallet in &self.wallets {
-            let mut wallet = wallet.wallet.lock().unwrap();
+            let mut wallet = wallet.bdk_wallet.lock().unwrap();
             wallet.cancel_tx(&transaction.clone());
         }
     }
@@ -718,7 +718,7 @@ impl<P: WalletPersister> NgAccount<P> {
     fn get_utxo_input(&self, output: &Output) -> Option<(psbt::Input, Weight)> {
         let mut input_for_fore: Option<(psbt::Input, Weight)> = None;
         for wallet in self.non_coordinator_wallets() {
-            let mut wallet = wallet.wallet.lock().unwrap();
+            let  wallet = wallet.bdk_wallet.lock().unwrap();
             let local_output = wallet.get_utxo(output.get_outpoint());
             match local_output {
                 None => {}
@@ -746,13 +746,12 @@ impl<P: WalletPersister> NgAccount<P> {
         }
         input_for_fore
     }
-    fn non_coordinator_wallets(&self) -> Vec<&NgWallet<P>> {
-        self.wallets.iter().skip(1).collect()
-    }
+
+
 
     fn sign_psbt(wallets: Vec<&NgWallet<P>>, psbt: &mut Psbt, sign_options: SignOptions) {
         for wallet in wallets {
-            let mut wallet = wallet.wallet.lock().unwrap();
+            let mut wallet = wallet.bdk_wallet.lock().unwrap();
             wallet.sign(psbt, sign_options.clone()).unwrap_or(false);
             //why cancel? cancel will resets index, we increment index only
             //if tx is broadcast

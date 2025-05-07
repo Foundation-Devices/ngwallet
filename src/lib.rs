@@ -12,6 +12,7 @@ pub use redb;
 
 pub mod bip39;
 mod db;
+mod utils;
 
 #[cfg(feature = "envoy")]
 pub use bdk_electrum;

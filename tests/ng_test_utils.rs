@@ -20,7 +20,7 @@ pub fn get_account_with_confirmed_unconfirmed(mut account:  &mut NgAccount<Conne
 
     {
         for (index,ngwallet) in account.wallets.iter().enumerate() {
-            let mut wallet = ngwallet.wallet.lock().unwrap();
+            let mut wallet = ngwallet.bdk_wallet.lock().unwrap();
             let tx0 = Transaction {
                 output: vec![TxOut {
                     value: Amount::from_sat(76_000),

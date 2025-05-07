@@ -7,16 +7,16 @@ mod ng_test_utils;
 #[cfg(test)]
 mod spend_tests {
     use std::sync::{Arc, Mutex};
-    use ngwallet::send::TransactionParams;
-    use ng_test_utils;
+
     #[cfg(feature = "envoy")]
     use {
-        crate::*, bdk_wallet::Update, bdk_wallet::bitcoin::Network,
-        bdk_wallet::rusqlite::Connection, ngwallet::account::Descriptor,
-        ngwallet::account::NgAccount, ngwallet::config::AddressType, ngwallet::ngwallet::NgWallet,
+        bdk_wallet::bitcoin::Network, bdk_wallet::rusqlite::Connection,
+        crate::*, ngwallet::account::Descriptor,
+        ngwallet::account::NgAccount, ngwallet::config::AddressType,
         redb::backends::FileBackend,
-
     };
+    use ng_test_utils;
+    use ngwallet::send::TransactionParams;
 
     #[test]
     #[cfg(feature = "envoy")]

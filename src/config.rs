@@ -29,7 +29,7 @@ pub struct NgAccountConfig {
     pub color: String,
     pub device_serial: Option<String>,
     pub date_added: Option<String>,
-    pub address_type: AddressType,
+    pub preferred_address_type: AddressType,
     pub index: u32,
     pub descriptors: Vec<NgDescriptor>,
     pub date_synced: Option<String>,
