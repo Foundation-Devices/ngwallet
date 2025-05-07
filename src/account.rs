@@ -4,17 +4,16 @@ use std::sync::{Arc, Mutex};
 use crate::config::{AddressType, NgAccountConfig, NgDescriptor};
 use crate::db::RedbMetaStorage;
 use crate::ngwallet::NgWallet;
-use crate::store::MetaStorage;
+use crate::store::{InMemoryMetaStorage, MetaStorage};
 use crate::transaction::{BitcoinTransaction, Output};
+use crate::utils::get_address_type;
 use anyhow::Error;
 use bdk_wallet::bitcoin::Network;
 use bdk_wallet::chain::spk_client::FullScanRequest;
 use bdk_wallet::chain::spk_client::SyncRequest;
-use bdk_wallet::{AddressInfo, Balance, KeychainKind, PersistedWallet, Update, WalletPersister};
+use bdk_wallet::{AddressInfo, Balance, KeychainKind, Update, WalletPersister};
 use redb::StorageBackend;
 use serde::{Deserialize, Serialize};
-use crate::utils;
-use crate::utils::get_address_type;
 
 #[derive(Debug)]
 pub struct NgAccount<P: WalletPersister> {
@@ -39,8 +38,7 @@ pub fn get_persister_file_name(internal: &str, external: Option<&str>) -> String
         }
     }
     let internal_id = get_last_eight_chars(internal).unwrap_or("".to_string());
-    let external_id =
-        get_last_eight_chars(external.unwrap_or(&"".to_string())).unwrap_or("".to_string());
+    let external_id = get_last_eight_chars(external.unwrap_or("")).unwrap_or("".to_string());
     format!("{}_{}.sqlite", internal_id, external_id)
 }
 
@@ -60,11 +58,15 @@ impl<P: WalletPersister> NgAccount<P> {
         id: String,
         date_synced: Option<String>,
     ) -> Self {
-        let meta = Arc::new(Mutex::new(RedbMetaStorage::new(
-            db_path.clone(),
-            meta_storage_backend,
-        )));
+        let mut meta: Arc<Mutex<dyn MetaStorage>> =
+            Arc::new(Mutex::new(InMemoryMetaStorage::new()));
 
+        if meta_storage_backend.is_some() {
+            meta = Arc::new(Mutex::new(RedbMetaStorage::new(
+                db_path.clone(),
+                meta_storage_backend,
+            )));
+        }
 
         let ng_descriptors = descriptors
             .iter()
@@ -84,11 +86,12 @@ impl<P: WalletPersister> NgAccount<P> {
                 meta.clone(),
                 descriptor.bdk_persister,
             )
-                .unwrap();
+            .unwrap();
             wallets.push(wallet);
         }
 
-        let coordinator_wallet = wallets.iter()
+        let coordinator_wallet = wallets
+            .iter()
             .find(|w| w.address_type == preferred_address_type);
 
         if coordinator_wallet.is_none() {
@@ -124,8 +127,8 @@ impl<P: WalletPersister> NgAccount<P> {
         bdk_persister: Arc<Mutex<P>>,
         meta_storage_backend: Option<impl StorageBackend>,
     ) -> Self
-        where
-            <P as WalletPersister>::Error: Debug,
+    where
+        <P as WalletPersister>::Error: Debug,
     {
         let meta_storage = Arc::new(Mutex::new(RedbMetaStorage::new(
             Some(db_path.clone()),
@@ -144,7 +147,7 @@ impl<P: WalletPersister> NgAccount<P> {
                 meta_storage.clone(),
                 bdk_persister.clone(),
             )
-                .unwrap();
+            .unwrap();
 
             wallets.push(wallet);
         }
@@ -267,7 +270,7 @@ impl<P: WalletPersister> NgAccount<P> {
         self.meta_storage
             .lock()
             .unwrap()
-            .set_note(&tx_id, note)
+            .set_note(tx_id, note)
             .map_err(|e| anyhow::anyhow!("Could not set note: {:?}", e))?;
         Ok(true)
     }
@@ -305,23 +308,38 @@ impl<P: WalletPersister> NgAccount<P> {
         requests
     }
 
-    pub(crate) fn get_coordinator_wallet(&self) -> &NgWallet<P> {
+    pub fn get_coordinator_wallet(&self) -> &NgWallet<P> {
         let address_type = self.config.preferred_address_type;
         let mut coordinator: &NgWallet<P> = self.wallets.first().unwrap();
         for wallet in &self.wallets {
             if wallet.address_type == address_type {
-                coordinator = &wallet;
+                coordinator = wallet;
             }
         }
         coordinator
     }
 
-    pub(crate) fn non_coordinator_wallets(&self) -> Vec<&NgWallet<P>> {
+    pub fn non_coordinator_wallets(&self) -> Vec<&NgWallet<P>> {
         let address_type = self.config.preferred_address_type;
         self.wallets
             .iter()
-            .filter(
-                |wallet| wallet.address_type != address_type,
-            ).collect()
+            .filter(|wallet| wallet.address_type != address_type)
+            .collect()
+    }
+
+    pub fn get_derivation_index(&self) -> Vec<(AddressType, KeychainKind, u32)> {
+        let mut derivation_index = vec![];
+        for wallet in self.wallets.iter() {
+            let bdk_wallet = wallet.bdk_wallet.lock().unwrap();
+            let external_index = bdk_wallet
+                .derivation_index(KeychainKind::External)
+                .unwrap_or(0);
+            let internal_index = bdk_wallet
+                .derivation_index(KeychainKind::Internal)
+                .unwrap_or(0);
+            derivation_index.push((wallet.address_type, KeychainKind::External, external_index));
+            derivation_index.push((wallet.address_type, KeychainKind::Internal, internal_index));
+        }
+        derivation_index
     }
 }
