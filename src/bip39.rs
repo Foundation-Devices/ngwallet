@@ -41,8 +41,14 @@ pub fn get_seedword_suggestions(input: &str, nr_of_suggestions: usize) -> Vec<&s
     list[..count].to_vec()
 }
 
+#[cfg(feature = "envoy")]
 pub fn get_random_seed() -> anyhow::Result<String> {
     let mnemonic = Mnemonic::generate_in(Language::English, 12)?;
+    Ok(mnemonic.to_string())
+}
+
+pub fn get_seed_string(prime_master_seed: [u8; 72]) -> anyhow::Result<String> {
+    let mnemonic = Mnemonic::from_entropy_in(Language::English, &prime_master_seed)?;
     Ok(mnemonic.to_string())
 }
 
@@ -102,7 +108,11 @@ pub fn get_descriptors(
 
 #[cfg(test)]
 mod test {
-    use crate::bip39::{get_descriptors, get_random_seed};
+    use crate::bip39::get_descriptors;
+
+    #[cfg(feature = "envoy")]
+    use crate::bip39::get_random_seed;
+
     use bdk_wallet::bitcoin::Network;
 
     #[test]
@@ -119,6 +129,7 @@ mod test {
         assert_eq!(descriptors[0].change_descriptor_xpub, "sh(wpkh([ab88de89/49'/0'/0']xpub6CpdbYf1vdUMh5ryZWEQBoBVvmTTFYdi92VvknfMeVsgjiXXnmyDrCdkUKLzvEUYgBJrvyb3pmW488dctFrfJ1RaVNPa1T1nmraemfFCbuY/1/*))#r5rt7v5t".to_owned());
     }
 
+    #[cfg(feature = "envoy")]
     #[test]
     fn test_get_random_seed() {
         assert_eq!(
