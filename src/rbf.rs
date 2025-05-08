@@ -1,4 +1,4 @@
-use crate::ngwallet::NgWallet;
+use crate::account::NgAccount;
 use anyhow::Result;
 use base64::prelude::*;
 use bdk_wallet::bitcoin::policy::DEFAULT_INCREMENTAL_RELAY_FEE;
@@ -8,7 +8,7 @@ use bdk_wallet::error::CreateTxError::CoinSelection;
 use bdk_wallet::error::{BuildFeeBumpError, CreateTxError};
 use bdk_wallet::miniscript::psbt::PsbtExt;
 use bdk_wallet::psbt::PsbtUtils;
-use bdk_wallet::{AddressInfo, KeychainKind, SignOptions, WalletPersister};
+use bdk_wallet::{AddForeignUtxoError, AddressInfo, KeychainKind, SignOptions, WalletPersister};
 use log::info;
 use std::str::FromStr;
 
@@ -33,12 +33,17 @@ pub enum BumpFeeError {
     /// Node doesn't have data to estimate a fee rate
     FeeRateUnavailable,
     UnableToAccessWallet,
+    UnableToAddForeignUtxo(AddForeignUtxoError),
 }
 
 // TODO: chore: cleanup duplicate code
-impl<P: WalletPersister> NgWallet<P> {
+impl<P: WalletPersister> NgAccount<P> {
     fn get_address(&self, key_chain: KeychainKind) -> AddressInfo {
-        self.wallet.lock().unwrap().reveal_next_address(key_chain)
+        self.get_coordinator_wallet()
+            .bdk_wallet
+            .lock()
+            .unwrap()
+            .reveal_next_address(key_chain)
     }
 
     #[cfg(feature = "envoy")]
@@ -46,7 +51,7 @@ impl<P: WalletPersister> NgWallet<P> {
         &self,
         original_transaction: BitcoinTransaction,
     ) -> Result<DraftTransaction, BumpFeeError> {
-        let unspend_outputs = self.unspend_outputs().unwrap();
+        let unspend_outputs = self.utxos().unwrap();
         let transactions = self.transactions().unwrap();
         let tx_id = Txid::from_str(original_transaction.tx_id.as_str())
             .map_err(|_| BumpFeeError::TransactionNotFound())?;
@@ -55,7 +60,7 @@ impl<P: WalletPersister> NgWallet<P> {
 
         let original_utxos: Vec<OutPoint> = vec![];
 
-        let Ok(mut wallet) = self.wallet.lock() else {
+        let Ok(mut wallet) = self.get_coordinator_wallet().bdk_wallet.lock() else {
             return Err(BumpFeeError::UnableToAccessWallet);
         };
 
@@ -122,6 +127,7 @@ impl<P: WalletPersister> NgWallet<P> {
 
                 let inputs = Self::apply_meta_to_inputs(
                     &wallet,
+                    &self.non_coordinator_wallets(),
                     psbt.clone().unsigned_tx,
                     unspend_outputs.clone(),
                 );
@@ -202,9 +208,7 @@ impl<P: WalletPersister> NgWallet<P> {
         selected_outputs: Vec<Output>,
         bitcoin_transaction: BitcoinTransaction,
     ) -> Result<TransactionFeeResult, BumpFeeError> {
-        let unspend_outputs = self.unspend_outputs().unwrap();
-        let transactions = self.transactions().unwrap();
-
+        let unspend_outputs = self.utxos().unwrap();
         //check if transaction is output is locked
         for unspend_output in unspend_outputs.clone() {
             if unspend_output.tx_id == bitcoin_transaction.clone().tx_id
@@ -216,33 +220,7 @@ impl<P: WalletPersister> NgWallet<P> {
 
         let min_fee_rate = bitcoin_transaction.fee_rate + 2;
 
-        let mature_utxos: Vec<Output> = unspend_outputs
-            .clone()
-            .iter()
-            .filter(|output| {
-                let tx = transactions
-                    .clone()
-                    .into_iter()
-                    .find(|tx| tx.tx_id == output.tx_id);
-                if let Some(tx) = tx {
-                    if tx.is_confirmed {
-                        return true;
-                    }
-                }
-                false
-            })
-            .cloned()
-            .collect();
-
         //do not spend
-        let mut do_not_spend_utxos: Vec<Output> = vec![];
-        let mut spendables: Vec<Output> = vec![];
-        Self::filter_spendable_and_do_not_spendables(
-            selected_outputs.clone(),
-            mature_utxos.clone(),
-            &mut do_not_spend_utxos,
-            &mut spendables,
-        );
         let mut max_fee: Option<u64> = None;
 
         // TODO: check if clippy is right about this one
@@ -253,7 +231,7 @@ impl<P: WalletPersister> NgWallet<P> {
         loop {
             tries += 1;
             if tries > 8 {
-                return Err(BumpFeeError::ChangeOutputLocked);
+                return Err(BumpFeeError::FeeRateUnavailable);
             }
             if max_fee.is_some() {
                 //try creating a psbt with max fee
@@ -264,8 +242,7 @@ impl<P: WalletPersister> NgWallet<P> {
                     max_fee,
                 ) {
                     Ok(psbt) => {
-                        let mut wallet = self.wallet.lock().unwrap();
-
+                        let mut wallet = self.get_coordinator_wallet().bdk_wallet.lock().unwrap();
                         if let Ok(tx) = psbt.clone().extract_tx() {
                             for tx_out in tx.output {
                                 let derivation = wallet.derivation_of_spk(tx_out.script_pubkey);
@@ -295,7 +272,10 @@ impl<P: WalletPersister> NgWallet<P> {
                                     error.clone().available.to_sat(),
                                     error.clone().needed.to_sat()
                                 );
-                                max_fee = Some(error.available.to_sat());
+                                max_fee = Some(
+                                    error.available.to_sat()
+                                        - (bitcoin_transaction.amount.unsigned_abs()),
+                                );
                             } else {
                                 return Err(BumpFeeError::ChangeOutputLocked);
                             }
@@ -316,7 +296,7 @@ impl<P: WalletPersister> NgWallet<P> {
                     None,
                 ) {
                     Ok(psbt) => {
-                        let mut wallet = self.wallet.lock().unwrap();
+                        let mut wallet = self.get_coordinator_wallet().bdk_wallet.lock().unwrap();
                         if let Ok(tx) = psbt.clone().extract_tx() {
                             for tx_out in tx.output {
                                 let derivation = wallet.derivation_of_spk(tx_out.script_pubkey);
@@ -393,7 +373,7 @@ impl<P: WalletPersister> NgWallet<P> {
         ) {
             Ok(psbt) => {
                 let transactions = self.transactions().unwrap();
-                let wallet = self.wallet.lock().unwrap();
+                let wallet = self.get_coordinator_wallet().bdk_wallet.lock().unwrap();
 
                 let transaction = psbt
                     .clone()
@@ -506,6 +486,7 @@ impl<P: WalletPersister> NgWallet<P> {
             Err(er) => Err(er),
         }
     }
+
     fn get_rbf_bump_psbt(
         &self,
         selected_outputs: Vec<Output>,
@@ -513,14 +494,15 @@ impl<P: WalletPersister> NgWallet<P> {
         fee_rate: u64,
         fee_absolute: Option<u64>,
     ) -> Result<Psbt, BumpFeeError> {
-        let unspend_outputs = self.unspend_outputs().unwrap();
+        let unspend_outputs = self.utxos().unwrap();
         let transactions = self.transactions().unwrap();
-        let mut wallet = self.wallet.lock().unwrap();
+        let mut wallet = self.get_coordinator_wallet().bdk_wallet.lock().unwrap();
         let tx_id = Txid::from_str(bitcoin_transaction.clone().tx_id.as_str())
             .map_err(|_| BumpFeeError::TransactionNotFound())?;
         let mut tx_builder = wallet
             .build_fee_bump(tx_id)
             .map_err(BumpFeeError::ComposeBumpTxError)?;
+
         let mature_utxos: Vec<Output> = unspend_outputs
             .clone()
             .iter()
@@ -530,17 +512,17 @@ impl<P: WalletPersister> NgWallet<P> {
                     .into_iter()
                     .find(|tx| tx.tx_id == output.tx_id);
                 if let Some(tx) = tx {
-                    if tx.is_confirmed {
-                        return true;
-                    }
+                    return tx.is_confirmed;
                 }
                 false
             })
             .cloned()
             .collect();
+
         //do not spend
         let mut do_not_spend_utxos: Vec<Output> = vec![];
         let mut spendables: Vec<Output> = vec![];
+
         Self::filter_spendable_and_do_not_spendables(
             selected_outputs.clone(),
             mature_utxos.clone(),
@@ -549,6 +531,17 @@ impl<P: WalletPersister> NgWallet<P> {
         );
         for do_not_spend_utxo in do_not_spend_utxos.clone() {
             tx_builder.add_unspendable(do_not_spend_utxo.get_outpoint());
+        }
+        for spendable_utxo in spendables {
+            let outpoint = spendable_utxo.get_outpoint();
+            match self.get_utxo_input(&spendable_utxo) {
+                None => {}
+                Some((input, weight)) => {
+                    tx_builder
+                        .add_foreign_utxo(outpoint, input, weight)
+                        .map_err(BumpFeeError::UnableToAddForeignUtxo)?;
+                }
+            }
         }
 
         if let Some(fee) = fee_absolute {

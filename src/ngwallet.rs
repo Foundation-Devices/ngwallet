@@ -4,13 +4,14 @@ use std::str::FromStr;
 use std::sync::{Arc, Mutex};
 
 use anyhow::Result;
-use bdk_wallet::bitcoin::{Address, Network, OutPoint, Psbt, Txid};
+use bdk_wallet::Wallet;
+use bdk_wallet::bitcoin::{Address, Amount, Network, OutPoint, Psbt, Txid};
 use bdk_wallet::chain::ChainPosition::{Confirmed, Unconfirmed};
-use bdk_wallet::{AddressInfo, CreateWithPersistError, PersistedWallet, SignOptions};
+use bdk_wallet::{CreateWithPersistError, PersistedWallet, SignOptions};
 use bdk_wallet::{KeychainKind, WalletPersister};
-use bdk_wallet::{Update, Wallet};
 use log::info;
 
+use crate::config::AddressType;
 #[cfg(feature = "envoy")]
 use {
     crate::{BATCH_SIZE, STOP_GAP},
@@ -25,6 +26,7 @@ use {
 
 use crate::store::MetaStorage;
 use crate::transaction::{BitcoinTransaction, Input, KeyChain, Output};
+use crate::utils;
 
 #[derive(Debug)]
 pub struct PsbtInfo {
@@ -34,7 +36,8 @@ pub struct PsbtInfo {
 
 #[derive(Debug)]
 pub struct NgWallet<P: WalletPersister> {
-    pub wallet: Arc<Mutex<PersistedWallet<P>>>,
+    pub bdk_wallet: Arc<Mutex<PersistedWallet<P>>>,
+    pub address_type: AddressType,
     pub(crate) meta_storage: Arc<Mutex<dyn MetaStorage>>,
     bdk_persister: Arc<Mutex<P>>,
 }
@@ -64,16 +67,22 @@ impl<P: WalletPersister> NgWallet<P> {
                 anyhow::anyhow!("Could not create wallet from descriptor: {:?}", error)
             }
         })?;
-
+        let address_type = utils::get_address_type(
+            wallet
+                .public_descriptor(KeychainKind::External)
+                .to_string()
+                .as_str(),
+        );
         Ok(Self {
-            wallet: Arc::new(Mutex::new(wallet)),
+            bdk_wallet: Arc::new(Mutex::new(wallet)),
             bdk_persister,
             meta_storage,
+            address_type,
         })
     }
 
     pub fn persist(&mut self) -> Result<bool> {
-        self.wallet
+        self.bdk_wallet
             .lock()
             .unwrap()
             .persist(&mut self.bdk_persister.lock().unwrap())
@@ -81,6 +90,8 @@ impl<P: WalletPersister> NgWallet<P> {
     }
 
     pub fn load(
+        internal_descriptor: String,
+        external_descriptor: Option<String>,
         meta_storage: Arc<Mutex<dyn MetaStorage>>,
         bdk_persister: Arc<Mutex<P>>,
     ) -> Result<NgWallet<P>>
@@ -90,42 +101,31 @@ impl<P: WalletPersister> NgWallet<P> {
         // #[cfg(feature = "envoy")]
         //     let mut persister = Connection::open(format!("{}/wallet.sqlite",db_path))?;
 
-        let config = meta_storage
-            .lock()
-            .unwrap()
-            .get_config()
-            .map_err(|e| anyhow::anyhow!("Could not get config from meta storage: {:?}", e))?
-            .unwrap();
-
         let wallet_opt = Wallet::load()
-            .descriptor(KeychainKind::Internal, Some(config.internal_descriptor))
-            .descriptor(KeychainKind::External, config.external_descriptor)
+            .descriptor(KeychainKind::Internal, Some(internal_descriptor))
+            .descriptor(KeychainKind::External, external_descriptor)
             .extract_keys()
             .load_wallet(&mut *bdk_persister.lock().unwrap())
             .unwrap();
 
         match wallet_opt {
-            Some(wallet) => Ok(Self {
-                wallet: Arc::new(Mutex::new(wallet)),
-                bdk_persister,
-                meta_storage,
-            }),
+            Some(wallet) => {
+                let address_type = utils::get_address_type(
+                    &wallet.public_descriptor(KeychainKind::External).to_string(),
+                );
+                Ok(Self {
+                    bdk_wallet: Arc::new(Mutex::new(wallet)),
+                    bdk_persister,
+                    meta_storage,
+                    address_type,
+                })
+            }
             None => Err(anyhow::anyhow!("Failed to load wallet database.")),
         }
     }
 
-    pub fn next_address(&mut self) -> Result<AddressInfo> {
-        let address: AddressInfo = self
-            .wallet
-            .lock()
-            .unwrap()
-            .next_unused_address(KeychainKind::External);
-        self.persist()?;
-        Ok(address)
-    }
-
     pub fn transactions(&self) -> Result<Vec<BitcoinTransaction>> {
-        let wallet = self.wallet.lock().unwrap();
+        let wallet = self.bdk_wallet.lock().unwrap();
         let mut transactions: Vec<BitcoinTransaction> = vec![];
         let tip_height = wallet.latest_checkpoint().height();
         let storage = self.meta_storage.lock().unwrap();
@@ -136,7 +136,10 @@ impl<P: WalletPersister> NgWallet<P> {
             let tx = canonical_tx.tx_node.tx;
             let tx_id = canonical_tx.tx_node.txid.to_string();
             let (sent, received) = wallet.sent_and_received(tx.as_ref());
-            let fee = wallet.calculate_fee(tx.as_ref()).unwrap().to_sat();
+            let fee = wallet
+                .calculate_fee(tx.as_ref())
+                .unwrap_or(Amount::from_sat(0))
+                .to_sat();
             let block_height = match canonical_tx.chain_position {
                 Confirmed { anchor, .. } => {
                     //to milliseconds
@@ -312,13 +315,10 @@ impl<P: WalletPersister> NgWallet<P> {
 
         Ok(transactions)
     }
-    #[cfg(feature = "envoy")]
-    pub fn full_scan_request(&self) -> FullScanRequest<KeychainKind> {
-        self.wallet.lock().unwrap().start_full_scan().build()
-    }
+
     #[cfg(feature = "envoy")]
     pub fn sync_request(&self) -> SyncRequest<(KeychainKind, u32)> {
-        self.wallet
+        self.bdk_wallet
             .lock()
             .unwrap()
             .start_sync_with_revealed_spks()
@@ -331,7 +331,7 @@ impl<P: WalletPersister> NgWallet<P> {
         electrum_server: &str,
         socks_proxy: Option<&str>,
     ) -> Result<SyncResponse> {
-        let bdk_client = Self::build_electrum_client(electrum_server, socks_proxy);
+        let bdk_client = utils::build_electrum_client(electrum_server, socks_proxy);
         let update = bdk_client.sync(request, BATCH_SIZE, true)?;
         Ok(update)
     }
@@ -357,8 +357,8 @@ impl<P: WalletPersister> NgWallet<P> {
         Ok(update)
     }
 
-    pub fn unspend_outputs(&self) -> Result<Vec<Output>> {
-        let wallet = self.wallet.lock().unwrap();
+    pub fn utxos(&self) -> Result<Vec<Output>> {
+        let wallet = self.bdk_wallet.lock().unwrap();
         let mut unspents: Vec<Output> = vec![];
         let tip_height = wallet.latest_checkpoint().height();
 
@@ -430,21 +430,9 @@ impl<P: WalletPersister> NgWallet<P> {
         Ok(unspents)
     }
 
-    pub fn apply(&mut self, update: Update) -> Result<()> {
-        self.wallet
-            .lock()
-            .unwrap()
-            .apply_update(update)
-            .map_err(|e| anyhow::anyhow!(e))
-    }
-
-    pub fn balance(&self) -> Result<bdk_wallet::Balance> {
-        Ok(self.wallet.lock().unwrap().balance())
-    }
-
     //check if the wallet got signers,
     pub fn is_hot(&self) -> bool {
-        let wallet = self.wallet.lock().unwrap();
+        let wallet = self.bdk_wallet.lock().unwrap();
         !wallet
             .get_signers(KeychainKind::Internal)
             .signers()
@@ -457,7 +445,7 @@ impl<P: WalletPersister> NgWallet<P> {
 
     pub fn sign(&self, psbt: &str) -> Result<String> {
         let mut psbt = Psbt::from_str(psbt)?;
-        self.wallet
+        self.bdk_wallet
             .lock()
             .unwrap()
             .sign(&mut psbt, SignOptions::default())?;
@@ -467,7 +455,7 @@ impl<P: WalletPersister> NgWallet<P> {
     pub fn parse_psbt(&self, psbt_str: &str) -> Result<PsbtInfo> {
         let psbt = Psbt::from_str(psbt_str)?;
         let tx = psbt.extract_tx()?;
-        let wallet = self.wallet.lock().unwrap();
+        let wallet = self.bdk_wallet.lock().unwrap();
         let mut outputs = std::collections::HashMap::new();
         let mut fee = 0;
 
@@ -495,27 +483,6 @@ impl<P: WalletPersister> NgWallet<P> {
         client.transaction_broadcast(&tx)?;
 
         Ok(())
-    }
-
-    pub fn set_note(&mut self, tx_id: &str, note: &str) -> Result<bool> {
-        let tx_id = Txid::from_str(tx_id).map_err(|e| anyhow::anyhow!("Invalid Txid: {:?}", e))?;
-        let tx = self
-            .wallet
-            .lock()
-            .unwrap()
-            .get_tx(tx_id)
-            .ok_or_else(|| anyhow::anyhow!("Transaction not found"))?
-            .tx_node
-            .tx
-            .compute_txid();
-
-        self.meta_storage
-            .lock()
-            .unwrap()
-            .set_note(&tx.to_string(), note)
-            .map_err(|e| anyhow::anyhow!("Could not set note: {:?}", e))?;
-
-        Ok(true)
     }
 
     /// Sets a note for a transaction without checking if the transaction existence.
@@ -563,7 +530,7 @@ impl<P: WalletPersister> NgWallet<P> {
             .remove_tag(target_tag)
             .map_err(|e| anyhow::anyhow!("Error {}", e))
             .unwrap();
-        self.unspend_outputs()
+        self.utxos()
             .map_err(|e| anyhow::anyhow!("Error {}", e))
             .unwrap()
             .iter()
@@ -583,7 +550,7 @@ impl<P: WalletPersister> NgWallet<P> {
     }
     pub fn set_do_not_spend(&mut self, output: &Output, state: bool) -> Result<bool> {
         let out_point = OutPoint::new(Txid::from_str(&output.tx_id).unwrap(), output.vout);
-        self.wallet
+        self.bdk_wallet
             .lock()
             .unwrap()
             .get_utxo(out_point)
@@ -601,7 +568,7 @@ impl<P: WalletPersister> NgWallet<P> {
     //Reveal addresses up to and including the target index and return an iterator of newly revealed addresses.
     pub fn reveal_addresses_up_to(&mut self, keychain: KeychainKind, index: u32) -> Result<()> {
         let _ = self
-            .wallet
+            .bdk_wallet
             .lock()
             .unwrap()
             .reveal_addresses_to(keychain, index);
