@@ -342,4 +342,13 @@ impl<P: WalletPersister> NgAccount<P> {
         }
         derivation_index
     }
+
+    pub fn sign(&self, psbt: &str) -> anyhow::Result<String> {
+        let mut psbt = psbt.to_string();
+        for wallet in self.wallets.iter() {
+            psbt = wallet.sign(&psbt)?;
+        }
+
+        Ok(psbt)
+    }
 }
