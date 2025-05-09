@@ -65,7 +65,7 @@ pub fn get_descriptors(
 
     let secp = Secp256k1::new();
     let bip48_2_descriptor: DescriptorKey<bdk_wallet::descriptor::Segwitv0> =
-        xprv.into_descriptor_key(None, DerivationPath::from_str("m/48'/0'/0'/2")?)?;
+        xprv.into_descriptor_key(None, DerivationPath::from_str("m/48'/0'/0'/2'")?)?;
     let (bip48_2_xpub, _, _) = bip48_2_descriptor.extract(&secp)?;
 
     // TODO: get this right
