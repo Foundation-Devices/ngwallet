@@ -4,9 +4,8 @@ mod ng_test_utils;
 #[cfg(feature = "envoy")]
 mod spend_tests {
     use bdk_wallet::bitcoin::Network;
-    use std::sync::{Arc, Mutex};
-
     use ngwallet::send::{DraftTransaction, TransactionParams};
+    use std::sync::{Arc, Mutex};
     use {
         crate::*, bdk_wallet::rusqlite::Connection, ngwallet::account::Descriptor,
         ngwallet::account::NgAccount, ngwallet::config::AddressType, redb::backends::FileBackend,
@@ -135,6 +134,7 @@ mod spend_tests {
             None::<FileBackend>,
             "".to_string(),
             None,
+            true,
         );
         account
     }
