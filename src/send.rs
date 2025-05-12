@@ -393,11 +393,7 @@ impl<P: WalletPersister> NgAccount<P> {
                     transaction,
                 })
             }
-            Err(e) => {
-                println!("Error creating PSBT: {:?}", e);
-                info!("Error creating PSBT: {:?}", e);
-                Err(e)
-            }
+            Err(e) => Err(e),
         }
     }
 

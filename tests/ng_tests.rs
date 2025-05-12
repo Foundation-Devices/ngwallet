@@ -49,18 +49,20 @@ mod tests {
             None::<FileBackend>,
             "".to_string(),
             None,
+            true,
         );
 
-        for request in account.full_scan_request().into_iter() {
+        for wallet in account.wallets.iter() {
+            let (address_type, request) = account.full_scan_request(wallet.address_type).unwrap();
             let update = NgWallet::<Connection>::scan(request, ELECTRUM_SERVER, None).unwrap();
-            account.apply(Update::from(update)).unwrap();
+            account.apply((address_type, Update::from(update))).unwrap();
         }
 
         let address = account.next_address().unwrap();
-        address.iter().for_each(|address| {
+        address.iter().for_each(|(address, address_type)| {
             println!(
-                "Generated address {} at index {}",
-                address.address, address.index
+                "Generated address {} at index {} of type {:?}",
+                address.address, address.index, address_type
             );
         });
 

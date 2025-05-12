@@ -1,4 +1,3 @@
-// Created by: 0xB1ue
 #[cfg(feature = "envoy")]
 use {
     bdk_electrum::BdkElectrumClient,
@@ -25,8 +24,7 @@ pub(crate) fn build_electrum_client(
     bdk_client
 }
 
-//use with bdk_wallet::descriptor::ExtendedDescriptor
-// for valid descriptors
+//
 pub(crate) fn get_address_type(descriptor: &str) -> AddressType {
     if descriptor.starts_with("pkh(") {
         AddressType::P2pkh

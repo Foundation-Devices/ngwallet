@@ -7,11 +7,12 @@ use crate::ngwallet::NgWallet;
 use crate::store::{InMemoryMetaStorage, MetaStorage};
 use crate::transaction::{BitcoinTransaction, Output};
 use crate::utils::get_address_type;
-use anyhow::Error;
-use bdk_wallet::bitcoin::Network;
+use anyhow::{Error, anyhow};
+use bdk_wallet::bitcoin::{Network, Transaction};
 use bdk_wallet::chain::spk_client::FullScanRequest;
 use bdk_wallet::chain::spk_client::SyncRequest;
 use bdk_wallet::{AddressInfo, Balance, KeychainKind, Update, WalletPersister};
+use log::info;
 use redb::StorageBackend;
 use serde::{Deserialize, Serialize};
 
@@ -57,22 +58,23 @@ impl<P: WalletPersister> NgAccount<P> {
         meta_storage_backend: Option<impl StorageBackend>,
         id: String,
         date_synced: Option<String>,
+        open_in_memory: bool,
     ) -> Self {
-        let mut meta: Arc<Mutex<dyn MetaStorage>> =
-            Arc::new(Mutex::new(InMemoryMetaStorage::new()));
-
-        if meta_storage_backend.is_some() {
-            meta = Arc::new(Mutex::new(RedbMetaStorage::new(
+        let meta: Arc<Mutex<dyn MetaStorage>> = if open_in_memory {
+            Arc::new(Mutex::new(InMemoryMetaStorage::new()))
+        } else {
+            Arc::new(Mutex::new(RedbMetaStorage::new(
                 db_path.clone(),
                 meta_storage_backend,
-            )));
-        }
+            )))
+        };
 
         let ng_descriptors = descriptors
             .iter()
             .map(|d| NgDescriptor {
                 external: d.external.clone(),
                 internal: d.internal.clone(),
+                address_type: get_address_type(&d.internal),
             })
             .collect();
 
@@ -115,6 +117,9 @@ impl<P: WalletPersister> NgAccount<P> {
             .unwrap()
             .set_config(account_config.serialize().as_str())
             .unwrap();
+        {
+            meta.lock().unwrap().persist().unwrap();
+        }
         Self {
             config: account_config,
             wallets,
@@ -124,7 +129,7 @@ impl<P: WalletPersister> NgAccount<P> {
 
     pub fn open_account(
         db_path: String,
-        bdk_persister: Arc<Mutex<P>>,
+        descriptors: Vec<Descriptor<P>>,
         meta_storage_backend: Option<impl StorageBackend>,
     ) -> Self
     where
@@ -137,18 +142,16 @@ impl<P: WalletPersister> NgAccount<P> {
 
         let config = meta_storage.lock().unwrap().get_config().unwrap().unwrap();
 
-        let mut wallets = vec![];
-        let descriptors = config.clone().descriptors;
+        let mut wallets: Vec<NgWallet<P>> = vec![];
 
         for descriptor in descriptors {
             let wallet = NgWallet::load(
                 descriptor.internal,
                 descriptor.external,
                 meta_storage.clone(),
-                bdk_persister.clone(),
+                descriptor.bdk_persister.clone(),
             )
             .unwrap();
-
             wallets.push(wallet);
         }
 
@@ -180,7 +183,7 @@ impl<P: WalletPersister> NgAccount<P> {
         vec![]
     }
 
-    pub fn next_address(&mut self) -> anyhow::Result<Vec<AddressInfo>> {
+    pub fn next_address(&mut self) -> anyhow::Result<Vec<(AddressInfo, AddressType)>> {
         let mut addresses = vec![];
         for wallet in self.wallets.iter_mut() {
             let address: AddressInfo = wallet
@@ -189,36 +192,10 @@ impl<P: WalletPersister> NgAccount<P> {
                 .unwrap()
                 .next_unused_address(KeychainKind::External);
 
-            addresses.push(address);
+            addresses.push((address, wallet.address_type));
         }
-
         self.persist()?;
-
         Ok(addresses)
-    }
-
-    #[cfg(feature = "envoy")]
-    pub fn full_scan_request(&self) -> Vec<FullScanRequest<KeychainKind>> {
-        let mut requests = vec![];
-
-        for wallet in self.wallets.iter() {
-            let request = wallet.bdk_wallet.lock().unwrap().start_full_scan().build();
-            requests.push(request);
-        }
-
-        requests
-    }
-
-    pub fn apply(&mut self, update: Update) -> anyhow::Result<()> {
-        for wallet in self.wallets.iter_mut() {
-            let mut wallet = wallet.bdk_wallet.lock().unwrap();
-            println!(
-                "Applying update to wallet: {:?}",
-                wallet.public_descriptor(KeychainKind::External)
-            );
-            wallet.apply_update(update.clone()).unwrap()
-        }
-        Ok(())
     }
 
     pub fn balance(&self) -> anyhow::Result<Balance> {
@@ -299,13 +276,47 @@ impl<P: WalletPersister> NgAccount<P> {
     }
 
     #[cfg(feature = "envoy")]
-    pub fn sync_request(&self) -> Vec<SyncRequest<(KeychainKind, u32)>> {
-        let mut requests = vec![];
-        for wallet in self.wallets.iter() {
-            requests.push(wallet.sync_request());
+    pub fn full_scan_request(
+        &self,
+        address_type: AddressType,
+    ) -> anyhow::Result<(AddressType, FullScanRequest<KeychainKind>), Error> {
+        match self
+            .wallets
+            .iter()
+            .find(|ng_wallet| ng_wallet.address_type == address_type)
+        {
+            None => Err(anyhow!("given address type doesnt exist in account")),
+            Some(ng_wallet) => Ok((ng_wallet.address_type, ng_wallet.full_scan_request())),
         }
+    }
 
-        requests
+    pub fn apply(&self, update: (AddressType, Update)) -> anyhow::Result<()> {
+        match self
+            .wallets
+            .iter()
+            .find(|ng_wallet| ng_wallet.address_type == update.0)
+        {
+            None => Err(anyhow!("given address type doesnt exist in account")),
+            Some(ng_wallet) => {
+                ng_wallet.apply_update(update.1).unwrap();
+                Ok(())
+            }
+        }
+    }
+
+    #[cfg(feature = "envoy")]
+    pub fn sync_request(
+        &self,
+        address_type: AddressType,
+    ) -> anyhow::Result<(AddressType, SyncRequest<(KeychainKind, u32)>)> {
+        match self
+            .wallets
+            .iter()
+            .find(|ng_wallet| ng_wallet.address_type == address_type)
+        {
+            None => Err(anyhow!("given address type doesnt exist in account")),
+            Some(ng_wallet) => Ok((ng_wallet.address_type, ng_wallet.sync_request())),
+        }
     }
 
     pub fn get_coordinator_wallet(&self) -> &NgWallet<P> {
@@ -350,5 +361,89 @@ impl<P: WalletPersister> NgAccount<P> {
         }
 
         Ok(psbt)
+    }
+
+    pub fn is_hot(&self) -> bool {
+        for wallet in self.wallets.iter() {
+            if wallet.is_hot() {
+                return true;
+            }
+        }
+        false
+    }
+
+    pub fn list_tags(&self) -> anyhow::Result<Vec<String>> {
+        self.meta_storage.lock().unwrap().list_tags()
+    }
+
+    pub fn mark_utxo_as_used(&self, transaction: Transaction) {
+        for wallet in self.wallets.iter() {
+            let mut wallet_mut = wallet.bdk_wallet.lock().unwrap();
+            for txout in &transaction.output {
+                if let Some((keychain, index)) =
+                    wallet_mut.derivation_of_spk(txout.script_pubkey.clone())
+                {
+                    wallet_mut.unmark_used(keychain, index);
+                }
+            }
+        }
+    }
+    /// Sets a note for a transaction without checking if the transaction existence.
+    pub fn set_note_unchecked(&mut self, tx_id: &str, note: &str) -> anyhow::Result<bool> {
+        self.meta_storage
+            .lock()
+            .unwrap()
+            .set_note(tx_id, note)
+            .map_err(|e| anyhow::anyhow!("Could not set note: {:?}", e))?;
+        Ok(true)
+    }
+
+    pub fn get_tag(&self, output_id: &str) -> Option<String> {
+        self.meta_storage
+            .lock()
+            .unwrap()
+            .get_tag(output_id)
+            .map_err(|_| anyhow::anyhow!("Could not set tag "))
+            .unwrap()
+    }
+
+    pub fn remove_tag(&mut self, target_tag: &str, rename_to: Option<&str>) -> anyhow::Result<()> {
+        self.meta_storage
+            .lock()
+            .unwrap()
+            .remove_tag(target_tag)
+            .map_err(|e| anyhow::anyhow!("Error {}", e))
+            .unwrap();
+        self.utxos()
+            .map_err(|e| anyhow::anyhow!("Error {}", e))
+            .unwrap()
+            .iter()
+            .for_each(|output: &Output| match output.clone().tag {
+                None => {}
+                Some(existing_tag) => {
+                    let new_tag = rename_to.unwrap_or("");
+                    if existing_tag.eq(target_tag) {
+                        self.set_tag(output, new_tag)
+                            .map_err(|e| anyhow::anyhow!("Error {}", e))
+                            .unwrap();
+                    }
+                }
+            });
+
+        Ok(())
+    }
+
+    pub fn read_config(
+        db_path: String,
+        meta_storage_backend: Option<impl StorageBackend>,
+    ) -> Option<NgAccountConfig> {
+        let meta_storage = RedbMetaStorage::new(Some(db_path.clone()), meta_storage_backend);
+        match meta_storage.get_config() {
+            Ok(value) => value.clone(),
+            Err(e) => {
+                info!("Error reading config {:?}", e);
+                None
+            }
+        }
     }
 }
