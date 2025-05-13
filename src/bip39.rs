@@ -5,16 +5,17 @@ use bdk_wallet::bitcoin::secp256k1::Secp256k1;
 use bdk_wallet::keys::bip39::{Language, Mnemonic};
 use bdk_wallet::keys::{DerivableKey, DescriptorKey};
 use bdk_wallet::template::{Bip44, Bip49, Bip84, Bip86, DescriptorTemplate};
-use serde::{Deserialize, Serialize};
 use std::cmp::min;
 use std::str::FromStr;
+use bdk_wallet::miniscript::descriptor::DescriptorType;
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug)]
 pub struct Descriptors {
-    descriptor_xprv: String,
-    change_descriptor_xprv: String,
-    descriptor_xpub: String,
-    change_descriptor_xpub: String,
+    pub descriptor_xprv: String,
+    pub change_descriptor_xprv: String,
+    pub descriptor_xpub: String,
+    pub change_descriptor_xpub: String,
+    pub descriptor_type: DescriptorType,
 }
 
 impl Descriptors {
@@ -100,6 +101,7 @@ pub fn get_descriptors(
             change_descriptor_xprv: change_descriptor.to_string_with_secret(&change_key_map),
             descriptor_xpub: descriptor.to_string(),
             change_descriptor_xpub: change_descriptor.to_string(),
+            descriptor_type: descriptor.desc_type(),
         });
     }
 

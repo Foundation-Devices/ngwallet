@@ -1,14 +1,14 @@
 use std::fmt::Debug;
 use std::sync::{Arc, Mutex};
 
-use crate::config::{AddressType, NgAccountConfig, NgDescriptor};
+use crate::config::{AddressType, NgAccountConfig};
 use crate::db::RedbMetaStorage;
 use crate::ngwallet::NgWallet;
 use crate::store::{InMemoryMetaStorage, MetaStorage};
 use crate::transaction::{BitcoinTransaction, Output};
 use crate::utils::get_address_type;
 use anyhow::{Error, anyhow};
-use bdk_wallet::bitcoin::{Network, Transaction};
+use bdk_wallet::bitcoin::{Transaction};
 use bdk_wallet::chain::spk_client::FullScanRequest;
 use bdk_wallet::chain::spk_client::SyncRequest;
 use bdk_wallet::{AddressInfo, Balance, KeychainKind, Update, WalletPersister};
@@ -49,40 +49,32 @@ pub fn get_persister_file_name(internal: &str, external: Option<&str>) -> String
     format!("{}_{}.sqlite", internal_id, external_id)
 }
 
+
 impl<P: WalletPersister> NgAccount<P> {
-    #![allow(clippy::too_many_arguments)]
-    pub fn new_from_descriptors(
-        name: String,
-        color: String,
-        device_serial: Option<String>,
-        date_added: Option<String>,
-        network: Network,
-        preferred_address_type: AddressType,
-        descriptors: Vec<Descriptor<P>>,
-        index: u32,
-        db_path: Option<String>,
+    pub(crate) fn new_from_descriptors(
+        ng_account_config: NgAccountConfig,
         meta_storage_backend: Option<impl StorageBackend>,
-        id: String,
-        date_synced: Option<String>,
         open_in_memory: bool,
+        descriptors: Vec<Descriptor<P>>,
     ) -> Self {
+        let account_config = ng_account_config.clone();
+        let NgAccountConfig {
+            wallet_path,
+            preferred_address_type,
+            network,
+            ..
+        } = ng_account_config;
+
+
         let meta: Arc<Mutex<dyn MetaStorage>> = if open_in_memory {
             Arc::new(Mutex::new(InMemoryMetaStorage::new()))
         } else {
             Arc::new(Mutex::new(RedbMetaStorage::new(
-                db_path.clone(),
+                wallet_path.clone(),
                 meta_storage_backend,
             )))
         };
 
-        let ng_descriptors = descriptors
-            .iter()
-            .map(|d| NgDescriptor {
-                external: d.external.clone(),
-                internal: d.internal.clone(),
-                address_type: get_address_type(&d.internal),
-            })
-            .collect();
 
         let mut wallets: Vec<NgWallet<P>> = vec![];
 
@@ -94,7 +86,7 @@ impl<P: WalletPersister> NgAccount<P> {
                 meta.clone(),
                 descriptor.bdk_persister,
             )
-            .unwrap();
+                .unwrap();
             wallets.push(wallet);
         }
 
@@ -106,19 +98,6 @@ impl<P: WalletPersister> NgAccount<P> {
             panic!("No wallet found with the preferred address type");
         }
 
-        let account_config = NgAccountConfig {
-            name,
-            color,
-            device_serial,
-            date_added,
-            index,
-            descriptors: ng_descriptors,
-            preferred_address_type,
-            network,
-            id,
-            date_synced,
-            wallet_path: db_path,
-        };
         meta.lock()
             .unwrap()
             .set_config(account_config.serialize().as_str())
@@ -138,8 +117,8 @@ impl<P: WalletPersister> NgAccount<P> {
         descriptors: Vec<Descriptor<P>>,
         meta_storage_backend: Option<impl StorageBackend>,
     ) -> Self
-    where
-        <P as WalletPersister>::Error: Debug,
+        where
+            <P as WalletPersister>::Error: Debug,
     {
         let meta_storage = Arc::new(Mutex::new(RedbMetaStorage::new(
             Some(db_path.clone()),
@@ -157,7 +136,7 @@ impl<P: WalletPersister> NgAccount<P> {
                 meta_storage.clone(),
                 descriptor.bdk_persister.clone(),
             )
-            .unwrap();
+                .unwrap();
             wallets.push(wallet);
         }
 
