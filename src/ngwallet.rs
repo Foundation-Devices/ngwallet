@@ -4,11 +4,12 @@ use std::str::FromStr;
 use std::sync::{Arc, Mutex};
 
 use anyhow::Result;
-use bdk_wallet::Wallet;
-use bdk_wallet::bitcoin::{Address, Amount, Network, OutPoint, Psbt, Txid};
+use bdk_wallet::bitcoin::{Address, Amount, Network, Psbt};
 use bdk_wallet::chain::ChainPosition::{Confirmed, Unconfirmed};
+use bdk_wallet::chain::local_chain::CannotConnectError;
 use bdk_wallet::{CreateWithPersistError, PersistedWallet, SignOptions};
 use bdk_wallet::{KeychainKind, WalletPersister};
+use bdk_wallet::{Update, Wallet};
 use bdk_wallet::chain::spk_client::{FullScanRequest, FullScanResponse, SyncRequest, SyncResponse};
 use log::info;
 
@@ -354,6 +355,16 @@ impl<P: WalletPersister> NgWallet<P> {
         Ok(update)
     }
 
+    #[cfg(feature = "envoy")]
+    pub fn full_scan_request(&self) -> FullScanRequest<KeychainKind> {
+        self.bdk_wallet.lock().unwrap().start_full_scan().build()
+    }
+
+    #[cfg(feature = "envoy")]
+    pub fn apply_update(&self, update: Update) -> Result<(), CannotConnectError> {
+        self.bdk_wallet.lock().unwrap().apply_update(update)
+    }
+
     pub fn utxos(&self) -> Result<Vec<Output>> {
         let wallet = self.bdk_wallet.lock().unwrap();
         let mut unspents: Vec<Output> = vec![];
@@ -471,97 +482,6 @@ impl<P: WalletPersister> NgWallet<P> {
         Ok(PsbtInfo { outputs, fee })
     }
 
-    #[cfg(feature = "envoy")]
-    pub fn broadcast(&mut self, psbt: Psbt, electrum_server: &str) -> Result<()> {
-        let client: BdkElectrumClient<Client> =
-            BdkElectrumClient::new(Client::new(electrum_server)?);
-
-        let tx = psbt.extract_tx()?;
-        client.transaction_broadcast(&tx)?;
-
-        Ok(())
-    }
-
-    /// Sets a note for a transaction without checking if the transaction existence.
-    pub fn set_note_unchecked(&mut self, tx_id: &str, note: &str) -> Result<bool> {
-        self.meta_storage
-            .lock()
-            .unwrap()
-            .set_note(tx_id, note)
-            .map_err(|e| anyhow::anyhow!("Could not set note: {:?}", e))?;
-        Ok(true)
-    }
-
-    pub fn set_tag(&mut self, output: &Output, tag: &str) -> Result<bool> {
-        self.meta_storage
-            .lock()
-            .unwrap()
-            .set_tag(output.get_id().as_str(), tag)
-            .map_err(|_| anyhow::anyhow!("Could not set tag "))
-            .unwrap();
-        self.meta_storage
-            .lock()
-            .unwrap()
-            .add_tag(tag.to_string().as_str())
-            .map_err(|_| anyhow::anyhow!("Could not set tag "))
-            .unwrap();
-        Ok(true)
-    }
-
-    pub fn get_tag(&self, output_id: &str) -> Option<String> {
-        self.meta_storage
-            .lock()
-            .unwrap()
-            .get_tag(output_id)
-            .map_err(|_| anyhow::anyhow!("Could not set tag "))
-            .unwrap()
-    }
-
-    pub fn list_tags(&self) -> Result<Vec<String>> {
-        self.meta_storage.lock().unwrap().list_tags()
-    }
-    pub fn remove_tag(&mut self, target_tag: &str, rename_to: Option<&str>) -> Result<()> {
-        self.meta_storage
-            .lock()
-            .unwrap()
-            .remove_tag(target_tag)
-            .map_err(|e| anyhow::anyhow!("Error {}", e))
-            .unwrap();
-        self.utxos()
-            .map_err(|e| anyhow::anyhow!("Error {}", e))
-            .unwrap()
-            .iter()
-            .for_each(|output: &Output| match output.clone().tag {
-                None => {}
-                Some(existing_tag) => {
-                    let new_tag = rename_to.unwrap_or("");
-                    if existing_tag.eq(target_tag) {
-                        self.set_tag(output, new_tag)
-                            .map_err(|e| anyhow::anyhow!("Error {}", e))
-                            .unwrap();
-                    }
-                }
-            });
-
-        Ok(())
-    }
-    pub fn set_do_not_spend(&mut self, output: &Output, state: bool) -> Result<bool> {
-        let out_point = OutPoint::new(Txid::from_str(&output.tx_id).unwrap(), output.vout);
-        self.bdk_wallet
-            .lock()
-            .unwrap()
-            .get_utxo(out_point)
-            .map(|_| {
-                self.meta_storage
-                    .lock()
-                    .unwrap()
-                    .set_do_not_spend(output.get_id().as_str(), state)
-                    .map_err(|_| anyhow::anyhow!("Could not set do not spend"))
-                    .unwrap();
-                Ok(true)
-            })
-            .unwrap_or(Ok(false))
-    }
     //Reveal addresses up to and including the target index and return an iterator of newly revealed addresses.
     pub fn reveal_addresses_up_to(&mut self, keychain: KeychainKind, index: u32) -> Result<()> {
         let _ = self
