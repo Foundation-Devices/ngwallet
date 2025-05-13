@@ -51,10 +51,17 @@ mod tests {
             None,
         );
 
+        // Let's imagine we are applying updates remotely
+        
+        let mut updates = vec![];
         for request in account.full_scan_request().into_iter() {
             let update = NgWallet::<Connection>::scan(request, ELECTRUM_SERVER, None).unwrap();
+            updates.push(Update::from(update.clone()));
             account.apply(Update::from(update)).unwrap();
         }
+        
+        let payload = NgAccount::<Connection>::serialize_updates(None, updates).unwrap();
+        account.update(payload).unwrap();
 
         let address = account.next_address().unwrap();
         address.iter().for_each(|address| {

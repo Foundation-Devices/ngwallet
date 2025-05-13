@@ -9,6 +9,7 @@ use bdk_wallet::bitcoin::{Address, Amount, Network, OutPoint, Psbt, Txid};
 use bdk_wallet::chain::ChainPosition::{Confirmed, Unconfirmed};
 use bdk_wallet::{CreateWithPersistError, PersistedWallet, SignOptions};
 use bdk_wallet::{KeychainKind, WalletPersister};
+use bdk_wallet::chain::spk_client::{FullScanRequest, FullScanResponse, SyncRequest, SyncResponse};
 use log::info;
 
 use crate::config::AddressType;
@@ -16,10 +17,6 @@ use crate::config::AddressType;
 use {
     crate::{BATCH_SIZE, STOP_GAP},
     bdk_electrum::BdkElectrumClient,
-    bdk_electrum::bdk_core::spk_client::FullScanRequest,
-    bdk_electrum::bdk_core::spk_client::FullScanResponse,
-    bdk_electrum::bdk_core::spk_client::SyncRequest,
-    bdk_electrum::bdk_core::spk_client::SyncResponse,
     bdk_electrum::electrum_client::Client,
     bdk_electrum::electrum_client::{Config, Socks5Config},
 };
