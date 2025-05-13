@@ -6,10 +6,12 @@ mod spend_tests {
     use bdk_wallet::bitcoin::Network;
     use ngwallet::send::{DraftTransaction, TransactionParams};
     use std::sync::{Arc, Mutex};
+    use redb::backends::FileBackend;
     use {
         crate::*, bdk_wallet::rusqlite::Connection, ngwallet::account::Descriptor,
-        ngwallet::account::NgAccount, ngwallet::config::AddressType, redb::backends::FileBackend,
+        ngwallet::account::NgAccount, ngwallet::config::AddressType,
     };
+    use ngwallet::config::NgAccountBuilder;
 
     #[test]
     fn test_max_fee_calc() {
@@ -120,23 +122,22 @@ mod spend_tests {
             },
         ];
 
-        let account: NgAccount<Connection> = NgAccount::new_from_descriptors(
-            "Envoy".to_string(),
-            "red".to_string(),
-            None,
-            None,
-            Network::Signet,
-            AddressType::P2tr,
-            descriptors,
-            0,
-            None,
-            //uses in memory meta db
-            None::<FileBackend>,
-            "".to_string(),
-            None,
-            true,
-        );
-        account
+
+        NgAccountBuilder::default()
+            .name("Passport Prime".to_string())
+            .color("red".to_string())
+            .seed_has_passphrase(false)
+            .device_serial(None)
+            .date_added(None)
+            .preferred_address_type(AddressType::P2tr)
+            .index(0)
+            .descriptors(descriptors)
+            .date_synced(None)
+            .db_path(None)
+            .network(Network::Signet)
+            .id("1234567890".to_string())
+            .open_in_memory()
+            .build(None::<FileBackend>)
     }
 }
 

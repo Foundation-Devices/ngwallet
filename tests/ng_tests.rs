@@ -9,16 +9,17 @@ const ELECTRUM_SERVER: &str = "ssl://mempool.space:60602";
 // TODO: make this unique to the descriptor
 // #[cfg(test)]
 mod tests {
-    use ngwallet::bip39;
     use std::sync::{Arc, Mutex};
+    use redb::backends::FileBackend;
 
     #[cfg(feature = "envoy")]
     use {
-        crate::*, bdk_wallet::Update, bdk_wallet::bitcoin::Network,
-        bdk_wallet::rusqlite::Connection, ngwallet::account::Descriptor,
-        ngwallet::account::NgAccount, ngwallet::config::AddressType, ngwallet::ngwallet::NgWallet,
-        redb::backends::FileBackend,
+        bdk_wallet::bitcoin::Network, bdk_wallet::rusqlite::Connection, bdk_wallet::Update,
+        crate::*, ngwallet::account::Descriptor
+        , ngwallet::config::AddressType, ngwallet::ngwallet::NgWallet,
     };
+    use ngwallet::bip39;
+    use ngwallet::config::NgAccountBuilder;
 
     #[test]
     #[cfg(feature = "envoy")]
@@ -36,21 +37,22 @@ mod tests {
             },
         ];
 
-        let mut account: NgAccount<Connection> = NgAccount::new_from_descriptors(
-            "Passport Prime".to_string(),
-            "red".to_string(),
-            None,
-            None,
-            Network::Signet,
-            AddressType::P2wpkh,
-            descriptors,
-            0,
-            None,
-            None::<FileBackend>,
-            "".to_string(),
-            None,
-            true,
-        );
+        let mut account = NgAccountBuilder::default()
+            .name("Passport Prime".to_string())
+            .color("red".to_string())
+            .seed_has_passphrase(false)
+            .device_serial(None)
+            .date_added(None)
+            .preferred_address_type(AddressType::P2wpkh)
+            .index(0)
+            .descriptors(descriptors)
+            .date_synced(None)
+            .db_path(None)
+            .network(Network::Signet)
+            .id("1234567890".to_string())
+            .open_in_memory()
+            .build(None::<FileBackend>);
+
 
         for wallet in account.wallets.iter() {
             let (address_type, request) = account.full_scan_request(wallet.address_type).unwrap();
