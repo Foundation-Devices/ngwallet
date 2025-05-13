@@ -4,14 +4,14 @@ mod ng_test_utils;
 #[cfg(feature = "envoy")]
 mod spend_tests {
     use bdk_wallet::bitcoin::Network;
+    use ngwallet::config::NgAccountBuilder;
     use ngwallet::send::{DraftTransaction, TransactionParams};
-    use std::sync::{Arc, Mutex};
     use redb::backends::FileBackend;
+    use std::sync::{Arc, Mutex};
     use {
         crate::*, bdk_wallet::rusqlite::Connection, ngwallet::account::Descriptor,
         ngwallet::account::NgAccount, ngwallet::config::AddressType,
     };
-    use ngwallet::config::NgAccountBuilder;
 
     #[test]
     fn test_max_fee_calc() {
@@ -121,7 +121,6 @@ mod spend_tests {
                 bdk_persister: Arc::new(Mutex::new(Connection::open_in_memory().unwrap())),
             },
         ];
-
 
         NgAccountBuilder::default()
             .name("Passport Prime".to_string())

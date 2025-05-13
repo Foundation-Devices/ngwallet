@@ -7,10 +7,10 @@ use anyhow::Result;
 use bdk_wallet::bitcoin::{Address, Amount, Network, Psbt};
 use bdk_wallet::chain::ChainPosition::{Confirmed, Unconfirmed};
 use bdk_wallet::chain::local_chain::CannotConnectError;
+use bdk_wallet::chain::spk_client::{FullScanRequest, FullScanResponse, SyncRequest, SyncResponse};
 use bdk_wallet::{CreateWithPersistError, PersistedWallet, SignOptions};
 use bdk_wallet::{KeychainKind, WalletPersister};
 use bdk_wallet::{Update, Wallet};
-use bdk_wallet::chain::spk_client::{FullScanRequest, FullScanResponse, SyncRequest, SyncResponse};
 use log::info;
 
 use crate::config::AddressType;

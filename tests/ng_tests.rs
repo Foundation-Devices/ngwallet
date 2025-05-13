@@ -9,17 +9,18 @@ const ELECTRUM_SERVER: &str = "ssl://mempool.space:60602";
 // TODO: make this unique to the descriptor
 // #[cfg(test)]
 mod tests {
-    use std::sync::{Arc, Mutex};
     use redb::backends::FileBackend;
+    use std::sync::{Arc, Mutex};
 
-    #[cfg(feature = "envoy")]
-    use {
-        bdk_wallet::bitcoin::Network, bdk_wallet::rusqlite::Connection, bdk_wallet::Update,
-        crate::*, ngwallet::account::Descriptor
-        , ngwallet::config::AddressType, ngwallet::ngwallet::NgWallet,
-    };
+    use ngwallet::account::NgAccount;
     use ngwallet::bip39;
     use ngwallet::config::NgAccountBuilder;
+    #[cfg(feature = "envoy")]
+    use {
+        crate::*, bdk_wallet::Update, bdk_wallet::bitcoin::Network,
+        bdk_wallet::rusqlite::Connection, ngwallet::account::Descriptor,
+        ngwallet::config::AddressType, ngwallet::ngwallet::NgWallet,
+    };
 
     #[test]
     #[cfg(feature = "envoy")]
@@ -53,14 +54,13 @@ mod tests {
             .open_in_memory()
             .build(None::<FileBackend>);
 
-
         // Let's imagine we are applying updates remotely
         let mut updates = vec![];
 
         for wallet in account.wallets.iter() {
             let (address_type, request) = account.full_scan_request(wallet.address_type).unwrap();
             let update = NgWallet::<Connection>::scan(request, ELECTRUM_SERVER, None).unwrap();
-            account.apply((address_type, Update::from(update))).unwrap();
+            updates.push((address_type, Update::from(update)));
         }
 
         let payload = NgAccount::<Connection>::serialize_updates(None, updates).unwrap();
