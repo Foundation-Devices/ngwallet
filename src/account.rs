@@ -8,7 +8,7 @@ use crate::store::{InMemoryMetaStorage, MetaStorage};
 use crate::transaction::{BitcoinTransaction, Output};
 use crate::utils::get_address_type;
 use anyhow::{Error, anyhow};
-use bdk_wallet::bitcoin::{Transaction};
+use bdk_wallet::bitcoin::Transaction;
 use bdk_wallet::chain::spk_client::FullScanRequest;
 use bdk_wallet::chain::spk_client::SyncRequest;
 use bdk_wallet::{AddressInfo, Balance, KeychainKind, Update, WalletPersister};
@@ -30,6 +30,12 @@ pub struct Descriptor<P: WalletPersister> {
     pub bdk_persister: Arc<Mutex<P>>,
 }
 
+#[derive(Serialize, Deserialize)]
+pub struct RemoteUpdate {
+    pub metadata: Option<NgAccountConfig>,
+    pub wallet_update: Vec<(AddressType, Update)>,
+}
+
 pub fn get_persister_file_name(internal: &str, external: Option<&str>) -> String {
     fn get_last_eight_chars(s: &str) -> Option<String> {
         if s.chars().count() >= 6 {
@@ -42,7 +48,6 @@ pub fn get_persister_file_name(internal: &str, external: Option<&str>) -> String
     let external_id = get_last_eight_chars(external.unwrap_or("")).unwrap_or("".to_string());
     format!("{}_{}.sqlite", internal_id, external_id)
 }
-
 
 impl<P: WalletPersister> NgAccount<P> {
     pub(crate) fn new_from_descriptors(
@@ -59,7 +64,6 @@ impl<P: WalletPersister> NgAccount<P> {
             ..
         } = ng_account_config;
 
-
         let meta: Arc<Mutex<dyn MetaStorage>> = if open_in_memory {
             Arc::new(Mutex::new(InMemoryMetaStorage::new()))
         } else {
@@ -68,7 +72,6 @@ impl<P: WalletPersister> NgAccount<P> {
                 meta_storage_backend,
             )))
         };
-
 
         let mut wallets: Vec<NgWallet<P>> = vec![];
 
@@ -80,7 +83,7 @@ impl<P: WalletPersister> NgAccount<P> {
                 meta.clone(),
                 descriptor.bdk_persister,
             )
-                .unwrap();
+            .unwrap();
             wallets.push(wallet);
         }
 
@@ -111,8 +114,8 @@ impl<P: WalletPersister> NgAccount<P> {
         descriptors: Vec<Descriptor<P>>,
         meta_storage_backend: Option<impl StorageBackend>,
     ) -> Self
-        where
-            <P as WalletPersister>::Error: Debug,
+    where
+        <P as WalletPersister>::Error: Debug,
     {
         let meta_storage = Arc::new(Mutex::new(RedbMetaStorage::new(
             Some(db_path.clone()),
@@ -130,7 +133,7 @@ impl<P: WalletPersister> NgAccount<P> {
                 meta_storage.clone(),
                 descriptor.bdk_persister.clone(),
             )
-                .unwrap();
+            .unwrap();
             wallets.push(wallet);
         }
 
@@ -277,7 +280,7 @@ impl<P: WalletPersister> NgAccount<P> {
         {
             None => Err(anyhow!("given address type doesnt exist in account")),
             Some(ng_wallet) => {
-                ng_wallet.apply_update(update.1).unwrap();
+                ng_wallet.apply_update(update.1)?;
                 Ok(())
             }
         }
@@ -424,5 +427,35 @@ impl<P: WalletPersister> NgAccount<P> {
                 None
             }
         }
+    }
+
+    pub fn serialize_updates(
+        metadata: Option<NgAccountConfig>,
+        wallet_updates: Vec<(AddressType, Update)>,
+    ) -> anyhow::Result<Vec<u8>> {
+        let update = RemoteUpdate {
+            metadata,
+            wallet_update: wallet_updates,
+        };
+
+        minicbor_serde::to_vec(&update).map_err(|_| anyhow::anyhow!("Could not serialize updates"))
+    }
+
+    pub fn update(&mut self, payload: Vec<u8>) -> anyhow::Result<()> {
+        let update: RemoteUpdate = minicbor_serde::from_slice(&payload)?;
+
+        for wallet_update in update.wallet_update {
+            self.apply(wallet_update)?
+        }
+
+        match update.metadata {
+            None => {}
+            Some(m) => {
+                self.config = m;
+            }
+        }
+
+        self.persist()?;
+        Ok(())
     }
 }

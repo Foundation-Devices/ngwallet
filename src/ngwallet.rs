@@ -7,6 +7,7 @@ use anyhow::Result;
 use bdk_wallet::bitcoin::{Address, Amount, Network, Psbt};
 use bdk_wallet::chain::ChainPosition::{Confirmed, Unconfirmed};
 use bdk_wallet::chain::local_chain::CannotConnectError;
+use bdk_wallet::chain::spk_client::{FullScanRequest, FullScanResponse, SyncRequest, SyncResponse};
 use bdk_wallet::{CreateWithPersistError, PersistedWallet, SignOptions};
 use bdk_wallet::{KeychainKind, WalletPersister};
 use bdk_wallet::{Update, Wallet};
@@ -17,10 +18,6 @@ use crate::config::AddressType;
 use {
     crate::{BATCH_SIZE, STOP_GAP},
     bdk_electrum::BdkElectrumClient,
-    bdk_electrum::bdk_core::spk_client::FullScanRequest,
-    bdk_electrum::bdk_core::spk_client::FullScanResponse,
-    bdk_electrum::bdk_core::spk_client::SyncRequest,
-    bdk_electrum::bdk_core::spk_client::SyncResponse,
     bdk_electrum::electrum_client::Client,
     bdk_electrum::electrum_client::{Config, Socks5Config},
 };
@@ -363,7 +360,6 @@ impl<P: WalletPersister> NgWallet<P> {
         self.bdk_wallet.lock().unwrap().start_full_scan().build()
     }
 
-    #[cfg(feature = "envoy")]
     pub fn apply_update(&self, update: Update) -> Result<(), CannotConnectError> {
         self.bdk_wallet.lock().unwrap().apply_update(update)
     }

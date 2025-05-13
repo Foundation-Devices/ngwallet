@@ -1,9 +1,9 @@
-use bdk_wallet::bitcoin::Network;
-use bdk_wallet::WalletPersister;
-use redb::StorageBackend;
-use serde::{Deserialize, Serialize};
 use crate::account::{Descriptor, NgAccount};
 use crate::utils::get_address_type;
+use bdk_wallet::WalletPersister;
+use bdk_wallet::bitcoin::Network;
+use redb::StorageBackend;
+use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 #[non_exhaustive]
@@ -52,7 +52,6 @@ impl NgAccountConfig {
         serde_json::from_str(data).unwrap()
     }
 }
-
 
 impl<P: WalletPersister> Default for NgAccountBuilder<P> {
     fn default() -> Self {
@@ -174,7 +173,9 @@ impl<P: WalletPersister> NgAccountBuilder<P> {
             device_serial: self.device_serial,
             date_added: self.date_added,
             network: self.network.expect("Network is required"),
-            preferred_address_type: self.preferred_address_type.expect("Preferred address type is required"),
+            preferred_address_type: self
+                .preferred_address_type
+                .expect("Preferred address type is required"),
             descriptors: ng_descriptors,
             index: self.index.expect("Index is required"),
             wallet_path: self.db_path,
