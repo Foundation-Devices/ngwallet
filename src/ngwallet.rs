@@ -360,7 +360,6 @@ impl<P: WalletPersister> NgWallet<P> {
         self.bdk_wallet.lock().unwrap().start_full_scan().build()
     }
 
-    #[cfg(feature = "envoy")]
     pub fn apply_update(&self, update: Update) -> Result<(), CannotConnectError> {
         self.bdk_wallet.lock().unwrap().apply_update(update)
     }
