@@ -85,6 +85,7 @@ checksum = "72b3254f16251a8381aa12e40e3c4d2f0199f8c6508fbecb9d91f575e0fbb8c6"
 [[package]]
 name = "bdk_chain"
 version = "0.22.0"
+source = "git+https://github.com/Foundation-Devices/bdk-1?rev=0a532f6bcb042edb192a2db2673e331e7189e00e#0a532f6bcb042edb192a2db2673e331e7189e00e"
 dependencies = [
  "bdk_core",
  "bitcoin",
@@ -96,6 +97,7 @@ dependencies = [
 [[package]]
 name = "bdk_core"
 version = "0.5.0"
+source = "git+https://github.com/Foundation-Devices/bdk-1?rev=0a532f6bcb042edb192a2db2673e331e7189e00e#0a532f6bcb042edb192a2db2673e331e7189e00e"
 dependencies = [
  "bitcoin",
  "hashbrown",
@@ -105,6 +107,7 @@ dependencies = [
 [[package]]
 name = "bdk_electrum"
 version = "0.22.0"
+source = "git+https://github.com/Foundation-Devices/bdk-1?rev=0a532f6bcb042edb192a2db2673e331e7189e00e#0a532f6bcb042edb192a2db2673e331e7189e00e"
 dependencies = [
  "bdk_core",
  "electrum-client",
@@ -113,6 +116,7 @@ dependencies = [
 [[package]]
 name = "bdk_wallet"
 version = "2.0.0-alpha.0"
+source = "git+https://github.com/Foundation-Devices/bdk_wallet?rev=19760ac3cc7fb12b21a9e6143220a870747ffdc0#19760ac3cc7fb12b21a9e6143220a870747ffdc0"
 dependencies = [
  "bdk_chain",
  "bip39",
