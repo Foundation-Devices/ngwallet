@@ -1,17 +1,17 @@
-mod ng_test_utils;
+mod utils;
 
 #[cfg(test)]
 #[cfg(feature = "envoy")]
 mod spend_tests {
-    use crate::*;
     use ngwallet::send::{DraftTransaction, TransactionParams};
+    use crate::utils::tests_util;
 
-    use crate::ng_test_utils::get_ng_hot_wallet;
+    use crate::utils::tests_util::get_ng_hot_wallet;
 
     #[test]
     fn test_max_fee_calc() {
         let mut account = get_ng_hot_wallet();
-        ng_test_utils::add_funds_to_wallet(&mut account);
+        tests_util::add_funds_to_wallet(&mut account);
         let params = TransactionParams {
             address: "tb1pspfcrvz538vvj9f9gfkd85nu5ty98zw9y5e302kha6zurv6vg07s8z7a8w".to_string(),
             amount: 2003,
@@ -30,7 +30,7 @@ mod spend_tests {
     #[test]
     fn test_compose_psbt() {
         let mut account = get_ng_hot_wallet();
-        ng_test_utils::add_funds_to_wallet(&mut account);
+        tests_util::add_funds_to_wallet(&mut account);
         let params = TransactionParams {
             address: "tb1pspfcrvz538vvj9f9gfkd85nu5ty98zw9y5e302kha6zurv6vg07s8z7a8w".to_string(),
             amount: 4000,
@@ -45,9 +45,10 @@ mod spend_tests {
     }
 
     #[test]
+    #[cfg(feature = "envoy")]
     fn test_check_compose_increment_index() {
         let mut account = get_ng_hot_wallet();
-        ng_test_utils::add_funds_to_wallet(&mut account);
+        tests_util::add_funds_to_wallet(&mut account);
         let initial_indexes = account.get_derivation_index();
         let params = TransactionParams {
             address: "tb1pspfcrvz538vvj9f9gfkd85nu5ty98zw9y5e302kha6zurv6vg07s8z7a8w".to_string(),
@@ -69,9 +70,10 @@ mod spend_tests {
 
     //
     #[test]
+    #[cfg(feature = "envoy")]
     fn test_rbf() {
         let mut account = get_ng_hot_wallet();
-        ng_test_utils::add_funds_wallet_with_unconfirmed(&mut account);
+        tests_util::add_funds_wallet_with_unconfirmed(&mut account);
         let transactions = account.transactions().unwrap();
         let unconfirmed_tx = transactions
             .iter()

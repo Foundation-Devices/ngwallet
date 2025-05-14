@@ -6,10 +6,10 @@ const INTERNAL_DESCRIPTOR_2: &str = "tr(tprv8ZgxMBicQKsPeLx4U7UmbcYU5VhS4BRxv86o
 #[cfg(feature = "envoy")]
 const ELECTRUM_SERVER: &str = "ssl://mempool.space:60602";
 
-mod ng_test_utils;
+#[cfg(feature = "envoy")]
+mod utils;
 
-// TODO: make this unique to the descriptor
-// #[cfg(test)]
+#[cfg(test)]
 mod tests {
     use redb::backends::FileBackend;
     use std::sync::{Arc, Mutex};
@@ -23,7 +23,7 @@ mod tests {
         bdk_wallet::rusqlite::Connection, ngwallet::account::Descriptor,
         ngwallet::config::AddressType, ngwallet::ngwallet::NgWallet,
     };
-    use crate::ng_test_utils::{get_ng_hot_wallet, get_ng_watch_only_account};
+    use crate::utils::tests_util;
 
     #[test]
     #[cfg(feature = "envoy")]
@@ -173,7 +173,7 @@ mod tests {
 
     #[test]
     fn check_hot_backup() {
-        let account = get_ng_hot_wallet();
+        let account = tests_util::get_ng_hot_wallet();
         let config = account.config.clone();
         assert!(account.is_hot());
         let backup = account.get_backup_json().unwrap();
@@ -187,7 +187,7 @@ mod tests {
 
     #[test]
     fn check_watch_only_backup() {
-        let account = get_ng_watch_only_account();
+        let account = tests_util::get_ng_watch_only_account();
         assert!(!account.is_hot());
         let config = account.config.clone();
         let backup = account.get_backup_json().unwrap();
@@ -198,6 +198,22 @@ mod tests {
         assert_eq!(config_from_backup.descriptors, config.descriptors);
         assert_eq!(config_from_backup.wallet_path, None);
     }
+
+
+    #[test]
+    fn change_address_type() {
+        let mut account = tests_util::get_ng_hot_wallet();
+        let wallet = account.get_coordinator_wallet();
+        assert_eq!(account.config.preferred_address_type, AddressType::P2tr);
+        assert_eq!(wallet.address_type, AddressType::P2tr);
+
+        account.set_preferred_address_type(AddressType::P2wpkh).unwrap();
+        let wallet = account.get_coordinator_wallet();
+        assert_eq!(account.config.preferred_address_type, AddressType::P2wpkh);
+        assert_eq!(wallet.address_type, AddressType::P2wpkh);
+    }
+
+
 
     #[test]
     fn autocomplete_seedword() {

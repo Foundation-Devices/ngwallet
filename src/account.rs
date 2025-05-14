@@ -149,6 +149,11 @@ impl<P: WalletPersister> NgAccount<P> {
         self.persist()
     }
 
+    pub fn set_preferred_address_type(&mut self, address_type: AddressType) -> Result<(), Error> {
+        self.config.preferred_address_type = address_type;
+        self.persist()
+    }
+
     pub fn persist(&mut self) -> Result<(), Error> {
         for wallet in &mut self.wallets {
             wallet.persist()?;
