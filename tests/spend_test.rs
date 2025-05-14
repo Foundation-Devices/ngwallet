@@ -1,22 +1,17 @@
-mod ng_test_utils;
+mod utils;
 
 #[cfg(test)]
 #[cfg(feature = "envoy")]
 mod spend_tests {
-    use bdk_wallet::bitcoin::Network;
-    use ngwallet::config::NgAccountBuilder;
+    use crate::utils::tests_util;
     use ngwallet::send::{DraftTransaction, TransactionParams};
-    use redb::backends::FileBackend;
-    use std::sync::{Arc, Mutex};
-    use {
-        crate::*, bdk_wallet::rusqlite::Connection, ngwallet::account::Descriptor,
-        ngwallet::account::NgAccount, ngwallet::config::AddressType,
-    };
+
+    use crate::utils::tests_util::get_ng_hot_wallet;
 
     #[test]
     fn test_max_fee_calc() {
-        let mut account = get_ng_account();
-        ng_test_utils::add_funds_to_wallet(&mut account);
+        let mut account = get_ng_hot_wallet();
+        tests_util::add_funds_to_wallet(&mut account);
         let params = TransactionParams {
             address: "tb1pspfcrvz538vvj9f9gfkd85nu5ty98zw9y5e302kha6zurv6vg07s8z7a8w".to_string(),
             amount: 2003,
@@ -34,8 +29,8 @@ mod spend_tests {
 
     #[test]
     fn test_compose_psbt() {
-        let mut account = get_ng_account();
-        ng_test_utils::add_funds_to_wallet(&mut account);
+        let mut account = get_ng_hot_wallet();
+        tests_util::add_funds_to_wallet(&mut account);
         let params = TransactionParams {
             address: "tb1pspfcrvz538vvj9f9gfkd85nu5ty98zw9y5e302kha6zurv6vg07s8z7a8w".to_string(),
             amount: 4000,
@@ -50,9 +45,10 @@ mod spend_tests {
     }
 
     #[test]
+    #[cfg(feature = "envoy")]
     fn test_check_compose_increment_index() {
-        let mut account = get_ng_account();
-        ng_test_utils::add_funds_to_wallet(&mut account);
+        let mut account = get_ng_hot_wallet();
+        tests_util::add_funds_to_wallet(&mut account);
         let initial_indexes = account.get_derivation_index();
         let params = TransactionParams {
             address: "tb1pspfcrvz538vvj9f9gfkd85nu5ty98zw9y5e302kha6zurv6vg07s8z7a8w".to_string(),
@@ -74,9 +70,10 @@ mod spend_tests {
 
     //
     #[test]
+    #[cfg(feature = "envoy")]
     fn test_rbf() {
-        let mut account = get_ng_account();
-        ng_test_utils::add_funds_wallet_with_unconfirmed(&mut account);
+        let mut account = get_ng_hot_wallet();
+        tests_util::add_funds_wallet_with_unconfirmed(&mut account);
         let transactions = account.transactions().unwrap();
         let unconfirmed_tx = transactions
             .iter()
@@ -99,44 +96,6 @@ mod spend_tests {
         assert_eq!(transaction.fee_rate, params.fee_rate);
         assert_eq!(transaction.note, params.note);
         assert_eq!(transaction.get_change_tag(), params.tag);
-    }
-
-    //creates a new account with the descriptors,in memory db's
-    fn get_ng_account() -> NgAccount<Connection> {
-        const CHANGE_DESCRIPTOR: &str = "sh(wpkh(tprv8ZgxMBicQKsPeLx4U7UmbcYU5VhS4BRxv86o1gNqNqxEEJL47F9ZZhvBi1EVbKPmmFYnTEZ6uArarK6zZyrZf7mSyWZRAuNKQp4dHfxBdMM/49'/1'/0'/1/*))#ehhlgts8";
-        const DESCRIPTOR: &str = "tr(tprv8ZgxMBicQKsPeLx4U7UmbcYU5VhS4BRxv86o1gNqNqxEEJL47F9ZZhvBi1EVbKPmmFYnTEZ6uArarK6zZyrZf7mSyWZRAuNKQp4dHfxBdMM/86'/1'/0'/0/*)#uw0tj973";
-
-        const CHANGE_DESCRIPTOR_2: &str = "sh(wpkh(tprv8ZgxMBicQKsPeLx4U7UmbcYU5VhS4BRxv86o1gNqNqxEEJL47F9ZZhvBi1EVbKPmmFYnTEZ6uArarK6zZyrZf7mSyWZRAuNKQp4dHfxBdMM/49'/1'/0'/1/*))#ehhlgts8";
-        const DESCRIPTOR_2: &str = "wpkh(tprv8ZgxMBicQKsPeLx4U7UmbcYU5VhS4BRxv86o1gNqNqxEEJL47F9ZZhvBi1EVbKPmmFYnTEZ6uArarK6zZyrZf7mSyWZRAuNKQp4dHfxBdMM/84'/1'/0'/0/*)#gksznsj0";
-
-        let descriptors = vec![
-            Descriptor {
-                internal: CHANGE_DESCRIPTOR.to_string(),
-                external: Some(DESCRIPTOR.to_string()),
-                bdk_persister: Arc::new(Mutex::new(Connection::open_in_memory().unwrap())),
-            },
-            Descriptor {
-                internal: CHANGE_DESCRIPTOR_2.to_string(),
-                external: Some(DESCRIPTOR_2.to_string()),
-                bdk_persister: Arc::new(Mutex::new(Connection::open_in_memory().unwrap())),
-            },
-        ];
-
-        NgAccountBuilder::default()
-            .name("Passport Prime".to_string())
-            .color("red".to_string())
-            .seed_has_passphrase(false)
-            .device_serial(None)
-            .date_added(None)
-            .preferred_address_type(AddressType::P2tr)
-            .index(0)
-            .descriptors(descriptors)
-            .date_synced(None)
-            .db_path(None)
-            .network(Network::Signet)
-            .id("1234567890".to_string())
-            .open_in_memory()
-            .build(None::<FileBackend>)
     }
 }
 

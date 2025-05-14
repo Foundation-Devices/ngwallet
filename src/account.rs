@@ -149,6 +149,11 @@ impl<P: WalletPersister> NgAccount<P> {
         self.persist()
     }
 
+    pub fn set_preferred_address_type(&mut self, address_type: AddressType) -> Result<(), Error> {
+        self.config.preferred_address_type = address_type;
+        self.persist()
+    }
+
     pub fn persist(&mut self) -> Result<(), Error> {
         for wallet in &mut self.wallets {
             wallet.persist()?;
@@ -161,8 +166,19 @@ impl<P: WalletPersister> NgAccount<P> {
             .map_err(|e| anyhow::anyhow!(e))
     }
 
-    pub fn get_backup(&self) -> Vec<u8> {
-        vec![]
+    pub fn get_backup_json(&self) -> Result<String, Error> {
+        let config = {
+            let mut config = self.config.clone();
+            if self.is_hot() {
+                config.descriptors = vec![];
+            }
+            config.wallet_path = None;
+            config
+        };
+        match serde_json::to_string(&config) {
+            Ok(config) => Ok(config),
+            Err(_) => Err(anyhow::anyhow!("Error serializing config")),
+        }
     }
 
     pub fn next_address(&mut self) -> anyhow::Result<Vec<(AddressInfo, AddressType)>> {

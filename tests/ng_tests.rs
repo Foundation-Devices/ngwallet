@@ -6,15 +6,18 @@ const INTERNAL_DESCRIPTOR_2: &str = "tr(tprv8ZgxMBicQKsPeLx4U7UmbcYU5VhS4BRxv86o
 #[cfg(feature = "envoy")]
 const ELECTRUM_SERVER: &str = "ssl://mempool.space:60602";
 
-// TODO: make this unique to the descriptor
-// #[cfg(test)]
+#[cfg(feature = "envoy")]
+mod utils;
+
+#[cfg(test)]
 mod tests {
     use redb::backends::FileBackend;
     use std::sync::{Arc, Mutex};
 
+    use crate::utils::tests_util;
     use ngwallet::account::NgAccount;
     use ngwallet::bip39;
-    use ngwallet::config::NgAccountBuilder;
+    use ngwallet::config::{NgAccountBuilder, NgAccountConfig};
     #[cfg(feature = "envoy")]
     use {
         crate::*, bdk_wallet::Update, bdk_wallet::bitcoin::Network,
@@ -167,6 +170,49 @@ mod tests {
     //     assert!(!utxos.is_empty());
     //     drop(account)
     // }
+
+    #[test]
+    fn check_hot_backup() {
+        let account = tests_util::get_ng_hot_wallet();
+        let config = account.config.clone();
+        assert!(account.is_hot());
+        let backup = account.get_backup_json().unwrap();
+        let config_from_backup = serde_json::from_str::<NgAccountConfig>(&backup).unwrap();
+        assert_eq!(config_from_backup.name, config.name);
+        assert_eq!(config_from_backup.network, config.network);
+        //hot wallet doesnt export descriptors, since they contain xprv
+        assert_eq!(config_from_backup.descriptors.len(), 0);
+        assert_eq!(config_from_backup.wallet_path, None);
+    }
+
+    #[test]
+    fn check_watch_only_backup() {
+        let account = tests_util::get_ng_watch_only_account();
+        assert!(!account.is_hot());
+        let config = account.config.clone();
+        let backup = account.get_backup_json().unwrap();
+        let config_from_backup = serde_json::from_str::<NgAccountConfig>(&backup).unwrap();
+        assert_eq!(config_from_backup.name, config.name);
+        assert_eq!(config_from_backup.network, config.network);
+        //watch only must export public descriptors
+        assert_eq!(config_from_backup.descriptors, config.descriptors);
+        assert_eq!(config_from_backup.wallet_path, None);
+    }
+
+    #[test]
+    fn change_address_type() {
+        let mut account = tests_util::get_ng_hot_wallet();
+        let wallet = account.get_coordinator_wallet();
+        assert_eq!(account.config.preferred_address_type, AddressType::P2tr);
+        assert_eq!(wallet.address_type, AddressType::P2tr);
+
+        account
+            .set_preferred_address_type(AddressType::P2wpkh)
+            .unwrap();
+        let wallet = account.get_coordinator_wallet();
+        assert_eq!(account.config.preferred_address_type, AddressType::P2wpkh);
+        assert_eq!(wallet.address_type, AddressType::P2wpkh);
+    }
 
     #[test]
     fn autocomplete_seedword() {

@@ -18,9 +18,11 @@ pub enum AddressType {
     P2wsh,
     /// Pay to taproot.
     P2tr,
+
+    P2ShWpkh,
 }
 
-#[derive(Serialize, Deserialize, Debug, Clone)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
 pub struct NgDescriptor {
     pub internal: String,
     pub external: Option<String>,
@@ -179,7 +181,7 @@ impl<P: WalletPersister> NgAccountBuilder<P> {
             descriptors: ng_descriptors,
             index: self.index.expect("Index is required"),
             wallet_path: self.db_path,
-            id: self.id.expect("ID is required"),
+            id: self.id.expect("id is required"),
             date_synced: self.date_synced,
             seed_has_passphrase: self.seed_has_passphrase.unwrap_or(false),
         };
