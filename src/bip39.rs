@@ -5,7 +5,7 @@ use bdk_wallet::bitcoin::secp256k1::Secp256k1;
 use bdk_wallet::keys::bip39::{Language, Mnemonic};
 use bdk_wallet::keys::{DerivableKey, DescriptorKey};
 use bdk_wallet::miniscript::descriptor::DescriptorType;
-use bdk_wallet::template::{Bip44, Bip49, Bip84, Bip86, DescriptorTemplate};
+use bdk_wallet::template::{Bip44, Bip48Member, Bip49, Bip84, Bip86, DescriptorTemplate};
 use std::cmp::min;
 use std::str::FromStr;
 
@@ -63,13 +63,6 @@ pub fn get_descriptors(
 
     let xprv: Xpriv = Xpriv::new_master(network, &seed)?;
 
-    let secp = Secp256k1::new();
-    let bip48_2_descriptor: DescriptorKey<bdk_wallet::descriptor::Segwitv0> =
-        xprv.into_descriptor_key(None, DerivationPath::from_str("m/48'/0'/0'/2'")?)?;
-    let (bip48_2_xpub, _, _) = bip48_2_descriptor.extract(&secp)?;
-
-    // TODO: get this right
-    println!("bip48_2 = {bip48_2_xpub}");
     let mut descriptors = vec![];
 
     let descriptor_templates = vec![
@@ -88,6 +81,14 @@ pub fn get_descriptors(
         (
             Bip86(xprv, KeychainKind::External).build(network)?,
             Bip86(xprv, KeychainKind::Internal).build(network)?,
+        ),
+        (
+            Bip48Member(xprv, KeychainKind::External, 1).build(network)?,
+            Bip48Member(xprv, KeychainKind::Internal, 1).build(network)?,
+        ),
+        (
+            Bip48Member(xprv, KeychainKind::External, 2).build(network)?,
+            Bip48Member(xprv, KeychainKind::Internal, 2).build(network)?,
         ),
     ];
 
@@ -128,6 +129,12 @@ mod test {
         assert_eq!(descriptors[0].change_descriptor_xprv, "sh(wpkh(xprv9s21ZrQH143K4EyEi77g3rpPu5byQ3EnnMJ4Y2KRNFp5Z4hin7er2j1VEtW92DfDyLGaXvv7LAnMbeHLwWSkv3WJjNhXDhjV7up579LwqWK/49'/0'/0'/1/*))#63pj0qps".to_owned());
         assert_eq!(descriptors[0].descriptor_xpub, "sh(wpkh([ab88de89/49'/0'/0']xpub6CpdbYf1vdUMh5ryZWEQBoBVvmTTFYdi92VvknfMeVsgjiXXnmyDrCdkUKLzvEUYgBJrvyb3pmW488dctFrfJ1RaVNPa1T1nmraemfFCbuY/0/*))#k4daxnp5".to_owned());
         assert_eq!(descriptors[0].change_descriptor_xpub, "sh(wpkh([ab88de89/49'/0'/0']xpub6CpdbYf1vdUMh5ryZWEQBoBVvmTTFYdi92VvknfMeVsgjiXXnmyDrCdkUKLzvEUYgBJrvyb3pmW488dctFrfJ1RaVNPa1T1nmraemfFCbuY/1/*))#r5rt7v5t".to_owned());
+
+        assert_eq!(descriptors[4].descriptor_xpub, "pkh([ab88de89/48'/0'/0'/1']xpub6EPJuK8Ejz82itf1fRUaHE3VXoPfVCJbW6MndSdcAzcxTMnixnWHJeMAVLw7iEMSJd1GmHUinhDEHoNKXAWwdhmTvgQiDTkHprTvmnE4AcB/0/*)#w4yvp7z8".to_owned());
+        assert_eq!(descriptors[4].change_descriptor_xpub, "pkh([ab88de89/48'/0'/0'/1']xpub6EPJuK8Ejz82itf1fRUaHE3VXoPfVCJbW6MndSdcAzcxTMnixnWHJeMAVLw7iEMSJd1GmHUinhDEHoNKXAWwdhmTvgQiDTkHprTvmnE4AcB/1/*)#lppdutjl".to_owned());
+
+        assert_eq!(descriptors[5].descriptor_xpub, "pkh([ab88de89/48'/0'/0'/2']xpub6EPJuK8Ejz82nKc7PsRgcYqdcQH9G1ZikCTasr9i79CbXxMMiPfxEyA14S6HPTHufmcQR7x8t5L3BP9tRfm9EBRBPic2xV892j9z4ePESae/0/*)#7gv8p6fu".to_owned());
+        assert_eq!(descriptors[5].change_descriptor_xpub, "pkh([ab88de89/48'/0'/0'/2']xpub6EPJuK8Ejz82nKc7PsRgcYqdcQH9G1ZikCTasr9i79CbXxMMiPfxEyA14S6HPTHufmcQR7x8t5L3BP9tRfm9EBRBPic2xV892j9z4ePESae/1/*)#0ufxu0ey".to_owned());
     }
 
     #[cfg(feature = "envoy")]
