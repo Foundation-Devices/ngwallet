@@ -6,20 +6,23 @@ const INTERNAL_DESCRIPTOR_2: &str = "tr(tprv8ZgxMBicQKsPeLx4U7UmbcYU5VhS4BRxv86o
 #[cfg(feature = "envoy")]
 const ELECTRUM_SERVER: &str = "ssl://mempool.space:60602";
 
+mod ng_test_utils;
+
 // TODO: make this unique to the descriptor
 // #[cfg(test)]
 mod tests {
-    use std::sync::{Arc, Mutex};
     use redb::backends::FileBackend;
+    use std::sync::{Arc, Mutex};
 
+    use crate::ng_test_utils::{get_ng_hot_wallet, get_ng_watch_only_account};
+    use ngwallet::bip39;
+    use ngwallet::config::{NgAccountBuilder, NgAccountConfig};
     #[cfg(feature = "envoy")]
     use {
-        bdk_wallet::bitcoin::Network, bdk_wallet::rusqlite::Connection, bdk_wallet::Update,
-        crate::*, ngwallet::account::Descriptor
-        , ngwallet::config::AddressType, ngwallet::ngwallet::NgWallet,
+        crate::*, bdk_wallet::Update, bdk_wallet::bitcoin::Network,
+        bdk_wallet::rusqlite::Connection, ngwallet::account::Descriptor,
+        ngwallet::config::AddressType, ngwallet::ngwallet::NgWallet,
     };
-    use ngwallet::bip39;
-    use ngwallet::config::NgAccountBuilder;
 
     #[test]
     #[cfg(feature = "envoy")]
@@ -52,7 +55,6 @@ mod tests {
             .id("1234567890".to_string())
             .open_in_memory()
             .build(None::<FileBackend>);
-
 
         for wallet in account.wallets.iter() {
             let (address_type, request) = account.full_scan_request(wallet.address_type).unwrap();
@@ -161,6 +163,34 @@ mod tests {
     //     assert!(!utxos.is_empty());
     //     drop(account)
     // }
+
+    #[test]
+    fn check_hot_backup() {
+        let account = get_ng_hot_wallet();
+        let config = account.config.clone();
+        assert!(account.is_hot());
+        let backup = account.get_backup_json().unwrap();
+        let config_from_backup = serde_json::from_str::<NgAccountConfig>(&backup).unwrap();
+        assert_eq!(config_from_backup.name, config.name);
+        assert_eq!(config_from_backup.network, config.network);
+        //hot wallet doesnt export descriptors, since they contain xprv
+        assert_eq!(config_from_backup.descriptors.len(), 0);
+        assert_eq!(config_from_backup.wallet_path, None);
+    }
+
+    #[test]
+    fn check_watch_only_backup() {
+        let account = get_ng_watch_only_account();
+        assert!(!account.is_hot());
+        let config = account.config.clone();
+        let backup = account.get_backup_json().unwrap();
+        let config_from_backup = serde_json::from_str::<NgAccountConfig>(&backup).unwrap();
+        assert_eq!(config_from_backup.name, config.name);
+        assert_eq!(config_from_backup.network, config.network);
+        //watch only must export public descriptors
+        assert_eq!(config_from_backup.descriptors, config.descriptors);
+        assert_eq!(config_from_backup.wallet_path, None);
+    }
 
     #[test]
     fn autocomplete_seedword() {

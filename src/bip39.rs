@@ -4,10 +4,10 @@ use bdk_wallet::bitcoin::bip32::{DerivationPath, Xpriv};
 use bdk_wallet::bitcoin::secp256k1::Secp256k1;
 use bdk_wallet::keys::bip39::{Language, Mnemonic};
 use bdk_wallet::keys::{DerivableKey, DescriptorKey};
+use bdk_wallet::miniscript::descriptor::DescriptorType;
 use bdk_wallet::template::{Bip44, Bip49, Bip84, Bip86, DescriptorTemplate};
 use std::cmp::min;
 use std::str::FromStr;
-use bdk_wallet::miniscript::descriptor::DescriptorType;
 
 #[derive(Debug)]
 pub struct Descriptors {

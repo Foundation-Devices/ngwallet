@@ -1,14 +1,94 @@
 use std::str::FromStr;
+use std::sync::{Arc, Mutex};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use bdk_wallet::bitcoin::hashes::Hash;
 use bdk_wallet::bitcoin::{Address, Amount, BlockHash, FeeRate, Network, Transaction, TxOut};
 use bdk_wallet::chain::{BlockId, ConfirmationBlockTime};
+use bdk_wallet::rusqlite::Connection;
 use bdk_wallet::test_utils::{insert_seen_at, new_tx};
 use bdk_wallet::{KeychainKind, WalletPersister};
+use redb::backends::FileBackend;
 
-use ngwallet::account::NgAccount;
+use ngwallet::account::{Descriptor, NgAccount};
+use ngwallet::config::{AddressType, NgAccountBuilder};
 use ngwallet::ngwallet::NgWallet;
+
+//creates a new account with the descriptors,in memory db's
+pub fn get_ng_hot_wallet() -> NgAccount<Connection> {
+    const CHANGE_DESCRIPTOR: &str = "sh(wpkh(tprv8ZgxMBicQKsPeLx4U7UmbcYU5VhS4BRxv86o1gNqNqxEEJL47F9ZZhvBi1EVbKPmmFYnTEZ6uArarK6zZyrZf7mSyWZRAuNKQp4dHfxBdMM/49'/1'/0'/1/*))#ehhlgts8";
+    const DESCRIPTOR: &str = "tr(tprv8ZgxMBicQKsPeLx4U7UmbcYU5VhS4BRxv86o1gNqNqxEEJL47F9ZZhvBi1EVbKPmmFYnTEZ6uArarK6zZyrZf7mSyWZRAuNKQp4dHfxBdMM/86'/1'/0'/0/*)#uw0tj973";
+
+    const CHANGE_DESCRIPTOR_2: &str = "sh(wpkh(tprv8ZgxMBicQKsPeLx4U7UmbcYU5VhS4BRxv86o1gNqNqxEEJL47F9ZZhvBi1EVbKPmmFYnTEZ6uArarK6zZyrZf7mSyWZRAuNKQp4dHfxBdMM/49'/1'/0'/1/*))#ehhlgts8";
+    const DESCRIPTOR_2: &str = "wpkh(tprv8ZgxMBicQKsPeLx4U7UmbcYU5VhS4BRxv86o1gNqNqxEEJL47F9ZZhvBi1EVbKPmmFYnTEZ6uArarK6zZyrZf7mSyWZRAuNKQp4dHfxBdMM/84'/1'/0'/0/*)#gksznsj0";
+
+    let descriptors = vec![
+        Descriptor {
+            internal: CHANGE_DESCRIPTOR.to_string(),
+            external: Some(DESCRIPTOR.to_string()),
+            bdk_persister: Arc::new(Mutex::new(Connection::open_in_memory().unwrap())),
+        },
+        Descriptor {
+            internal: CHANGE_DESCRIPTOR_2.to_string(),
+            external: Some(DESCRIPTOR_2.to_string()),
+            bdk_persister: Arc::new(Mutex::new(Connection::open_in_memory().unwrap())),
+        },
+    ];
+
+    NgAccountBuilder::default()
+        .name("Passport Prime".to_string())
+        .color("red".to_string())
+        .seed_has_passphrase(false)
+        .device_serial(None)
+        .date_added(None)
+        .preferred_address_type(AddressType::P2tr)
+        .index(0)
+        .descriptors(descriptors)
+        .date_synced(None)
+        .db_path(None)
+        .network(Network::Signet)
+        .id("1234567890".to_string())
+        .open_in_memory()
+        .build(None::<FileBackend>)
+}
+
+//creates a new account with the descriptors,in memory db's
+pub fn get_ng_watch_only_account() -> NgAccount<Connection> {
+    const CHANGE_DESCRIPTOR: &str = "sh(wpkh([b32cb478/49'/1'/0']tpubDCe1VCD4yuxQxY6XUT1v7K2vLpfHNoVosUTwfRrkxetL5ADh7DsdiVSGfyCEy13jvrYZJVKNXeTRTDqYUL9PfPwRF1o9jFmaucj5WH34rZ6/1/*))#wpq5kysn";
+    const DESCRIPTOR: &str = "tr([b32cb478/86'/1'/0']tpubDDoYQrzVMLsiAyHic7ddJ4wbPVTmgMrP2VqJKxotZRZbzShPfTK1mdyxUzWdtrEgGm3xeMaWkPMnyFG3TVb4zbPgUizD8prMGteYHAT8V9o/0/*)#pjg8jh2k";
+
+    const CHANGE_DESCRIPTOR_2: &str = "sh(wpkh([b32cb478/49'/1'/0']tpubDCe1VCD4yuxQxY6XUT1v7K2vLpfHNoVosUTwfRrkxetL5ADh7DsdiVSGfyCEy13jvrYZJVKNXeTRTDqYUL9PfPwRF1o9jFmaucj5WH34rZ6/1/*))#wpq5kysn";
+    const DESCRIPTOR_2: &str = "wpkh([b32cb478/84'/1'/0']tpubDC5rRpwGYWMofEkdcFH18PuxhjyUtQe4brjrkcG1qvyKRyDeSYCdRKTFVEfDn3sAwEmM2LYGK9oi15BRu8Wb6nDNex5jhDauPLztkR56KQ8/0/*)#t587tjpy";
+
+    let descriptors = vec![
+        Descriptor {
+            internal: CHANGE_DESCRIPTOR.to_string(),
+            external: Some(DESCRIPTOR.to_string()),
+            bdk_persister: Arc::new(Mutex::new(Connection::open_in_memory().unwrap())),
+        },
+        Descriptor {
+            internal: CHANGE_DESCRIPTOR_2.to_string(),
+            external: Some(DESCRIPTOR_2.to_string()),
+            bdk_persister: Arc::new(Mutex::new(Connection::open_in_memory().unwrap())),
+        },
+    ];
+
+    NgAccountBuilder::default()
+        .name("Passport Prime".to_string())
+        .color("red".to_string())
+        .seed_has_passphrase(false)
+        .device_serial(None)
+        .date_added(None)
+        .preferred_address_type(AddressType::P2tr)
+        .index(0)
+        .descriptors(descriptors)
+        .date_synced(None)
+        .db_path(None)
+        .network(Network::Signet)
+        .id("1234567890".to_string())
+        .open_in_memory()
+        .build(None::<FileBackend>)
+}
 
 pub fn add_funds_to_wallet<P: WalletPersister>(account: &mut NgAccount<P>) {
     for (index, ngwallet) in account.wallets.iter().enumerate() {

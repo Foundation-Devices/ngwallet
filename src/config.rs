@@ -1,9 +1,9 @@
-use bdk_wallet::bitcoin::Network;
-use bdk_wallet::WalletPersister;
-use redb::StorageBackend;
-use serde::{Deserialize, Serialize};
 use crate::account::{Descriptor, NgAccount};
 use crate::utils::get_address_type;
+use bdk_wallet::WalletPersister;
+use bdk_wallet::bitcoin::Network;
+use redb::StorageBackend;
+use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 #[non_exhaustive]
@@ -18,9 +18,11 @@ pub enum AddressType {
     P2wsh,
     /// Pay to taproot.
     P2tr,
+
+    P2ShWpkh,
 }
 
-#[derive(Serialize, Deserialize, Debug, Clone)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
 pub struct NgDescriptor {
     pub internal: String,
     pub external: Option<String>,
@@ -52,7 +54,6 @@ impl NgAccountConfig {
         serde_json::from_str(data).unwrap()
     }
 }
-
 
 impl<P: WalletPersister> Default for NgAccountBuilder<P> {
     fn default() -> Self {
@@ -174,11 +175,13 @@ impl<P: WalletPersister> NgAccountBuilder<P> {
             device_serial: self.device_serial,
             date_added: self.date_added,
             network: self.network.expect("Network is required"),
-            preferred_address_type: self.preferred_address_type.expect("Preferred address type is required"),
+            preferred_address_type: self
+                .preferred_address_type
+                .expect("Preferred address type is required"),
             descriptors: ng_descriptors,
             index: self.index.expect("Index is required"),
             wallet_path: self.db_path,
-            id: self.id.expect("ID is required"),
+            id: self.id.expect("id is required"),
             date_synced: self.date_synced,
             seed_has_passphrase: self.seed_has_passphrase.unwrap_or(false),
         };

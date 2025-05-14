@@ -8,7 +8,7 @@ use crate::store::{InMemoryMetaStorage, MetaStorage};
 use crate::transaction::{BitcoinTransaction, Output};
 use crate::utils::get_address_type;
 use anyhow::{Error, anyhow};
-use bdk_wallet::bitcoin::{Transaction};
+use bdk_wallet::bitcoin::Transaction;
 use bdk_wallet::chain::spk_client::FullScanRequest;
 use bdk_wallet::chain::spk_client::SyncRequest;
 use bdk_wallet::{AddressInfo, Balance, KeychainKind, Update, WalletPersister};
@@ -43,7 +43,6 @@ pub fn get_persister_file_name(internal: &str, external: Option<&str>) -> String
     format!("{}_{}.sqlite", internal_id, external_id)
 }
 
-
 impl<P: WalletPersister> NgAccount<P> {
     pub(crate) fn new_from_descriptors(
         ng_account_config: NgAccountConfig,
@@ -59,7 +58,6 @@ impl<P: WalletPersister> NgAccount<P> {
             ..
         } = ng_account_config;
 
-
         let meta: Arc<Mutex<dyn MetaStorage>> = if open_in_memory {
             Arc::new(Mutex::new(InMemoryMetaStorage::new()))
         } else {
@@ -68,7 +66,6 @@ impl<P: WalletPersister> NgAccount<P> {
                 meta_storage_backend,
             )))
         };
-
 
         let mut wallets: Vec<NgWallet<P>> = vec![];
 
@@ -80,7 +77,7 @@ impl<P: WalletPersister> NgAccount<P> {
                 meta.clone(),
                 descriptor.bdk_persister,
             )
-                .unwrap();
+            .unwrap();
             wallets.push(wallet);
         }
 
@@ -111,8 +108,8 @@ impl<P: WalletPersister> NgAccount<P> {
         descriptors: Vec<Descriptor<P>>,
         meta_storage_backend: Option<impl StorageBackend>,
     ) -> Self
-        where
-            <P as WalletPersister>::Error: Debug,
+    where
+        <P as WalletPersister>::Error: Debug,
     {
         let meta_storage = Arc::new(Mutex::new(RedbMetaStorage::new(
             Some(db_path.clone()),
@@ -130,7 +127,7 @@ impl<P: WalletPersister> NgAccount<P> {
                 meta_storage.clone(),
                 descriptor.bdk_persister.clone(),
             )
-                .unwrap();
+            .unwrap();
             wallets.push(wallet);
         }
 
@@ -158,8 +155,19 @@ impl<P: WalletPersister> NgAccount<P> {
             .map_err(|e| anyhow::anyhow!(e))
     }
 
-    pub fn get_backup(&self) -> Vec<u8> {
-        vec![]
+    pub fn get_backup_json(&self) -> Result<String, Error> {
+        let config = {
+            let mut config = self.config.clone();
+            if self.is_hot() {
+                config.descriptors = vec![];
+            }
+            config.wallet_path = None;
+            config
+        };
+        match serde_json::to_string(&config) {
+            Ok(config) => Ok(config),
+            Err(_) => Err(anyhow::anyhow!("Error serializing config")),
+        }
     }
 
     pub fn next_address(&mut self) -> anyhow::Result<Vec<(AddressInfo, AddressType)>> {
