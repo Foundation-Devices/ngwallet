@@ -14,7 +14,7 @@ mod tests {
     use redb::backends::FileBackend;
     use std::sync::{Arc, Mutex};
 
-    use crate::ng_test_utils::{get_ng_hot_wallet, get_ng_watch_only_account};
+    use ngwallet::account::NgAccount;
     use ngwallet::bip39;
     use ngwallet::config::{NgAccountBuilder, NgAccountConfig};
     #[cfg(feature = "envoy")]
@@ -23,6 +23,7 @@ mod tests {
         bdk_wallet::rusqlite::Connection, ngwallet::account::Descriptor,
         ngwallet::config::AddressType, ngwallet::ngwallet::NgWallet,
     };
+    use crate::ng_test_utils::{get_ng_hot_wallet, get_ng_watch_only_account};
 
     #[test]
     #[cfg(feature = "envoy")]
@@ -56,11 +57,17 @@ mod tests {
             .open_in_memory()
             .build(None::<FileBackend>);
 
+        // Let's imagine we are applying updates remotely
+        let mut updates = vec![];
+
         for wallet in account.wallets.iter() {
             let (address_type, request) = account.full_scan_request(wallet.address_type).unwrap();
             let update = NgWallet::<Connection>::scan(request, ELECTRUM_SERVER, None).unwrap();
-            account.apply((address_type, Update::from(update))).unwrap();
+            updates.push((address_type, Update::from(update)));
         }
+
+        let payload = NgAccount::<Connection>::serialize_updates(None, updates).unwrap();
+        account.update(payload).unwrap();
 
         let address = account.next_address().unwrap();
         address.iter().for_each(|(address, address_type)| {

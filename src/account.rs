@@ -30,6 +30,12 @@ pub struct Descriptor<P: WalletPersister> {
     pub bdk_persister: Arc<Mutex<P>>,
 }
 
+#[derive(Serialize, Deserialize)]
+pub struct RemoteUpdate {
+    pub metadata: Option<NgAccountConfig>,
+    pub wallet_update: Vec<(AddressType, Update)>,
+}
+
 pub fn get_persister_file_name(internal: &str, external: Option<&str>) -> String {
     fn get_last_eight_chars(s: &str) -> Option<String> {
         if s.chars().count() >= 6 {
@@ -285,7 +291,7 @@ impl<P: WalletPersister> NgAccount<P> {
         {
             None => Err(anyhow!("given address type doesnt exist in account")),
             Some(ng_wallet) => {
-                ng_wallet.apply_update(update.1).unwrap();
+                ng_wallet.apply_update(update.1)?;
                 Ok(())
             }
         }
@@ -432,5 +438,35 @@ impl<P: WalletPersister> NgAccount<P> {
                 None
             }
         }
+    }
+
+    pub fn serialize_updates(
+        metadata: Option<NgAccountConfig>,
+        wallet_updates: Vec<(AddressType, Update)>,
+    ) -> anyhow::Result<Vec<u8>> {
+        let update = RemoteUpdate {
+            metadata,
+            wallet_update: wallet_updates,
+        };
+
+        minicbor_serde::to_vec(&update).map_err(|_| anyhow::anyhow!("Could not serialize updates"))
+    }
+
+    pub fn update(&mut self, payload: Vec<u8>) -> anyhow::Result<()> {
+        let update: RemoteUpdate = minicbor_serde::from_slice(&payload)?;
+
+        for wallet_update in update.wallet_update {
+            self.apply(wallet_update)?
+        }
+
+        match update.metadata {
+            None => {}
+            Some(m) => {
+                self.config = m;
+            }
+        }
+
+        self.persist()?;
+        Ok(())
     }
 }
