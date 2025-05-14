@@ -1,18 +1,20 @@
 #[allow(dead_code)]
 pub mod tests_util {
-    use std::str::FromStr;
-    use std::sync::{Arc, Mutex};
-    use std::time::{SystemTime, UNIX_EPOCH};
-    use bdk_electrum::bdk_core::bitcoin::{Address, Amount, BlockHash, FeeRate, Network, Transaction, TxOut};
+    use bdk_electrum::bdk_core::bitcoin::{
+        Address, Amount, BlockHash, FeeRate, Network, Transaction, TxOut,
+    };
     use bdk_electrum::bdk_core::{BlockId, ConfirmationBlockTime};
+    use bdk_wallet::bitcoin::hashes::Hash;
     use bdk_wallet::rusqlite::Connection;
     use bdk_wallet::test_utils::{insert_seen_at, new_tx};
     use bdk_wallet::{KeychainKind, WalletPersister};
-    use bdk_wallet::bitcoin::hashes::Hash;
-    use redb::backends::FileBackend;
     use ngwallet::account::{Descriptor, NgAccount};
     use ngwallet::config::{AddressType, NgAccountBuilder};
     use ngwallet::ngwallet::NgWallet;
+    use redb::backends::FileBackend;
+    use std::str::FromStr;
+    use std::sync::{Arc, Mutex};
+    use std::time::{SystemTime, UNIX_EPOCH};
 
     pub fn get_ng_hot_wallet() -> NgAccount<Connection> {
         const CHANGE_DESCRIPTOR: &str = "sh(wpkh(tprv8ZgxMBicQKsPeLx4U7UmbcYU5VhS4BRxv86o1gNqNqxEEJL47F9ZZhvBi1EVbKPmmFYnTEZ6uArarK6zZyrZf7mSyWZRAuNKQp4dHfxBdMM/49'/1'/0'/1/*))#ehhlgts8";
@@ -181,6 +183,5 @@ pub mod tests_util {
             },
         );
     }
-
 }
 //creates a new account with the descriptors,in memory db's

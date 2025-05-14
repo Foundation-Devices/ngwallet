@@ -14,6 +14,7 @@ mod tests {
     use redb::backends::FileBackend;
     use std::sync::{Arc, Mutex};
 
+    use crate::utils::tests_util;
     use ngwallet::account::NgAccount;
     use ngwallet::bip39;
     use ngwallet::config::{NgAccountBuilder, NgAccountConfig};
@@ -23,7 +24,6 @@ mod tests {
         bdk_wallet::rusqlite::Connection, ngwallet::account::Descriptor,
         ngwallet::config::AddressType, ngwallet::ngwallet::NgWallet,
     };
-    use crate::utils::tests_util;
 
     #[test]
     #[cfg(feature = "envoy")]
@@ -199,7 +199,6 @@ mod tests {
         assert_eq!(config_from_backup.wallet_path, None);
     }
 
-
     #[test]
     fn change_address_type() {
         let mut account = tests_util::get_ng_hot_wallet();
@@ -207,13 +206,13 @@ mod tests {
         assert_eq!(account.config.preferred_address_type, AddressType::P2tr);
         assert_eq!(wallet.address_type, AddressType::P2tr);
 
-        account.set_preferred_address_type(AddressType::P2wpkh).unwrap();
+        account
+            .set_preferred_address_type(AddressType::P2wpkh)
+            .unwrap();
         let wallet = account.get_coordinator_wallet();
         assert_eq!(account.config.preferred_address_type, AddressType::P2wpkh);
         assert_eq!(wallet.address_type, AddressType::P2wpkh);
     }
-
-
 
     #[test]
     fn autocomplete_seedword() {

@@ -3,8 +3,8 @@ mod utils;
 #[cfg(test)]
 #[cfg(feature = "envoy")]
 mod spend_tests {
-    use ngwallet::send::{DraftTransaction, TransactionParams};
     use crate::utils::tests_util;
+    use ngwallet::send::{DraftTransaction, TransactionParams};
 
     use crate::utils::tests_util::get_ng_hot_wallet;
 
