@@ -1,6 +1,6 @@
 use crate::config::NgAccountConfig;
 use crate::store::MetaStorage;
-use anyhow::Result;
+use anyhow::{Context, Result};
 use redb::{Builder, Database, ReadableTable, StorageBackend, TableDefinition};
 use std::sync::Arc;
 
@@ -18,21 +18,25 @@ pub struct RedbMetaStorage {
 }
 
 impl RedbMetaStorage {
-    pub fn new(path: Option<String>, backend: Option<impl StorageBackend>) -> Self {
+    pub fn from_file(path: Option<String>) -> anyhow::Result<Self> {
         let db = {
-            match backend {
-                None => {
-                    let file_path = path
-                        .clone()
-                        .map(|p| format!("{}/account.meta", p))
-                        .unwrap_or("account.meta".to_string());
-                    Builder::new().create(file_path).unwrap()
-                }
-                Some(b) => Builder::new().create_with_backend(b).unwrap(),
-            }
+            let file_path = path
+                .clone()
+                .map(|p| format!("{}/account.meta", p))
+                .unwrap_or("account.meta".to_string());
+            Builder::new()
+                .create(file_path)
+                .with_context(|| "Failed to create database")?
         };
 
-        RedbMetaStorage { db: Arc::new(db) }
+        Ok(RedbMetaStorage { db: Arc::new(db) })
+    }
+
+    pub fn from_backend(backend: impl StorageBackend) -> anyhow::Result<Self> {
+        let db = Builder::new()
+            .create_with_backend(backend)
+            .with_context(|| "Failed to create database")?;
+        Ok(RedbMetaStorage { db: Arc::new(db) })
     }
 
     //TODO: fix persist
@@ -43,7 +47,7 @@ impl RedbMetaStorage {
 }
 
 impl MetaStorage for RedbMetaStorage {
-    fn set_note(&mut self, key: &str, value: &str) -> Result<()> {
+    fn set_note(&self, key: &str, value: &str) -> Result<()> {
         let write_txn = self.db.begin_write()?;
         {
             let mut table = write_txn.open_table(NOTE_TABLE)?;
@@ -84,7 +88,7 @@ impl MetaStorage for RedbMetaStorage {
         }
     }
 
-    fn add_tag(&mut self, tag: &str) -> Result<()> {
+    fn add_tag(&self, tag: &str) -> Result<()> {
         let write_txn = self.db.begin_write()?;
         {
             let mut table = write_txn.open_table(TAGS_LIST)?;
@@ -95,7 +99,7 @@ impl MetaStorage for RedbMetaStorage {
             .map_err(|e| anyhow::anyhow!(e.to_string()))
     }
 
-    fn remove_tag(&mut self, tag: &str) -> Result<()> {
+    fn remove_tag(&self, tag: &str) -> Result<()> {
         let write_txn = self.db.begin_write()?;
         {
             let mut table = write_txn.open_table(TAGS_LIST)?;
@@ -105,7 +109,7 @@ impl MetaStorage for RedbMetaStorage {
             .commit()
             .map_err(|e| anyhow::anyhow!(e.to_string()))
     }
-    fn set_tag(&mut self, key: &str, value: &str) -> Result<()> {
+    fn set_tag(&self, key: &str, value: &str) -> Result<()> {
         let write_txn = self.db.begin_write()?;
         {
             let mut table = write_txn.open_table(TAG_TABLE)?;
@@ -130,7 +134,7 @@ impl MetaStorage for RedbMetaStorage {
         }
     }
 
-    fn set_do_not_spend(&mut self, key: &str, value: bool) -> Result<()> {
+    fn set_do_not_spend(&self, key: &str, value: bool) -> Result<()> {
         let write_txn = self.db.begin_write()?;
         {
             let mut table = write_txn.open_table(DO_NOT_SPEND_TABLE)?;
@@ -154,7 +158,7 @@ impl MetaStorage for RedbMetaStorage {
         }
     }
 
-    fn set_config(&mut self, deserialized_config: &str) -> Result<()> {
+    fn set_config(&self, deserialized_config: &str) -> Result<()> {
         let write_txn = self.db.begin_write()?;
         {
             let mut table = write_txn.open_table(ACCOUNT_CONFIG)?;
@@ -179,7 +183,7 @@ impl MetaStorage for RedbMetaStorage {
         }
     }
 
-    fn persist(&mut self) -> Result<bool> {
+    fn persist(&self) -> Result<bool> {
         Ok(true)
     }
 }

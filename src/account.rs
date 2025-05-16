@@ -4,10 +4,10 @@ use std::sync::{Arc, Mutex};
 use crate::config::{AddressType, NgAccountConfig};
 use crate::db::RedbMetaStorage;
 use crate::ngwallet::NgWallet;
-use crate::store::{InMemoryMetaStorage, MetaStorage};
+use crate::store::MetaStorage;
 use crate::transaction::{BitcoinTransaction, Output};
 use crate::utils::get_address_type;
-use anyhow::{Error, anyhow};
+use anyhow::{anyhow, Context, Error};
 use bdk_wallet::bitcoin::Transaction;
 use bdk_wallet::chain::spk_client::FullScanRequest;
 use bdk_wallet::chain::spk_client::SyncRequest;
@@ -20,7 +20,7 @@ use serde::{Deserialize, Serialize};
 pub struct NgAccount<P: WalletPersister> {
     pub config: NgAccountConfig,
     pub wallets: Vec<NgWallet<P>>,
-    meta_storage: Arc<Mutex<dyn MetaStorage>>,
+    meta_storage: Arc<dyn MetaStorage>,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -52,26 +52,15 @@ pub fn get_persister_file_name(internal: &str, external: Option<&str>) -> String
 impl<P: WalletPersister> NgAccount<P> {
     pub(crate) fn new_from_descriptors(
         ng_account_config: NgAccountConfig,
-        meta_storage_backend: Option<impl StorageBackend>,
-        open_in_memory: bool,
+        meta: Arc<dyn MetaStorage>,
         descriptors: Vec<Descriptor<P>>,
-    ) -> Self {
+    ) -> anyhow::Result<Self> {
         let account_config = ng_account_config.clone();
         let NgAccountConfig {
-            wallet_path,
             preferred_address_type,
             network,
             ..
         } = ng_account_config;
-
-        let meta: Arc<Mutex<dyn MetaStorage>> = if open_in_memory {
-            Arc::new(Mutex::new(InMemoryMetaStorage::new()))
-        } else {
-            Arc::new(Mutex::new(RedbMetaStorage::new(
-                wallet_path.clone(),
-                meta_storage_backend,
-            )))
-        };
 
         let mut wallets: Vec<NgWallet<P>> = vec![];
 
@@ -83,7 +72,7 @@ impl<P: WalletPersister> NgAccount<P> {
                 meta.clone(),
                 descriptor.bdk_persister,
             )
-            .unwrap();
+            .with_context(|| "Failed to create wallet")?;
             wallets.push(wallet);
         }
 
@@ -92,56 +81,41 @@ impl<P: WalletPersister> NgAccount<P> {
             .find(|w| w.address_type == preferred_address_type);
 
         if coordinator_wallet.is_none() {
-            panic!("No wallet found with the preferred address type");
+            anyhow::bail!("No wallet found with the preferred address type");
         }
 
-        meta.lock()
-            .unwrap()
-            .set_config(account_config.serialize().as_str())
-            .unwrap();
-        {
-            meta.lock().unwrap().persist().unwrap();
-        }
-        Self {
+        meta.set_config(account_config.serialize().as_str())
+            .with_context(|| "Failed to set account config")?;
+        meta.persist()
+            .with_context(|| "Failed to persist account config")?;
+
+        Ok(Self {
             config: account_config,
             wallets,
             meta_storage: meta,
-        }
+        })
     }
 
-    pub fn open_account(
-        db_path: String,
+    pub fn open_account_from_file(
         descriptors: Vec<Descriptor<P>>,
-        meta_storage_backend: Option<impl StorageBackend>,
-    ) -> Self
+        db_path: Option<String>,
+    ) -> anyhow::Result<Self>
     where
         <P as WalletPersister>::Error: Debug,
     {
-        let meta_storage = Arc::new(Mutex::new(RedbMetaStorage::new(
-            Some(db_path.clone()),
-            meta_storage_backend,
-        )));
+        let meta_storage = RedbMetaStorage::from_file(db_path)?;
+        Self::open_account_inner(descriptors, Arc::new(meta_storage))
+    }
 
-        let config = meta_storage.lock().unwrap().get_config().unwrap().unwrap();
-
-        let mut wallets: Vec<NgWallet<P>> = vec![];
-
-        for descriptor in descriptors {
-            let wallet = NgWallet::load(
-                descriptor.internal,
-                descriptor.external,
-                meta_storage.clone(),
-                descriptor.bdk_persister.clone(),
-            )
-            .unwrap();
-            wallets.push(wallet);
-        }
-
-        Self {
-            config,
-            wallets,
-            meta_storage,
-        }
+    pub fn open_account_from_backend(
+        descriptors: Vec<Descriptor<P>>,
+        backend: impl StorageBackend,
+    ) -> anyhow::Result<Self>
+    where
+        <P as WalletPersister>::Error: Debug,
+    {
+        let meta_storage = RedbMetaStorage::from_backend(backend)?;
+        Self::open_account_inner(descriptors, Arc::new(meta_storage))
     }
 
     pub fn rename(&mut self, name: &str) -> Result<(), Error> {
@@ -160,8 +134,6 @@ impl<P: WalletPersister> NgAccount<P> {
         }
 
         self.meta_storage
-            .lock()
-            .unwrap()
             .set_config(self.config.serialize().as_str())
             .map_err(|e| anyhow::anyhow!(e))
     }
@@ -172,7 +144,6 @@ impl<P: WalletPersister> NgAccount<P> {
             if self.is_hot() {
                 config.descriptors = vec![];
             }
-            config.wallet_path = None;
             config
         };
         match serde_json::to_string(&config) {
@@ -243,33 +214,23 @@ impl<P: WalletPersister> NgAccount<P> {
 
     pub fn set_note(&mut self, tx_id: &str, note: &str) -> anyhow::Result<bool> {
         self.meta_storage
-            .lock()
-            .unwrap()
             .set_note(tx_id, note)
-            .map_err(|e| anyhow::anyhow!("Could not set note: {:?}", e))?;
+            .with_context(|| "Could not set note")?;
         Ok(true)
     }
 
     pub fn set_tag(&mut self, output: &Output, tag: &str) -> anyhow::Result<bool> {
         self.meta_storage
-            .lock()
-            .unwrap()
             .set_tag(output.get_id().as_str(), tag)
-            .map_err(|_| anyhow::anyhow!("Could not set tag "))
-            .unwrap();
+            .with_context(|| "Could not set tag")?;
         self.meta_storage
-            .lock()
-            .unwrap()
             .add_tag(tag.to_string().as_str())
-            .map_err(|_| anyhow::anyhow!("Could not set tag "))
-            .unwrap();
+            .with_context(|| "Could not add tag")?;
         Ok(true)
     }
 
     pub fn set_do_not_spend(&mut self, output: &Output, state: bool) -> anyhow::Result<()> {
         self.meta_storage
-            .lock()
-            .unwrap()
             .set_do_not_spend(output.get_id().as_str(), state)
     }
 
@@ -371,7 +332,7 @@ impl<P: WalletPersister> NgAccount<P> {
     }
 
     pub fn list_tags(&self) -> anyhow::Result<Vec<String>> {
-        self.meta_storage.lock().unwrap().list_tags()
+        self.meta_storage.list_tags()
     }
 
     pub fn mark_utxo_as_used(&self, transaction: Transaction) {
@@ -389,60 +350,43 @@ impl<P: WalletPersister> NgAccount<P> {
     /// Sets a note for a transaction without checking if the transaction existence.
     pub fn set_note_unchecked(&mut self, tx_id: &str, note: &str) -> anyhow::Result<bool> {
         self.meta_storage
-            .lock()
-            .unwrap()
             .set_note(tx_id, note)
-            .map_err(|e| anyhow::anyhow!("Could not set note: {:?}", e))?;
+            .with_context(|| "Could not set note")?;
         Ok(true)
     }
 
-    pub fn get_tag(&self, output_id: &str) -> Option<String> {
+    pub fn get_tag(&self, output_id: &str) -> anyhow::Result<Option<String>> {
         self.meta_storage
-            .lock()
-            .unwrap()
             .get_tag(output_id)
-            .map_err(|_| anyhow::anyhow!("Could not set tag "))
-            .unwrap()
+            .with_context(|| "Could not get tag ")
     }
 
     pub fn remove_tag(&mut self, target_tag: &str, rename_to: Option<&str>) -> anyhow::Result<()> {
-        self.meta_storage
-            .lock()
-            .unwrap()
-            .remove_tag(target_tag)
-            .map_err(|e| anyhow::anyhow!("Error {}", e))
-            .unwrap();
-        self.utxos()
-            .map_err(|e| anyhow::anyhow!("Error {}", e))
-            .unwrap()
-            .iter()
-            .for_each(|output: &Output| match output.clone().tag {
+        self.meta_storage.remove_tag(target_tag)?;
+        let utxos = self.utxos()?;
+        for output in utxos {
+            match &output.tag {
                 None => {}
                 Some(existing_tag) => {
                     let new_tag = rename_to.unwrap_or("");
                     if existing_tag.eq(target_tag) {
-                        self.set_tag(output, new_tag)
-                            .map_err(|e| anyhow::anyhow!("Error {}", e))
-                            .unwrap();
+                        self.set_tag(&output, new_tag)?;
                     }
                 }
-            });
+            }
+        }
 
         Ok(())
     }
 
-    pub fn read_config(
-        db_path: String,
-        meta_storage_backend: Option<impl StorageBackend>,
-    ) -> Option<NgAccountConfig> {
-        let meta_storage = RedbMetaStorage::new(Some(db_path.clone()), meta_storage_backend);
-        match meta_storage.get_config() {
-            Ok(value) => value.clone(),
-            Err(e) => {
-                info!("Error reading config {:?}", e);
-                None
-            }
-        }
+    pub fn read_config_from_file(db_path: Option<String>) -> Option<NgAccountConfig> {
+        let meta_storage = RedbMetaStorage::from_file(db_path).ok()?;
+        Self::read_config_inner(meta_storage)
+    }
+
+    pub fn read_config_from_backend(backend: impl StorageBackend) -> Option<NgAccountConfig> {
+        let meta_storage = RedbMetaStorage::from_backend(backend).ok()?;
+        Self::read_config_inner(meta_storage)
     }
 
     pub fn serialize_updates(
@@ -473,5 +417,49 @@ impl<P: WalletPersister> NgAccount<P> {
 
         self.persist()?;
         Ok(())
+    }
+}
+
+impl<P: WalletPersister> NgAccount<P> {
+    fn open_account_inner(
+        descriptors: Vec<Descriptor<P>>,
+        meta_storage: Arc<dyn MetaStorage>,
+    ) -> anyhow::Result<Self>
+    where
+        <P as WalletPersister>::Error: Debug,
+    {
+        let config = meta_storage
+            .get_config()
+            .with_context(|| "Failed to get load account config")?
+            .ok_or(anyhow::anyhow!("Account config not found"))?;
+
+        let mut wallets: Vec<NgWallet<P>> = vec![];
+
+        for descriptor in descriptors {
+            let wallet = NgWallet::load(
+                descriptor.internal,
+                descriptor.external,
+                meta_storage.clone(),
+                descriptor.bdk_persister.clone(),
+            )
+            .with_context(|| "Failed to load wallet")?;
+            wallets.push(wallet);
+        }
+
+        Ok(Self {
+            config,
+            wallets,
+            meta_storage,
+        })
+    }
+
+    fn read_config_inner(meta_storage: impl MetaStorage) -> Option<NgAccountConfig> {
+        match meta_storage.get_config() {
+            Ok(value) => value.clone(),
+            Err(e) => {
+                info!("Error reading config {:?}", e);
+                None
+            }
+        }
     }
 }

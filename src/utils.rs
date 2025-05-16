@@ -1,7 +1,7 @@
 #[cfg(feature = "envoy")]
 use {
-    bdk_electrum::BdkElectrumClient,
     bdk_electrum::electrum_client::{Client, Config, Socks5Config},
+    bdk_electrum::BdkElectrumClient,
 };
 
 use crate::config::AddressType;
@@ -25,7 +25,7 @@ pub(crate) fn build_electrum_client(
 }
 
 //
-pub(crate) fn get_address_type(descriptor: &str) -> AddressType {
+pub fn get_address_type(descriptor: &str) -> AddressType {
     if descriptor.starts_with("pkh(") {
         AddressType::P2pkh
     } else if descriptor.starts_with("wpkh(") {
