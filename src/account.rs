@@ -20,7 +20,7 @@ use serde::{Deserialize, Serialize};
 pub struct NgAccount<P: WalletPersister> {
     pub config: NgAccountConfig,
     pub wallets: Vec<NgWallet<P>>,
-    meta_storage: Arc<Mutex<dyn MetaStorage>>,
+    meta_storage: Arc<dyn MetaStorage>,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -52,7 +52,7 @@ pub fn get_persister_file_name(internal: &str, external: Option<&str>) -> String
 impl<P: WalletPersister> NgAccount<P> {
     pub(crate) fn new_from_descriptors(
         ng_account_config: NgAccountConfig,
-        meta: Arc<Mutex<dyn MetaStorage>>,
+        meta: Arc<dyn MetaStorage>,
         descriptors: Vec<Descriptor<P>>,
     ) -> Self {
         let account_config = ng_account_config.clone();
@@ -84,13 +84,9 @@ impl<P: WalletPersister> NgAccount<P> {
             panic!("No wallet found with the preferred address type");
         }
 
-        meta.lock()
-            .unwrap()
-            .set_config(account_config.serialize().as_str())
+        meta.set_config(account_config.serialize().as_str())
             .unwrap();
-        {
-            meta.lock().unwrap().persist().unwrap();
-        }
+        meta.persist().unwrap();
         Self {
             config: account_config,
             wallets,
@@ -103,7 +99,7 @@ impl<P: WalletPersister> NgAccount<P> {
         <P as WalletPersister>::Error: Debug,
     {
         let meta_storage = RedbMetaStorage::from_file(db_path);
-        Self::open_account_inner(descriptors, Arc::new(Mutex::new(meta_storage)))
+        Self::open_account_inner(descriptors, Arc::new(meta_storage))
     }
 
     pub fn open_account_from_backend(
@@ -114,7 +110,7 @@ impl<P: WalletPersister> NgAccount<P> {
         <P as WalletPersister>::Error: Debug,
     {
         let meta_storage = RedbMetaStorage::from_backend(backend);
-        Self::open_account_inner(descriptors, Arc::new(Mutex::new(meta_storage)))
+        Self::open_account_inner(descriptors, Arc::new(meta_storage))
     }
 
     pub fn rename(&mut self, name: &str) -> Result<(), Error> {
@@ -133,8 +129,6 @@ impl<P: WalletPersister> NgAccount<P> {
         }
 
         self.meta_storage
-            .lock()
-            .unwrap()
             .set_config(self.config.serialize().as_str())
             .map_err(|e| anyhow::anyhow!(e))
     }
@@ -215,8 +209,6 @@ impl<P: WalletPersister> NgAccount<P> {
 
     pub fn set_note(&mut self, tx_id: &str, note: &str) -> anyhow::Result<bool> {
         self.meta_storage
-            .lock()
-            .unwrap()
             .set_note(tx_id, note)
             .map_err(|e| anyhow::anyhow!("Could not set note: {:?}", e))?;
         Ok(true)
@@ -224,14 +216,10 @@ impl<P: WalletPersister> NgAccount<P> {
 
     pub fn set_tag(&mut self, output: &Output, tag: &str) -> anyhow::Result<bool> {
         self.meta_storage
-            .lock()
-            .unwrap()
             .set_tag(output.get_id().as_str(), tag)
             .map_err(|_| anyhow::anyhow!("Could not set tag "))
             .unwrap();
         self.meta_storage
-            .lock()
-            .unwrap()
             .add_tag(tag.to_string().as_str())
             .map_err(|_| anyhow::anyhow!("Could not set tag "))
             .unwrap();
@@ -240,8 +228,6 @@ impl<P: WalletPersister> NgAccount<P> {
 
     pub fn set_do_not_spend(&mut self, output: &Output, state: bool) -> anyhow::Result<()> {
         self.meta_storage
-            .lock()
-            .unwrap()
             .set_do_not_spend(output.get_id().as_str(), state)
     }
 
@@ -343,7 +329,7 @@ impl<P: WalletPersister> NgAccount<P> {
     }
 
     pub fn list_tags(&self) -> anyhow::Result<Vec<String>> {
-        self.meta_storage.lock().unwrap().list_tags()
+        self.meta_storage.list_tags()
     }
 
     pub fn mark_utxo_as_used(&self, transaction: Transaction) {
@@ -361,8 +347,6 @@ impl<P: WalletPersister> NgAccount<P> {
     /// Sets a note for a transaction without checking if the transaction existence.
     pub fn set_note_unchecked(&mut self, tx_id: &str, note: &str) -> anyhow::Result<bool> {
         self.meta_storage
-            .lock()
-            .unwrap()
             .set_note(tx_id, note)
             .map_err(|e| anyhow::anyhow!("Could not set note: {:?}", e))?;
         Ok(true)
@@ -370,8 +354,6 @@ impl<P: WalletPersister> NgAccount<P> {
 
     pub fn get_tag(&self, output_id: &str) -> Option<String> {
         self.meta_storage
-            .lock()
-            .unwrap()
             .get_tag(output_id)
             .map_err(|_| anyhow::anyhow!("Could not set tag "))
             .unwrap()
@@ -379,8 +361,6 @@ impl<P: WalletPersister> NgAccount<P> {
 
     pub fn remove_tag(&mut self, target_tag: &str, rename_to: Option<&str>) -> anyhow::Result<()> {
         self.meta_storage
-            .lock()
-            .unwrap()
             .remove_tag(target_tag)
             .map_err(|e| anyhow::anyhow!("Error {}", e))
             .unwrap();
@@ -447,12 +427,12 @@ impl<P: WalletPersister> NgAccount<P> {
 impl<P: WalletPersister> NgAccount<P> {
     fn open_account_inner(
         descriptors: Vec<Descriptor<P>>,
-        meta_storage: Arc<Mutex<dyn MetaStorage>>,
+        meta_storage: Arc<dyn MetaStorage>,
     ) -> Self
     where
         <P as WalletPersister>::Error: Debug,
     {
-        let config = meta_storage.lock().unwrap().get_config().unwrap().unwrap();
+        let config = meta_storage.get_config().unwrap().unwrap();
 
         let mut wallets: Vec<NgWallet<P>> = vec![];
 

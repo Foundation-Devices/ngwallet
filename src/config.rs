@@ -1,4 +1,4 @@
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 
 use crate::account::{Descriptor, NgAccount};
 use crate::db::RedbMetaStorage;
@@ -154,7 +154,7 @@ impl<P: WalletPersister> NgAccountBuilder<P> {
     }
 
     pub fn build_in_memory(self) -> NgAccount<P> {
-        let meta_storage = crate::store::InMemoryMetaStorage::new();
+        let meta_storage = crate::store::InMemoryMetaStorage::default();
         self.build_inner(meta_storage)
     }
 
@@ -196,10 +196,6 @@ impl<P: WalletPersister> NgAccountBuilder<P> {
             seed_has_passphrase: self.seed_has_passphrase.unwrap_or(false),
         };
 
-        NgAccount::new_from_descriptors(
-            ng_account_config,
-            Arc::new(Mutex::new(meta_storage)),
-            descriptors,
-        )
+        NgAccount::new_from_descriptors(ng_account_config, Arc::new(meta_storage), descriptors)
     }
 }

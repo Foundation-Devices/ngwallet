@@ -5,9 +5,9 @@ use std::sync::{Arc, Mutex};
 
 use anyhow::Result;
 use bdk_wallet::bitcoin::{Address, Amount, Network, Psbt};
-use bdk_wallet::chain::ChainPosition::{Confirmed, Unconfirmed};
 use bdk_wallet::chain::local_chain::CannotConnectError;
 use bdk_wallet::chain::spk_client::{FullScanRequest, FullScanResponse, SyncRequest, SyncResponse};
+use bdk_wallet::chain::ChainPosition::{Confirmed, Unconfirmed};
 use bdk_wallet::{CreateWithPersistError, PersistedWallet, SignOptions};
 use bdk_wallet::{KeychainKind, WalletPersister};
 use bdk_wallet::{Update, Wallet};
@@ -17,9 +17,9 @@ use crate::config::AddressType;
 #[cfg(feature = "envoy")]
 use {
     crate::{BATCH_SIZE, STOP_GAP},
-    bdk_electrum::BdkElectrumClient,
     bdk_electrum::electrum_client::Client,
     bdk_electrum::electrum_client::{Config, Socks5Config},
+    bdk_electrum::BdkElectrumClient,
 };
 
 use crate::store::MetaStorage;
@@ -36,7 +36,7 @@ pub struct PsbtInfo {
 pub struct NgWallet<P: WalletPersister> {
     pub bdk_wallet: Arc<Mutex<PersistedWallet<P>>>,
     pub address_type: AddressType,
-    pub(crate) meta_storage: Arc<Mutex<dyn MetaStorage>>,
+    pub(crate) meta_storage: Arc<dyn MetaStorage>,
     bdk_persister: Arc<Mutex<P>>,
 }
 
@@ -45,7 +45,7 @@ impl<P: WalletPersister> NgWallet<P> {
         internal_descriptor: String,
         external_descriptor: Option<String>,
         network: Network,
-        meta_storage: Arc<Mutex<dyn MetaStorage>>,
+        meta_storage: Arc<dyn MetaStorage>,
         bdk_persister: Arc<Mutex<P>>,
     ) -> Result<NgWallet<P>> {
         let wallet = match external_descriptor {
@@ -90,7 +90,7 @@ impl<P: WalletPersister> NgWallet<P> {
     pub fn load(
         internal_descriptor: String,
         external_descriptor: Option<String>,
-        meta_storage: Arc<Mutex<dyn MetaStorage>>,
+        meta_storage: Arc<dyn MetaStorage>,
         bdk_persister: Arc<Mutex<P>>,
     ) -> Result<NgWallet<P>>
     where
@@ -126,7 +126,7 @@ impl<P: WalletPersister> NgWallet<P> {
         let wallet = self.bdk_wallet.lock().unwrap();
         let mut transactions: Vec<BitcoinTransaction> = vec![];
         let tip_height = wallet.latest_checkpoint().height();
-        let storage = self.meta_storage.lock().unwrap();
+        let storage = &self.meta_storage;
 
         //add date to transaction
         for canonical_tx in wallet.transactions() {
@@ -143,7 +143,11 @@ impl<P: WalletPersister> NgWallet<P> {
                     //to milliseconds
                     date = Some(anchor.confirmation_time);
                     let block_height = anchor.block_id.height;
-                    if block_height > 0 { block_height } else { 0 }
+                    if block_height > 0 {
+                        block_height
+                    } else {
+                        0
+                    }
                 }
                 Unconfirmed { last_seen } => {
                     match last_seen {
@@ -369,7 +373,7 @@ impl<P: WalletPersister> NgWallet<P> {
         let mut unspents: Vec<Output> = vec![];
         let tip_height = wallet.latest_checkpoint().height();
 
-        let meta_storage = self.meta_storage.lock().unwrap();
+        let meta_storage = &self.meta_storage;
         for local_output in wallet.list_unspent() {
             let mut date: Option<u64> = None;
             let out_put_id = format!(
@@ -392,7 +396,11 @@ impl<P: WalletPersister> NgWallet<P> {
                             } else {
                                 0
                             };
-                            if block_height > 0 { block_height } else { 0 }
+                            if block_height > 0 {
+                                block_height
+                            } else {
+                                0
+                            }
                         }
                         Unconfirmed { last_seen } => {
                             match last_seen {
