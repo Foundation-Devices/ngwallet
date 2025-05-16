@@ -4,10 +4,10 @@ use std::sync::{Arc, Mutex};
 use crate::config::{AddressType, NgAccountConfig};
 use crate::db::RedbMetaStorage;
 use crate::ngwallet::NgWallet;
-use crate::store::{InMemoryMetaStorage, MetaStorage};
+use crate::store::MetaStorage;
 use crate::transaction::{BitcoinTransaction, Output};
 use crate::utils::get_address_type;
-use anyhow::{Error, anyhow};
+use anyhow::{anyhow, Error};
 use bdk_wallet::bitcoin::Transaction;
 use bdk_wallet::chain::spk_client::FullScanRequest;
 use bdk_wallet::chain::spk_client::SyncRequest;
@@ -52,26 +52,15 @@ pub fn get_persister_file_name(internal: &str, external: Option<&str>) -> String
 impl<P: WalletPersister> NgAccount<P> {
     pub(crate) fn new_from_descriptors(
         ng_account_config: NgAccountConfig,
-        meta_storage_backend: Option<impl StorageBackend>,
-        open_in_memory: bool,
+        meta: Arc<Mutex<dyn MetaStorage>>,
         descriptors: Vec<Descriptor<P>>,
     ) -> Self {
         let account_config = ng_account_config.clone();
         let NgAccountConfig {
-            wallet_path,
             preferred_address_type,
             network,
             ..
         } = ng_account_config;
-
-        let meta: Arc<Mutex<dyn MetaStorage>> = if open_in_memory {
-            Arc::new(Mutex::new(InMemoryMetaStorage::new()))
-        } else {
-            Arc::new(Mutex::new(RedbMetaStorage::new(
-                wallet_path.clone(),
-                meta_storage_backend,
-            )))
-        };
 
         let mut wallets: Vec<NgWallet<P>> = vec![];
 
@@ -109,39 +98,23 @@ impl<P: WalletPersister> NgAccount<P> {
         }
     }
 
-    pub fn open_account(
-        db_path: String,
+    pub fn open_account_from_file(descriptors: Vec<Descriptor<P>>, db_path: Option<String>) -> Self
+    where
+        <P as WalletPersister>::Error: Debug,
+    {
+        let meta_storage = RedbMetaStorage::from_file(db_path);
+        Self::open_account_inner(descriptors, Arc::new(Mutex::new(meta_storage)))
+    }
+
+    pub fn open_account_from_backend(
         descriptors: Vec<Descriptor<P>>,
-        meta_storage_backend: Option<impl StorageBackend>,
+        backend: impl StorageBackend,
     ) -> Self
     where
         <P as WalletPersister>::Error: Debug,
     {
-        let meta_storage = Arc::new(Mutex::new(RedbMetaStorage::new(
-            Some(db_path.clone()),
-            meta_storage_backend,
-        )));
-
-        let config = meta_storage.lock().unwrap().get_config().unwrap().unwrap();
-
-        let mut wallets: Vec<NgWallet<P>> = vec![];
-
-        for descriptor in descriptors {
-            let wallet = NgWallet::load(
-                descriptor.internal,
-                descriptor.external,
-                meta_storage.clone(),
-                descriptor.bdk_persister.clone(),
-            )
-            .unwrap();
-            wallets.push(wallet);
-        }
-
-        Self {
-            config,
-            wallets,
-            meta_storage,
-        }
+        let meta_storage = RedbMetaStorage::from_backend(backend);
+        Self::open_account_inner(descriptors, Arc::new(Mutex::new(meta_storage)))
     }
 
     pub fn rename(&mut self, name: &str) -> Result<(), Error> {
@@ -172,7 +145,6 @@ impl<P: WalletPersister> NgAccount<P> {
             if self.is_hot() {
                 config.descriptors = vec![];
             }
-            config.wallet_path = None;
             config
         };
         match serde_json::to_string(&config) {
@@ -431,18 +403,14 @@ impl<P: WalletPersister> NgAccount<P> {
         Ok(())
     }
 
-    pub fn read_config(
-        db_path: String,
-        meta_storage_backend: Option<impl StorageBackend>,
-    ) -> Option<NgAccountConfig> {
-        let meta_storage = RedbMetaStorage::new(Some(db_path.clone()), meta_storage_backend);
-        match meta_storage.get_config() {
-            Ok(value) => value.clone(),
-            Err(e) => {
-                info!("Error reading config {:?}", e);
-                None
-            }
-        }
+    pub fn read_config_from_file(db_path: Option<String>) -> Option<NgAccountConfig> {
+        let meta_storage = RedbMetaStorage::from_file(db_path);
+        Self::read_config_inner(meta_storage)
+    }
+
+    pub fn read_config_from_backend(backend: impl StorageBackend) -> Option<NgAccountConfig> {
+        let meta_storage = RedbMetaStorage::from_backend(backend);
+        Self::read_config_inner(meta_storage)
     }
 
     pub fn serialize_updates(
@@ -473,5 +441,46 @@ impl<P: WalletPersister> NgAccount<P> {
 
         self.persist()?;
         Ok(())
+    }
+}
+
+impl<P: WalletPersister> NgAccount<P> {
+    fn open_account_inner(
+        descriptors: Vec<Descriptor<P>>,
+        meta_storage: Arc<Mutex<dyn MetaStorage>>,
+    ) -> Self
+    where
+        <P as WalletPersister>::Error: Debug,
+    {
+        let config = meta_storage.lock().unwrap().get_config().unwrap().unwrap();
+
+        let mut wallets: Vec<NgWallet<P>> = vec![];
+
+        for descriptor in descriptors {
+            let wallet = NgWallet::load(
+                descriptor.internal,
+                descriptor.external,
+                meta_storage.clone(),
+                descriptor.bdk_persister.clone(),
+            )
+            .unwrap();
+            wallets.push(wallet);
+        }
+
+        Self {
+            config,
+            wallets,
+            meta_storage,
+        }
+    }
+
+    fn read_config_inner(meta_storage: impl MetaStorage) -> Option<NgAccountConfig> {
+        match meta_storage.get_config() {
+            Ok(value) => value.clone(),
+            Err(e) => {
+                info!("Error reading config {:?}", e);
+                None
+            }
+        }
     }
 }

@@ -1,7 +1,11 @@
+use std::sync::{Arc, Mutex};
+
 use crate::account::{Descriptor, NgAccount};
+use crate::db::RedbMetaStorage;
+use crate::store::MetaStorage;
 use crate::utils::get_address_type;
-use bdk_wallet::WalletPersister;
 use bdk_wallet::bitcoin::Network;
+use bdk_wallet::WalletPersister;
 use redb::StorageBackend;
 use serde::{Deserialize, Serialize};
 
@@ -40,7 +44,6 @@ pub struct NgAccountConfig {
     pub index: u32,
     pub descriptors: Vec<NgDescriptor>,
     pub date_synced: Option<String>,
-    pub wallet_path: Option<String>,
     pub network: Network,
     pub id: String,
 }
@@ -70,7 +73,6 @@ impl<P: WalletPersister> Default for NgAccountBuilder<P> {
             id: None,
             date_synced: None,
             seed_has_passphrase: None,
-            open_in_memory: None,
         }
     }
 }
@@ -88,7 +90,6 @@ pub struct NgAccountBuilder<P: WalletPersister> {
     id: Option<String>,
     date_synced: Option<String>,
     seed_has_passphrase: Option<bool>,
-    open_in_memory: Option<bool>,
 }
 
 impl<P: WalletPersister> NgAccountBuilder<P> {
@@ -152,12 +153,22 @@ impl<P: WalletPersister> NgAccountBuilder<P> {
         self
     }
 
-    pub fn open_in_memory(mut self) -> Self {
-        self.open_in_memory = Some(true);
-        self
+    pub fn build_in_memory(self) -> NgAccount<P> {
+        let meta_storage = crate::store::InMemoryMetaStorage::new();
+        self.build_inner(meta_storage)
     }
 
-    pub fn build(self, meta_storage_backend: Option<impl StorageBackend>) -> NgAccount<P> {
+    pub fn build_from_file(self, db_path: Option<String>) -> NgAccount<P> {
+        let meta_storage = RedbMetaStorage::from_file(db_path);
+        self.build_inner(meta_storage)
+    }
+
+    pub fn build_from_backend(self, backend: impl StorageBackend) -> NgAccount<P> {
+        let meta_storage = RedbMetaStorage::from_backend(backend);
+        self.build_inner(meta_storage)
+    }
+
+    fn build_inner(self, meta_storage: impl MetaStorage + 'static) -> NgAccount<P> {
         let descriptors = self.descriptors.expect("Descriptors are required");
 
         let ng_descriptors = descriptors
@@ -180,7 +191,6 @@ impl<P: WalletPersister> NgAccountBuilder<P> {
                 .expect("Preferred address type is required"),
             descriptors: ng_descriptors,
             index: self.index.expect("Index is required"),
-            wallet_path: self.db_path,
             id: self.id.expect("id is required"),
             date_synced: self.date_synced,
             seed_has_passphrase: self.seed_has_passphrase.unwrap_or(false),
@@ -188,8 +198,7 @@ impl<P: WalletPersister> NgAccountBuilder<P> {
 
         NgAccount::new_from_descriptors(
             ng_account_config,
-            meta_storage_backend,
-            self.open_in_memory.unwrap_or(false),
+            Arc::new(Mutex::new(meta_storage)),
             descriptors,
         )
     }

@@ -11,7 +11,6 @@ mod utils;
 
 #[cfg(test)]
 mod tests {
-    use redb::backends::FileBackend;
     use std::sync::{Arc, Mutex};
 
     use crate::utils::tests_util;
@@ -20,9 +19,9 @@ mod tests {
     use ngwallet::config::{NgAccountBuilder, NgAccountConfig};
     #[cfg(feature = "envoy")]
     use {
-        crate::*, bdk_wallet::Update, bdk_wallet::bitcoin::Network,
-        bdk_wallet::rusqlite::Connection, ngwallet::account::Descriptor,
-        ngwallet::config::AddressType, ngwallet::ngwallet::NgWallet,
+        crate::*, bdk_wallet::bitcoin::Network, bdk_wallet::rusqlite::Connection,
+        bdk_wallet::Update, ngwallet::account::Descriptor, ngwallet::config::AddressType,
+        ngwallet::ngwallet::NgWallet,
     };
 
     #[test]
@@ -54,8 +53,7 @@ mod tests {
             .db_path(None)
             .network(Network::Signet)
             .id("1234567890".to_string())
-            .open_in_memory()
-            .build(None::<FileBackend>);
+            .build_in_memory();
 
         // Let's imagine we are applying updates remotely
         let mut updates = vec![];
@@ -182,7 +180,6 @@ mod tests {
         assert_eq!(config_from_backup.network, config.network);
         //hot wallet doesnt export descriptors, since they contain xprv
         assert_eq!(config_from_backup.descriptors.len(), 0);
-        assert_eq!(config_from_backup.wallet_path, None);
     }
 
     #[test]
@@ -196,7 +193,6 @@ mod tests {
         assert_eq!(config_from_backup.network, config.network);
         //watch only must export public descriptors
         assert_eq!(config_from_backup.descriptors, config.descriptors);
-        assert_eq!(config_from_backup.wallet_path, None);
     }
 
     #[test]

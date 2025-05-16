@@ -18,20 +18,20 @@ pub struct RedbMetaStorage {
 }
 
 impl RedbMetaStorage {
-    pub fn new(path: Option<String>, backend: Option<impl StorageBackend>) -> Self {
+    pub fn from_file(path: Option<String>) -> Self {
         let db = {
-            match backend {
-                None => {
-                    let file_path = path
-                        .clone()
-                        .map(|p| format!("{}/account.meta", p))
-                        .unwrap_or("account.meta".to_string());
-                    Builder::new().create(file_path).unwrap()
-                }
-                Some(b) => Builder::new().create_with_backend(b).unwrap(),
-            }
+            let file_path = path
+                .clone()
+                .map(|p| format!("{}/account.meta", p))
+                .unwrap_or("account.meta".to_string());
+            Builder::new().create(file_path).unwrap()
         };
 
+        RedbMetaStorage { db: Arc::new(db) }
+    }
+
+    pub fn from_backend(backend: impl StorageBackend) -> Self {
+        let db = Builder::new().create_with_backend(backend).unwrap();
         RedbMetaStorage { db: Arc::new(db) }
     }
 

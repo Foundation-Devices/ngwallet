@@ -11,7 +11,6 @@ pub mod tests_util {
     use ngwallet::account::{Descriptor, NgAccount};
     use ngwallet::config::{AddressType, NgAccountBuilder};
     use ngwallet::ngwallet::NgWallet;
-    use redb::backends::FileBackend;
     use std::str::FromStr;
     use std::sync::{Arc, Mutex};
     use std::time::{SystemTime, UNIX_EPOCH};
@@ -49,8 +48,7 @@ pub mod tests_util {
             .db_path(None)
             .network(Network::Signet)
             .id("1234567890".to_string())
-            .open_in_memory()
-            .build(None::<FileBackend>)
+            .build_in_memory()
     }
 
     //creates a new account with the descriptors,in memory db's
@@ -87,8 +85,7 @@ pub mod tests_util {
             .db_path(None)
             .network(Network::Signet)
             .id("1234567890".to_string())
-            .open_in_memory()
-            .build(None::<FileBackend>)
+            .build_in_memory()
     }
 
     pub fn add_funds_to_wallet<P: WalletPersister>(account: &mut NgAccount<P>) {
