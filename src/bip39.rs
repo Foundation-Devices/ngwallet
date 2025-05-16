@@ -49,7 +49,7 @@ pub fn get_random_seed() -> anyhow::Result<String> {
 }
 
 pub fn get_seed_string(prime_master_seed: [u8; 72]) -> anyhow::Result<String> {
-    let mnemonic = Mnemonic::from_entropy_in(Language::English, &prime_master_seed)?;
+    let mnemonic = Mnemonic::from_entropy_in(Language::English, &prime_master_seed[0..32])?;
     Ok(mnemonic.to_string())
 }
 
