@@ -215,17 +215,17 @@ impl<P: WalletPersister> NgAccount<P> {
     pub fn set_note(&mut self, tx_id: &str, note: &str) -> anyhow::Result<bool> {
         self.meta_storage
             .set_note(tx_id, note)
-            .map_err(|e| anyhow::anyhow!("Could not set note: {:?}", e))?;
+            .with_context(|| "Could not set note")?;
         Ok(true)
     }
 
     pub fn set_tag(&mut self, output: &Output, tag: &str) -> anyhow::Result<bool> {
         self.meta_storage
             .set_tag(output.get_id().as_str(), tag)
-            .map_err(|_| anyhow::anyhow!("Could not set tag "))?;
+            .with_context(|| "Could not set tag")?;
         self.meta_storage
             .add_tag(tag.to_string().as_str())
-            .map_err(|_| anyhow::anyhow!("Could not set tag "))?;
+            .with_context(|| "Could not add tag")?;
         Ok(true)
     }
 
@@ -351,37 +351,30 @@ impl<P: WalletPersister> NgAccount<P> {
     pub fn set_note_unchecked(&mut self, tx_id: &str, note: &str) -> anyhow::Result<bool> {
         self.meta_storage
             .set_note(tx_id, note)
-            .map_err(|e| anyhow::anyhow!("Could not set note: {:?}", e))?;
+            .with_context(|| "Could not set note")?;
         Ok(true)
     }
 
-    pub fn get_tag(&self, output_id: &str) -> Option<String> {
+    pub fn get_tag(&self, output_id: &str) -> anyhow::Result<Option<String>> {
         self.meta_storage
             .get_tag(output_id)
-            .map_err(|_| anyhow::anyhow!("Could not set tag "))
-            .unwrap()
+            .with_context(|| "Could not get tag ")
     }
 
     pub fn remove_tag(&mut self, target_tag: &str, rename_to: Option<&str>) -> anyhow::Result<()> {
-        self.meta_storage
-            .remove_tag(target_tag)
-            .map_err(|e| anyhow::anyhow!("Error {}", e))
-            .unwrap();
-        self.utxos()
-            .map_err(|e| anyhow::anyhow!("Error {}", e))
-            .unwrap()
-            .iter()
-            .for_each(|output: &Output| match output.clone().tag {
+        self.meta_storage.remove_tag(target_tag)?;
+        let utxos = self.utxos()?;
+        for output in utxos {
+            match &output.tag {
                 None => {}
                 Some(existing_tag) => {
                     let new_tag = rename_to.unwrap_or("");
                     if existing_tag.eq(target_tag) {
-                        self.set_tag(output, new_tag)
-                            .map_err(|e| anyhow::anyhow!("Error {}", e))
-                            .unwrap();
+                        self.set_tag(&output, new_tag)?;
                     }
                 }
-            });
+            }
+        }
 
         Ok(())
     }
