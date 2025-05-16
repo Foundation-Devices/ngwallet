@@ -53,7 +53,8 @@ mod tests {
             .db_path(None)
             .network(Network::Signet)
             .id("1234567890".to_string())
-            .build_in_memory();
+            .build_in_memory()
+            .unwrap();
 
         // Let's imagine we are applying updates remotely
         let mut updates = vec![];

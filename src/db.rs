@@ -1,6 +1,6 @@
 use crate::config::NgAccountConfig;
 use crate::store::MetaStorage;
-use anyhow::Result;
+use anyhow::{Context, Result};
 use redb::{Builder, Database, ReadableTable, StorageBackend, TableDefinition};
 use std::sync::Arc;
 
@@ -18,21 +18,25 @@ pub struct RedbMetaStorage {
 }
 
 impl RedbMetaStorage {
-    pub fn from_file(path: Option<String>) -> Self {
+    pub fn from_file(path: Option<String>) -> anyhow::Result<Self> {
         let db = {
             let file_path = path
                 .clone()
                 .map(|p| format!("{}/account.meta", p))
                 .unwrap_or("account.meta".to_string());
-            Builder::new().create(file_path).unwrap()
+            Builder::new()
+                .create(file_path)
+                .with_context(|| "Failed to create database")?
         };
 
-        RedbMetaStorage { db: Arc::new(db) }
+        Ok(RedbMetaStorage { db: Arc::new(db) })
     }
 
-    pub fn from_backend(backend: impl StorageBackend) -> Self {
-        let db = Builder::new().create_with_backend(backend).unwrap();
-        RedbMetaStorage { db: Arc::new(db) }
+    pub fn from_backend(backend: impl StorageBackend) -> anyhow::Result<Self> {
+        let db = Builder::new()
+            .create_with_backend(backend)
+            .with_context(|| "Failed to create database")?;
+        Ok(RedbMetaStorage { db: Arc::new(db) })
     }
 
     //TODO: fix persist

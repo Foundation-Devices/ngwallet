@@ -153,22 +153,22 @@ impl<P: WalletPersister> NgAccountBuilder<P> {
         self
     }
 
-    pub fn build_in_memory(self) -> NgAccount<P> {
+    pub fn build_in_memory(self) -> anyhow::Result<NgAccount<P>> {
         let meta_storage = crate::store::InMemoryMetaStorage::default();
         self.build_inner(meta_storage)
     }
 
-    pub fn build_from_file(self, db_path: Option<String>) -> NgAccount<P> {
-        let meta_storage = RedbMetaStorage::from_file(db_path);
+    pub fn build_from_file(self, db_path: Option<String>) -> anyhow::Result<NgAccount<P>> {
+        let meta_storage = RedbMetaStorage::from_file(db_path)?;
         self.build_inner(meta_storage)
     }
 
-    pub fn build_from_backend(self, backend: impl StorageBackend) -> NgAccount<P> {
-        let meta_storage = RedbMetaStorage::from_backend(backend);
+    pub fn build_from_backend(self, backend: impl StorageBackend) -> anyhow::Result<NgAccount<P>> {
+        let meta_storage = RedbMetaStorage::from_backend(backend)?;
         self.build_inner(meta_storage)
     }
 
-    fn build_inner(self, meta_storage: impl MetaStorage + 'static) -> NgAccount<P> {
+    fn build_inner(self, meta_storage: impl MetaStorage + 'static) -> anyhow::Result<NgAccount<P>> {
         let descriptors = self.descriptors.expect("Descriptors are required");
 
         let ng_descriptors = descriptors

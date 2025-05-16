@@ -7,7 +7,7 @@ use crate::ngwallet::NgWallet;
 use crate::store::MetaStorage;
 use crate::transaction::{BitcoinTransaction, Output};
 use crate::utils::get_address_type;
-use anyhow::{anyhow, Error};
+use anyhow::{anyhow, Context, Error};
 use bdk_wallet::bitcoin::Transaction;
 use bdk_wallet::chain::spk_client::FullScanRequest;
 use bdk_wallet::chain::spk_client::SyncRequest;
@@ -54,7 +54,7 @@ impl<P: WalletPersister> NgAccount<P> {
         ng_account_config: NgAccountConfig,
         meta: Arc<dyn MetaStorage>,
         descriptors: Vec<Descriptor<P>>,
-    ) -> Self {
+    ) -> anyhow::Result<Self> {
         let account_config = ng_account_config.clone();
         let NgAccountConfig {
             preferred_address_type,
@@ -72,7 +72,7 @@ impl<P: WalletPersister> NgAccount<P> {
                 meta.clone(),
                 descriptor.bdk_persister,
             )
-            .unwrap();
+            .with_context(|| "Failed to create wallet")?;
             wallets.push(wallet);
         }
 
@@ -81,35 +81,40 @@ impl<P: WalletPersister> NgAccount<P> {
             .find(|w| w.address_type == preferred_address_type);
 
         if coordinator_wallet.is_none() {
-            panic!("No wallet found with the preferred address type");
+            anyhow::bail!("No wallet found with the preferred address type");
         }
 
         meta.set_config(account_config.serialize().as_str())
-            .unwrap();
-        meta.persist().unwrap();
-        Self {
+            .with_context(|| "Failed to set account config")?;
+        meta.persist()
+            .with_context(|| "Failed to persist account config")?;
+
+        Ok(Self {
             config: account_config,
             wallets,
             meta_storage: meta,
-        }
+        })
     }
 
-    pub fn open_account_from_file(descriptors: Vec<Descriptor<P>>, db_path: Option<String>) -> Self
+    pub fn open_account_from_file(
+        descriptors: Vec<Descriptor<P>>,
+        db_path: Option<String>,
+    ) -> anyhow::Result<Self>
     where
         <P as WalletPersister>::Error: Debug,
     {
-        let meta_storage = RedbMetaStorage::from_file(db_path);
+        let meta_storage = RedbMetaStorage::from_file(db_path)?;
         Self::open_account_inner(descriptors, Arc::new(meta_storage))
     }
 
     pub fn open_account_from_backend(
         descriptors: Vec<Descriptor<P>>,
         backend: impl StorageBackend,
-    ) -> Self
+    ) -> anyhow::Result<Self>
     where
         <P as WalletPersister>::Error: Debug,
     {
-        let meta_storage = RedbMetaStorage::from_backend(backend);
+        let meta_storage = RedbMetaStorage::from_backend(backend)?;
         Self::open_account_inner(descriptors, Arc::new(meta_storage))
     }
 
@@ -217,12 +222,10 @@ impl<P: WalletPersister> NgAccount<P> {
     pub fn set_tag(&mut self, output: &Output, tag: &str) -> anyhow::Result<bool> {
         self.meta_storage
             .set_tag(output.get_id().as_str(), tag)
-            .map_err(|_| anyhow::anyhow!("Could not set tag "))
-            .unwrap();
+            .map_err(|_| anyhow::anyhow!("Could not set tag "))?;
         self.meta_storage
             .add_tag(tag.to_string().as_str())
-            .map_err(|_| anyhow::anyhow!("Could not set tag "))
-            .unwrap();
+            .map_err(|_| anyhow::anyhow!("Could not set tag "))?;
         Ok(true)
     }
 
@@ -384,12 +387,12 @@ impl<P: WalletPersister> NgAccount<P> {
     }
 
     pub fn read_config_from_file(db_path: Option<String>) -> Option<NgAccountConfig> {
-        let meta_storage = RedbMetaStorage::from_file(db_path);
+        let meta_storage = RedbMetaStorage::from_file(db_path).ok()?;
         Self::read_config_inner(meta_storage)
     }
 
     pub fn read_config_from_backend(backend: impl StorageBackend) -> Option<NgAccountConfig> {
-        let meta_storage = RedbMetaStorage::from_backend(backend);
+        let meta_storage = RedbMetaStorage::from_backend(backend).ok()?;
         Self::read_config_inner(meta_storage)
     }
 
@@ -428,11 +431,14 @@ impl<P: WalletPersister> NgAccount<P> {
     fn open_account_inner(
         descriptors: Vec<Descriptor<P>>,
         meta_storage: Arc<dyn MetaStorage>,
-    ) -> Self
+    ) -> anyhow::Result<Self>
     where
         <P as WalletPersister>::Error: Debug,
     {
-        let config = meta_storage.get_config().unwrap().unwrap();
+        let config = meta_storage
+            .get_config()
+            .with_context(|| "Failed to get load account config")?
+            .ok_or(anyhow::anyhow!("Account config not found"))?;
 
         let mut wallets: Vec<NgWallet<P>> = vec![];
 
@@ -443,15 +449,15 @@ impl<P: WalletPersister> NgAccount<P> {
                 meta_storage.clone(),
                 descriptor.bdk_persister.clone(),
             )
-            .unwrap();
+            .with_context(|| "Failed to load wallet")?;
             wallets.push(wallet);
         }
 
-        Self {
+        Ok(Self {
             config,
             wallets,
             meta_storage,
-        }
+        })
     }
 
     fn read_config_inner(meta_storage: impl MetaStorage) -> Option<NgAccountConfig> {

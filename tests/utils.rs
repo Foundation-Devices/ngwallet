@@ -49,6 +49,7 @@ pub mod tests_util {
             .network(Network::Signet)
             .id("1234567890".to_string())
             .build_in_memory()
+            .unwrap()
     }
 
     //creates a new account with the descriptors,in memory db's
@@ -86,6 +87,7 @@ pub mod tests_util {
             .network(Network::Signet)
             .id("1234567890".to_string())
             .build_in_memory()
+            .unwrap()
     }
 
     pub fn add_funds_to_wallet<P: WalletPersister>(account: &mut NgAccount<P>) {
