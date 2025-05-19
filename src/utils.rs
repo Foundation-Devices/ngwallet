@@ -1,7 +1,7 @@
 #[cfg(feature = "envoy")]
 use {
-    bdk_electrum::electrum_client::{Client, Config, Socks5Config},
     bdk_electrum::BdkElectrumClient,
+    bdk_electrum::electrum_client::{Client, Config, Socks5Config},
 };
 
 use crate::config::AddressType;

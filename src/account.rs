@@ -1,13 +1,13 @@
 use std::fmt::Debug;
 use std::sync::{Arc, Mutex};
 
-use crate::config::{AddressType, NgAccountConfig};
+use crate::config::{AddressType, NgAccountBackup, NgAccountConfig};
 use crate::db::RedbMetaStorage;
 use crate::ngwallet::NgWallet;
 use crate::store::MetaStorage;
 use crate::transaction::{BitcoinTransaction, Output};
 use crate::utils::get_address_type;
-use anyhow::{anyhow, Context, Error};
+use anyhow::{Context, Error, anyhow};
 use bdk_wallet::bitcoin::Transaction;
 use bdk_wallet::chain::spk_client::FullScanRequest;
 use bdk_wallet::chain::spk_client::SyncRequest;
@@ -144,7 +144,11 @@ impl<P: WalletPersister> NgAccount<P> {
             if self.is_hot() {
                 config.descriptors = vec![];
             }
-            config
+            let last_used_index = self.get_derivation_index();
+            NgAccountBackup {
+                ng_account_config: config,
+                last_used_index,
+            }
         };
         match serde_json::to_string(&config) {
             Ok(config) => Ok(config),

@@ -4,8 +4,9 @@ use crate::account::{Descriptor, NgAccount};
 use crate::db::RedbMetaStorage;
 use crate::store::MetaStorage;
 use crate::utils::get_address_type;
-use bdk_wallet::bitcoin::Network;
+use bdk_wallet::KeychainKind;
 use bdk_wallet::WalletPersister;
+use bdk_wallet::bitcoin::Network;
 use redb::StorageBackend;
 use serde::{Deserialize, Serialize};
 
@@ -48,6 +49,12 @@ pub struct NgAccountConfig {
     pub id: String,
 }
 
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct NgAccountBackup {
+    pub ng_account_config: NgAccountConfig,
+    pub last_used_index: Vec<(AddressType, KeychainKind, u32)>,
+}
+
 impl NgAccountConfig {
     pub fn serialize(&self) -> String {
         serde_json::to_string_pretty(self).unwrap()
@@ -55,6 +62,16 @@ impl NgAccountConfig {
 
     pub fn deserialize(data: &str) -> Self {
         serde_json::from_str(data).unwrap()
+    }
+}
+
+impl NgAccountBackup {
+    pub fn serialize(&self) -> String {
+        serde_json::to_string_pretty(self).unwrap()
+    }
+
+    pub fn deserialize(data: &str) -> serde_json::Result<NgAccountBackup> {
+        serde_json::from_str(data)
     }
 }
 
