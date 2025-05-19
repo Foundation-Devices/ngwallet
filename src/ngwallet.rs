@@ -2,6 +2,7 @@ use std::fmt::Debug;
 use std::result::Result::Ok;
 use std::str::FromStr;
 use std::sync::{Arc, Mutex};
+use std::time::Duration;
 
 use anyhow::Result;
 use bdk_wallet::bitcoin::{Address, Amount, Network, Psbt};
@@ -351,8 +352,11 @@ impl<P: WalletPersister> NgWallet<P> {
             }
             None => None,
         };
-        let electrum_config = Config::builder().socks5(socks5_config).build();
-
+        let electrum_config = Config::builder()
+            .socks5(socks5_config)
+            .timeout(Some(30))
+            .retry(3)
+            .build();
         let client = Client::from_config(electrum_server, electrum_config)?;
         let client: BdkElectrumClient<Client> = BdkElectrumClient::new(client);
         let update = client.full_scan(request, STOP_GAP, BATCH_SIZE, true)?;
