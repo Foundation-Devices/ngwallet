@@ -2,13 +2,12 @@ use std::fmt::Debug;
 use std::result::Result::Ok;
 use std::str::FromStr;
 use std::sync::{Arc, Mutex};
-use std::time::Duration;
 
 use anyhow::Result;
 use bdk_wallet::bitcoin::{Address, Amount, Network, Psbt};
+use bdk_wallet::chain::ChainPosition::{Confirmed, Unconfirmed};
 use bdk_wallet::chain::local_chain::CannotConnectError;
 use bdk_wallet::chain::spk_client::{FullScanRequest, FullScanResponse, SyncRequest, SyncResponse};
-use bdk_wallet::chain::ChainPosition::{Confirmed, Unconfirmed};
 use bdk_wallet::{CreateWithPersistError, PersistedWallet, SignOptions};
 use bdk_wallet::{KeychainKind, WalletPersister};
 use bdk_wallet::{Update, Wallet};
@@ -18,9 +17,9 @@ use crate::config::AddressType;
 #[cfg(feature = "envoy")]
 use {
     crate::{BATCH_SIZE, STOP_GAP},
+    bdk_electrum::BdkElectrumClient,
     bdk_electrum::electrum_client::Client,
     bdk_electrum::electrum_client::{Config, Socks5Config},
-    bdk_electrum::BdkElectrumClient,
 };
 
 use crate::store::MetaStorage;
@@ -144,11 +143,7 @@ impl<P: WalletPersister> NgWallet<P> {
                     //to milliseconds
                     date = Some(anchor.confirmation_time);
                     let block_height = anchor.block_id.height;
-                    if block_height > 0 {
-                        block_height
-                    } else {
-                        0
-                    }
+                    if block_height > 0 { block_height } else { 0 }
                 }
                 Unconfirmed { last_seen } => {
                     match last_seen {
@@ -400,11 +395,7 @@ impl<P: WalletPersister> NgWallet<P> {
                             } else {
                                 0
                             };
-                            if block_height > 0 {
-                                block_height
-                            } else {
-                                0
-                            }
+                            if block_height > 0 { block_height } else { 0 }
                         }
                         Unconfirmed { last_seen } => {
                             match last_seen {

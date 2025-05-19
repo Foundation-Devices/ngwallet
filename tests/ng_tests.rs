@@ -11,16 +11,16 @@ mod utils;
 
 #[cfg(test)]
 mod tests {
+    use bdk_wallet::KeychainKind;
     use std::sync::{Arc, Mutex};
 
-    use crate::utils::tests_util;
     use ngwallet::account::NgAccount;
     use ngwallet::bip39;
-    use ngwallet::config::{NgAccountBuilder, NgAccountConfig};
+    use ngwallet::config::{AddressType, NgAccountBackup, NgAccountBuilder};
     #[cfg(feature = "envoy")]
     use {
-        crate::*, bdk_wallet::bitcoin::Network, bdk_wallet::rusqlite::Connection,
-        bdk_wallet::Update, ngwallet::account::Descriptor, ngwallet::config::AddressType,
+        crate::*, bdk_wallet::Update, bdk_wallet::bitcoin::Network,
+        bdk_wallet::rusqlite::Connection, ngwallet::account::Descriptor,
         ngwallet::ngwallet::NgWallet,
     };
 
@@ -172,24 +172,41 @@ mod tests {
 
     #[test]
     fn check_hot_backup() {
-        let account = tests_util::get_ng_hot_wallet();
+        let mut account = utils::tests_util::get_ng_hot_wallet();
+        //add funds to the wallet to increment the index
+        utils::tests_util::add_funds_to_wallet(&mut account);
+        utils::tests_util::add_funds_to_wallet(&mut account);
+        account.persist().unwrap();
         let config = account.config.clone();
         assert!(account.is_hot());
         let backup = account.get_backup_json().unwrap();
-        let config_from_backup = serde_json::from_str::<NgAccountConfig>(&backup).unwrap();
+        println!("backup: {}", backup);
+        let account_backup = serde_json::from_str::<NgAccountBackup>(&backup).unwrap();
+        let config_from_backup = account_backup.ng_account_config;
+
         assert_eq!(config_from_backup.name, config.name);
         assert_eq!(config_from_backup.network, config.network);
         //hot wallet doesnt export descriptors, since they contain xprv
         assert_eq!(config_from_backup.descriptors.len(), 0);
+        let last_used_index = account_backup.last_used_index;
+
+        for &index in last_used_index.iter() {
+            if index.1 == KeychainKind::External {
+                assert_eq!(index.2, 1);
+            }
+        }
     }
 
     #[test]
     fn check_watch_only_backup() {
-        let account = tests_util::get_ng_watch_only_account();
+        let account = utils::tests_util::get_ng_watch_only_account();
         assert!(!account.is_hot());
         let config = account.config.clone();
         let backup = account.get_backup_json().unwrap();
-        let config_from_backup = serde_json::from_str::<NgAccountConfig>(&backup).unwrap();
+        let account_backup = serde_json::from_str::<NgAccountBackup>(&backup).unwrap();
+        let config_from_backup = account_backup.ng_account_config;
+        let last_used_index = account_backup.last_used_index;
+        println!("last_used_index: {:?}", last_used_index);
         assert_eq!(config_from_backup.name, config.name);
         assert_eq!(config_from_backup.network, config.network);
         //watch only must export public descriptors
@@ -198,7 +215,7 @@ mod tests {
 
     #[test]
     fn change_address_type() {
-        let mut account = tests_util::get_ng_hot_wallet();
+        let mut account = utils::tests_util::get_ng_hot_wallet();
         let wallet = account.get_coordinator_wallet();
         assert_eq!(account.config.preferred_address_type, AddressType::P2tr);
         assert_eq!(wallet.address_type, AddressType::P2tr);
