@@ -26,7 +26,7 @@ mod tests {
 
     #[test]
     #[cfg(feature = "envoy")]
-    fn new_wallet() {
+    fn new_wallet_test_scan() {
         let descriptors = vec![
             Descriptor {
                 internal: INTERNAL_DESCRIPTOR.to_string(),
@@ -46,11 +46,11 @@ mod tests {
             .seed_has_passphrase(false)
             .device_serial(None)
             .date_added(None)
-            .preferred_address_type(AddressType::P2wpkh)
+            .preferred_address_type(AddressType::P2tr)
             .index(0)
             .descriptors(descriptors)
             .date_synced(None)
-            .db_path(None)
+            .account_path(None)
             .network(Network::Signet)
             .id("1234567890".to_string())
             .build_in_memory()
@@ -77,20 +77,19 @@ mod tests {
         });
 
         let balance = account.balance().unwrap();
-        println!("Wallet balance: {} sat\n", balance.total().to_sat());
+        assert!(balance.total().to_sat() > 0);
 
         let transactions = account.transactions().unwrap();
+        assert!(!transactions.is_empty());
         for tx in transactions {
             println!(
-                "Transaction: {},{},{}",
-                tx.address, tx.amount, tx.is_confirmed
+                "Transaction: {},{},{},{}",
+                tx.address, tx.amount, tx.is_confirmed, tx.tx_id
             );
         }
 
-        let utxos = account.utxos();
-        utxos.unwrap().iter().for_each(|utxo| {
-            println!("Utxo: {:?}", utxo);
-        });
+        let utxos = account.utxos().unwrap();
+        assert!(!utxos.is_empty());
 
         let transactions = account.transactions().unwrap();
         //
@@ -127,6 +126,46 @@ mod tests {
             println!("Utxo After Do not Spend: {:?}", utxo_tag);
         }
         account.persist().unwrap();
+    }
+
+    #[test]
+    #[cfg(feature = "envoy")]
+    fn add_new_descriptor_to_existing() {
+        let second_descriptor = Descriptor {
+            internal: INTERNAL_DESCRIPTOR_2.to_string(),
+            external: None,
+            bdk_persister: Arc::new(Mutex::new(Connection::open_in_memory().unwrap())),
+        };
+        let descriptors = vec![Descriptor {
+            internal: INTERNAL_DESCRIPTOR.to_string(),
+            external: None,
+            bdk_persister: Arc::new(Mutex::new(Connection::open_in_memory().unwrap())),
+        }];
+
+        let mut account = NgAccountBuilder::default()
+            .name("Passport Prime".to_string())
+            .color("#fafafa".to_string())
+            .seed_has_passphrase(false)
+            .device_serial(None)
+            .date_added(None)
+            .preferred_address_type(AddressType::P2wpkh)
+            .index(0)
+            .descriptors(descriptors)
+            .date_synced(None)
+            .account_path(None)
+            .network(Network::Signet)
+            .id("1234567890".to_string())
+            .build_in_memory()
+            .unwrap();
+
+        account.add_new_descriptor(&second_descriptor).unwrap();
+
+        assert_eq!(account.wallets.len(), 2);
+
+        assert_eq!(account.config.descriptors.len(), 2);
+
+        //expect error when adding duplicate descriptor
+        assert!(account.add_new_descriptor(&second_descriptor).is_err());
     }
 
     //noinspection RsExternalLinter
