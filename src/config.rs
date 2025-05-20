@@ -45,6 +45,7 @@ pub struct NgAccountConfig {
     pub index: u32,
     pub descriptors: Vec<NgDescriptor>,
     pub date_synced: Option<String>,
+    pub account_path: Option<String>,
     pub network: Network,
     pub id: String,
 }
@@ -86,7 +87,7 @@ impl<P: WalletPersister> Default for NgAccountBuilder<P> {
             preferred_address_type: None,
             descriptors: None,
             index: None,
-            db_path: None,
+            account_path: None,
             id: None,
             date_synced: None,
             seed_has_passphrase: None,
@@ -103,7 +104,7 @@ pub struct NgAccountBuilder<P: WalletPersister> {
     preferred_address_type: Option<AddressType>,
     descriptors: Option<Vec<Descriptor<P>>>,
     index: Option<u32>,
-    db_path: Option<String>,
+    account_path: Option<String>,
     id: Option<String>,
     date_synced: Option<String>,
     seed_has_passphrase: Option<bool>,
@@ -150,8 +151,8 @@ impl<P: WalletPersister> NgAccountBuilder<P> {
         self
     }
 
-    pub fn db_path(mut self, db_path: Option<String>) -> Self {
-        self.db_path = db_path;
+    pub fn account_path(mut self, db_path: Option<String>) -> Self {
+        self.account_path = db_path;
         self
     }
 
@@ -211,6 +212,7 @@ impl<P: WalletPersister> NgAccountBuilder<P> {
             id: self.id.expect("id is required"),
             date_synced: self.date_synced,
             seed_has_passphrase: self.seed_has_passphrase.unwrap_or(false),
+            account_path: self.account_path,
         };
 
         NgAccount::new_from_descriptors(ng_account_config, Arc::new(meta_storage), descriptors)
