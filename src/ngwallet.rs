@@ -203,9 +203,10 @@ impl<P: WalletPersister> NgWallet<P> {
                         tx_id: tx_id.clone(),
                         vout: index as u32,
                         amount: amount.to_sat(),
-                        address: Address::from_script(&output.script_pubkey, wallet.network())
-                            .unwrap()
-                            .to_string(),
+                        address: utils::get_address_as_string(
+                            &output.script_pubkey,
+                            wallet.network(),
+                        ),
                         tag: storage.get_tag(&format!("{}:{}", &tx_id, index)).unwrap(),
                         do_not_spend,
                         keychain: wallet
@@ -226,16 +227,17 @@ impl<P: WalletPersister> NgWallet<P> {
 
             let address = {
                 let mut ret = "".to_string();
-                //its a sent transaction
+                //get address from output that belongs to the wallet
                 if amount.is_positive() {
                     tx.output
                         .clone()
                         .iter()
-                        .filter(|output| !wallet.is_mine(output.script_pubkey.clone()))
+                        .filter(|output| wallet.is_mine(output.script_pubkey.clone()))
                         .for_each(|output| {
-                            ret = Address::from_script(&output.script_pubkey, wallet.network())
-                                .unwrap()
-                                .to_string();
+                            ret = utils::get_address_as_string(
+                                &output.script_pubkey,
+                                wallet.network(),
+                            );
                         });
                 } else {
                     tx.output
@@ -247,9 +249,10 @@ impl<P: WalletPersister> NgWallet<P> {
                                 .is_none()
                         })
                         .for_each(|output| {
-                            ret = Address::from_script(&output.script_pubkey, wallet.network())
-                                .unwrap()
-                                .to_string();
+                            ret = utils::get_address_as_string(
+                                &output.script_pubkey,
+                                wallet.network(),
+                            );
                         });
                     // if the address is empty, then check for self transfer
                     if ret.is_empty() {
@@ -262,13 +265,13 @@ impl<P: WalletPersister> NgWallet<P> {
                                     .is_some_and(|x| x.0 == KeychainKind::External)
                             })
                             .for_each(|output| {
-                                ret = Address::from_script(&output.script_pubkey, wallet.network())
-                                    .unwrap()
-                                    .to_string();
+                                ret = utils::get_address_as_string(
+                                    &output.script_pubkey,
+                                    wallet.network(),
+                                );
                             });
                     }
                 }
-
                 //possible cancel transaction that involves change address
                 if ret.is_empty() && tx.output.len() == 1 {
                     tx.output
@@ -279,10 +282,11 @@ impl<P: WalletPersister> NgWallet<P> {
                                 .derivation_of_spk(output.script_pubkey.clone())
                                 .is_some_and(|x| x.0 == KeychainKind::Internal)
                         })
-                        .for_each(|o| {
-                            ret = Address::from_script(&o.script_pubkey, wallet.network())
-                                .unwrap()
-                                .to_string();
+                        .for_each(|output| {
+                            ret = utils::get_address_as_string(
+                                &output.script_pubkey,
+                                wallet.network(),
+                            );
                         });
                 }
                 ret

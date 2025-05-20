@@ -1,7 +1,7 @@
 use std::fmt::Debug;
 use std::sync::{Arc, Mutex};
 
-use crate::config::{AddressType, NgAccountBackup, NgAccountConfig};
+use crate::config::{AddressType, NgAccountBackup, NgAccountConfig, NgDescriptor};
 use crate::db::RedbMetaStorage;
 use crate::ngwallet::NgWallet;
 use crate::store::MetaStorage;
@@ -136,6 +136,33 @@ impl<P: WalletPersister> NgAccount<P> {
         self.meta_storage
             .set_config(self.config.serialize().as_str())
             .map_err(|e| anyhow::anyhow!(e))
+    }
+
+    pub fn add_new_descriptor(&mut self, descriptor: &Descriptor<P>) -> Result<(), Error> {
+        let address_type = get_address_type(&descriptor.internal);
+        for wallet_descriptor in &mut self.config.descriptors {
+            if wallet_descriptor.internal == descriptor.internal {
+                return Err(anyhow::anyhow!("Descriptor already exists"));
+            }
+            if address_type == wallet_descriptor.address_type {
+                return Err(anyhow::anyhow!("Address type already exists"));
+            }
+        }
+        self.config.descriptors.push(NgDescriptor {
+            internal: descriptor.internal.clone(),
+            external: descriptor.external.clone(),
+            address_type,
+        });
+        let wallet = NgWallet::new_from_descriptor(
+            descriptor.internal.clone(),
+            descriptor.external.clone(),
+            self.config.network,
+            self.meta_storage.clone(),
+            descriptor.bdk_persister.clone(),
+        )?;
+        self.wallets.push(wallet);
+        self.persist()?;
+        Ok(())
     }
 
     pub fn get_backup_json(&self) -> Result<String, Error> {
