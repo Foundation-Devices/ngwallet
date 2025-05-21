@@ -210,6 +210,7 @@ mod tests {
     // }
 
     #[test]
+    #[cfg(feature = "envoy")]
     fn check_hot_backup() {
         let mut account = utils::tests_util::get_ng_hot_wallet();
         //add funds to the wallet to increment the index
@@ -237,6 +238,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(feature = "envoy")]
     fn check_watch_only_backup() {
         let account = utils::tests_util::get_ng_watch_only_account();
         assert!(!account.is_hot());
@@ -253,6 +255,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(feature = "envoy")]
     fn change_address_type() {
         let mut account = utils::tests_util::get_ng_hot_wallet();
         let wallet = account.get_coordinator_wallet();
