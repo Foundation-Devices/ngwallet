@@ -22,7 +22,7 @@ unexpected_cfgs = { level = "warn", check-cfg = ['cfg(frb_expand)'] }
 envoy = ["dep:bdk_electrum", "dep:bip39", "bdk_wallet/rusqlite"]
 
 [patch.crates-io]
-bdk_wallet = { git = "https://github.com/Foundation-Devices/bdk_wallet", rev = "19760ac3cc7fb12b21a9e6143220a870747ffdc0" }
+bdk_wallet = { git = "https://github.com/Foundation-Devices/bdk_wallet", rev = "646fc24237427f9c0a669411c5ac709910ba5be5" }
 bdk_chain = { git = "https://github.com/Foundation-Devices/bdk-1", rev = "0a532f6bcb042edb192a2db2673e331e7189e00e" }
 bdk_core = { git = "https://github.com/Foundation-Devices/bdk-1", rev = "0a532f6bcb042edb192a2db2673e331e7189e00e" }
 bdk_electrum = { git = "https://github.com/Foundation-Devices/bdk-1", rev = "0a532f6bcb042edb192a2db2673e331e7189e00e" }

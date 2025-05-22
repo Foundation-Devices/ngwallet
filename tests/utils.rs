@@ -1,4 +1,5 @@
 #[allow(dead_code)]
+#[cfg(feature = "envoy")]
 pub mod tests_util {
     use bdk_electrum::bdk_core::bitcoin::{
         Address, Amount, BlockHash, FeeRate, Network, Transaction, TxOut,
