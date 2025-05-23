@@ -92,11 +92,11 @@ impl<P: WalletPersister> NgAccount<P> {
 
         //clippy is wrong about max_fee unused_assignments
         #[allow(unused_assignments)]
-        let mut max_fee = spendable_balance - amount;
+            let mut max_fee = spendable_balance - amount;
 
         //clippy is wrong about  max_fee_rate unused_assignments
         #[allow(unused_assignments)]
-        let mut max_fee_rate = 1;
+            let mut max_fee_rate = 1;
 
         let mut receive_amount = amount;
         //if user is trying to sweep in order to find the max fee we set receive to min spend…
@@ -749,9 +749,72 @@ impl<P: WalletPersister> NgAccount<P> {
         for wallet in wallets {
             let mut wallet = wallet.bdk_wallet.lock().unwrap();
             wallet.sign(psbt, sign_options.clone()).unwrap_or(false);
-            //why cancel? cancel will resets index, we increment index only
-            //if tx is broadcast
+            //Why cancel? Canceling will reset the index.
+            //We only increment the index if the transaction is broadcasted.
             wallet.cancel_tx(&psbt.clone().unsigned_tx);
         }
+    }
+
+    ///TODO, verify inputs belongs to the wallet
+    pub fn get_bitcoin_tx_from_psbt(&self, psbt_base64: &str) -> Result<BitcoinTransaction> {
+        let tx = BASE64_STANDARD
+            .decode(psbt_base64)
+            .map_err(|e| anyhow::anyhow!("Failed to decode PSBT: {}", e))
+            .unwrap();
+        let psbt = Psbt::deserialize(tx.as_slice()).unwrap();
+
+        let transaction = psbt.clone().unsigned_tx;
+        let mut amount = 0;
+        let mut address = "".to_string();
+        for outputs in transaction.output.iter() {
+            let script = outputs.script_pubkey.clone();
+            for wallet in self.wallets.iter() {
+                let bdk_wallet = wallet.bdk_wallet.lock().unwrap();
+                let derivation = bdk_wallet.derivation_of_spk(script.clone());
+                if derivation.is_none() {
+                    address = Address::from_script(&script, bdk_wallet.network())
+                        .unwrap()
+                        .to_string();
+                    amount = outputs.value.to_sat();
+                }
+            }
+            //check for self spends
+            if address.is_empty() {
+                for wallet in self.wallets.iter() {
+                    let bdk_wallet = wallet.bdk_wallet.lock().unwrap();
+                    let derivation = bdk_wallet.derivation_of_spk(script.clone());
+                    match derivation {
+                        None => {}
+                        Some((kind, _)) => {
+                            if kind == KeychainKind::External {
+                                address = Address::from_script(&script, bdk_wallet.network())
+                                    .unwrap()
+                                    .to_string();
+                                amount = outputs.value.to_sat();
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        Ok(BitcoinTransaction {
+            tx_id: transaction.clone().compute_txid().to_string(),
+            block_height: 0,
+            confirmations: 0,
+            is_confirmed: false,
+            fee: psbt.fee().unwrap_or(Amount::from_sat(0)).to_sat(),
+            fee_rate: psbt
+                .fee_rate()
+                .unwrap_or(FeeRate::from_sat_per_vb_unchecked(1))
+                .to_sat_per_vb_floor(),
+            amount: amount as i64,
+            inputs: vec![],
+            address,
+            outputs: vec![],
+            note: None,
+            date: None,
+            vsize: 0,
+        })
     }
 }
