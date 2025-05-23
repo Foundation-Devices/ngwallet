@@ -17,6 +17,7 @@ mod tests {
     use ngwallet::account::NgAccount;
     use ngwallet::bip39;
     use ngwallet::config::{AddressType, NgAccountBackup, NgAccountBuilder};
+    use ngwallet::send::TransactionParams;
     #[cfg(feature = "envoy")]
     use {
         crate::*, bdk_wallet::Update, bdk_wallet::bitcoin::Network,
@@ -252,6 +253,35 @@ mod tests {
         assert_eq!(config_from_backup.network, config.network);
         //watch only must export public descriptors
         assert_eq!(config_from_backup.descriptors, config.descriptors);
+    }
+
+    #[test]
+    fn check_psbt_parsing() {
+        let mut account = utils::tests_util::get_ng_watch_only_account();
+        utils::tests_util::add_funds_to_wallet(&mut account);
+        assert!(!account.is_hot());
+        let params = TransactionParams {
+            address: "tb1pspfcrvz538vvj9f9gfkd85nu5ty98zw9y5e302kha6zurv6vg07s8z7a8w".to_string(),
+            amount: 4000,
+            fee_rate: 2,
+            selected_outputs: vec![],
+            note: Some("not a note".to_string()),
+            tag: Some("hello".to_string()),
+            do_not_spend_change: false,
+        };
+
+        println!("params: {:?}", params);
+        let compose_transaction = account.compose_psbt(params.clone());
+        if let Ok(transaction) = compose_transaction {
+
+            let parsed = account.get_bitcoin_tx_from_psbt(&transaction.psbt_base64).unwrap();
+            assert_eq!(parsed.address, params.clone().address);
+            assert_eq!(parsed.fee, transaction.transaction.fee);
+            assert_eq!(parsed.amount as u64, params.amount);
+            assert_eq!(parsed.fee_rate, params.fee_rate);
+        }else {
+            panic!("Failed to compose transaction: {:?}", compose_transaction);
+        }
     }
 
     #[test]
