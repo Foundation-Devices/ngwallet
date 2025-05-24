@@ -5,10 +5,10 @@ use std::sync::{Arc, Mutex};
 
 use anyhow::Result;
 use bdk_wallet::bitcoin::{Address, Amount, Network, Psbt};
-use bdk_wallet::chain::ChainPosition::{Confirmed, Unconfirmed};
 use bdk_wallet::chain::local_chain::CannotConnectError;
 use bdk_wallet::chain::spk_client::{FullScanRequest, FullScanResponse, SyncRequest, SyncResponse};
-use bdk_wallet::{CreateWithPersistError, PersistedWallet, SignOptions};
+use bdk_wallet::chain::ChainPosition::{Confirmed, Unconfirmed};
+use bdk_wallet::{CreateWithPersistError, LoadWithPersistError, PersistedWallet, SignOptions};
 use bdk_wallet::{KeychainKind, WalletPersister};
 use bdk_wallet::{Update, Wallet};
 use log::info;
@@ -17,9 +17,9 @@ use crate::config::AddressType;
 #[cfg(feature = "envoy")]
 use {
     crate::{BATCH_SIZE, STOP_GAP},
-    bdk_electrum::BdkElectrumClient,
     bdk_electrum::electrum_client::Client,
     bdk_electrum::electrum_client::{Config, Socks5Config},
+    bdk_electrum::BdkElectrumClient,
 };
 
 use crate::store::MetaStorage;
@@ -99,27 +99,29 @@ impl<P: WalletPersister> NgWallet<P> {
         // #[cfg(feature = "envoy")]
         //     let mut persister = Connection::open(format!("{}/wallet.sqlite",db_path))?;
 
-        let wallet_opt = Wallet::load()
+        let wallet = Wallet::load()
             .descriptor(KeychainKind::Internal, Some(internal_descriptor))
             .descriptor(KeychainKind::External, external_descriptor)
             .extract_keys()
             .load_wallet(&mut *bdk_persister.lock().unwrap())
-            .unwrap();
+            .map_err(|e| match e {
+                LoadWithPersistError::Persist(_) => {
+                    anyhow::anyhow!("Failed to load wallet from persister: {e:?}")
+                }
+                LoadWithPersistError::InvalidChangeSet(e) => {
+                    anyhow::anyhow!("Failed to load wallet: {e}")
+                }
+            })?
+            .ok_or_else(|| anyhow::anyhow!("Failed to load wallet database."))?;
 
-        match wallet_opt {
-            Some(wallet) => {
-                let address_type = utils::get_address_type(
-                    &wallet.public_descriptor(KeychainKind::External).to_string(),
-                );
-                Ok(Self {
-                    bdk_wallet: Arc::new(Mutex::new(wallet)),
-                    bdk_persister,
-                    meta_storage,
-                    address_type,
-                })
-            }
-            None => Err(anyhow::anyhow!("Failed to load wallet database.")),
-        }
+        let address_type =
+            utils::get_address_type(&wallet.public_descriptor(KeychainKind::External).to_string());
+        Ok(Self {
+            bdk_wallet: Arc::new(Mutex::new(wallet)),
+            bdk_persister,
+            meta_storage,
+            address_type,
+        })
     }
 
     pub fn transactions(&self) -> Result<Vec<BitcoinTransaction>> {
@@ -143,7 +145,11 @@ impl<P: WalletPersister> NgWallet<P> {
                     //to milliseconds
                     date = Some(anchor.confirmation_time);
                     let block_height = anchor.block_id.height;
-                    if block_height > 0 { block_height } else { 0 }
+                    if block_height > 0 {
+                        block_height
+                    } else {
+                        0
+                    }
                 }
                 Unconfirmed { last_seen } => {
                     match last_seen {
@@ -399,7 +405,11 @@ impl<P: WalletPersister> NgWallet<P> {
                             } else {
                                 0
                             };
-                            if block_height > 0 { block_height } else { 0 }
+                            if block_height > 0 {
+                                block_height
+                            } else {
+                                0
+                            }
                         }
                         Unconfirmed { last_seen } => {
                             match last_seen {
