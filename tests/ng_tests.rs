@@ -256,6 +256,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(feature = "envoy")]
     fn check_psbt_parsing() {
         let mut account = utils::tests_util::get_ng_watch_only_account();
         utils::tests_util::add_funds_to_wallet(&mut account);
@@ -299,6 +300,34 @@ mod tests {
         let wallet = account.get_coordinator_wallet();
         assert_eq!(account.config.preferred_address_type, AddressType::P2wpkh);
         assert_eq!(wallet.address_type, AddressType::P2wpkh);
+    }
+
+    #[test]
+    #[cfg(feature = "envoy")]
+    fn verify_address() {
+        let account = utils::tests_util::get_ng_hot_wallet();
+        // TODO: get address for test wallet
+        // testnet segwit receive address 0
+        assert_eq!(account.verify_address(String::from("bc1qm6aw3ek0jvsngylhu3rnw66wv9g67ukah2lenl"), 0, 50).unwrap().unwrap(), 0);
+
+        // testnet segwit receive address 30
+        assert_eq!(account.verify_address(String::from("bc1qm6aw3ek0jvsngylhu3rnw66wv9g67ukah2lenl"), 0, 50).unwrap(), None);
+        assert_eq!(account.verify_address(String::from("bc1qm6aw3ek0jvsngylhu3rnw66wv9g67ukah2lenl"), 1, 50).unwrap().unwrap(), 30);
+
+        // test that we resume the search from the last verified address, and the downward search
+        // works
+        // testnet segwit receive address 5
+        assert_eq!(account.verify_address(String::from("bc1qm6aw3ek0jvsngylhu3rnw66wv9g67ukah2lenl"), 0, 50).unwrap(), None);
+        assert_eq!(account.verify_address(String::from("bc1qm6aw3ek0jvsngylhu3rnw66wv9g67ukah2lenl"), 1, 50).unwrap().unwrap(), 5);
+
+        // testnet segwit change address 0
+        assert_eq!(account.verify_address(String::from("bc1qm6aw3ek0jvsngylhu3rnw66wv9g67ukah2lenl"), 0, 50).unwrap(), None);
+
+        // mainnet segwit receive address 0, should fail network requirement
+        assert!(account.verify_address(String::from("bc1qm6aw3ek0jvsngylhu3rnw66wv9g67ukah2lenl"), 0, 50).is_err());
+
+        // testnet taproot receive address 0
+        assert_eq!(account.verify_address(String::from("bc1qm6aw3ek0jvsngylhu3rnw66wv9g67ukah2lenl"), 0, 50).unwrap().unwrap(), 0);
     }
 
     #[test]

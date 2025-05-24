@@ -1,5 +1,6 @@
 use std::fmt::Debug;
 use std::sync::{Arc, Mutex};
+use std::str::FromStr;
 
 use crate::config::{AddressType, NgAccountBackup, NgAccountConfig, NgDescriptor};
 use crate::db::RedbMetaStorage;
@@ -10,7 +11,8 @@ use crate::utils::get_address_type;
 use anyhow::{anyhow, Context, Error};
 use base64::prelude::BASE64_STANDARD;
 use base64::Engine;
-use bdk_wallet::bitcoin::{Psbt, Transaction};
+use bdk_wallet::bitcoin::{Address, AddressType as BdkAddressType, Psbt, Transaction};
+use bdk_wallet::bitcoin::address::{NetworkUnchecked, NetworkChecked};
 use bdk_wallet::chain::spk_client::FullScanRequest;
 use bdk_wallet::chain::spk_client::SyncRequest;
 use bdk_wallet::{AddressInfo, Balance, KeychainKind, Update, WalletPersister};
@@ -456,6 +458,76 @@ impl<P: WalletPersister> NgAccount<P> {
 
         self.persist()?;
         Ok(())
+    }
+
+    pub fn get_address_script_type(&self, address: &str) -> anyhow::Result<AddressType> {
+        let address: Address<NetworkUnchecked> = Address::from_str(address).map_err(|_| anyhow::anyhow!("Could not parse address"))?;
+        let address: Address<NetworkChecked> = address.require_network(self.config.network).map_err(|_| anyhow::anyhow!("Address is invalid for current network: {}", self.config.network))?;
+        match address.address_type() {
+            Some(t) => {
+                // TODO: could we switch to just using BDK's address type?
+                let res = match t {
+                    BdkAddressType::P2pkh => AddressType::P2pkh,
+                    BdkAddressType::P2sh => AddressType::P2sh,
+                    BdkAddressType::P2wpkh => AddressType::P2wpkh,
+                    BdkAddressType::P2wsh => AddressType::P2wsh,
+                    BdkAddressType::P2tr => AddressType::P2tr,
+                    _ => return Err(anyhow::anyhow!("New unsupported address type")),
+                };
+                Ok(res)
+            }
+            None => Err(anyhow::anyhow!("Unknown address type")),
+        }
+    }
+
+    pub fn verify_address(&self, address: String, attempt_number: u32, chunk_size: u32) -> anyhow::Result<Option<u32>> {
+        let address_type = self.get_address_script_type(&address)?;
+
+        let wallet = self
+            .wallets
+            .iter()
+            .find(|w| w.address_type == address_type);
+
+        let wallet = match wallet {
+            Some(w) => w.bdk_wallet.lock().unwrap(),
+            None => anyhow::bail!("No wallet found with the corresponding address type"),
+        };
+
+        // Optimization to always check address 0, which is often used during pairing
+        if address == wallet.peek_address(KeychainKind::External, 0).to_string() {
+            self.meta_storage.set_last_verified_address(address_type, KeychainKind::External, 0)?;
+            return Ok(Some(0));
+        }
+
+        let receive_start = self.meta_storage.get_last_verified_address(address_type, KeychainKind::External)?;
+        let change_start = self.meta_storage.get_last_verified_address(address_type, KeychainKind::Internal)?;
+        let attempt_offset = attempt_number * chunk_size;
+
+        for (keychain, start) in [(KeychainKind::External, receive_start), (KeychainKind::Internal, change_start)] {
+            for step in 0..(chunk_size / 2) {
+
+                // Start higher index at 1, and the lower index at 0,
+                // to search a total of chunk_size addresses
+                if let Some(high_index) = start.checked_add(attempt_offset + step + 1) {
+                    if address == wallet.peek_address(keychain, high_index).to_string() {
+                        self.meta_storage.set_last_verified_address(address_type, keychain, high_index)?;
+                        return Ok(Some(high_index))
+                    }
+                }
+
+                if let Some(low_index) = start.checked_sub(attempt_offset + step) {
+                    if address == wallet.peek_address(keychain, low_index).to_string() {
+                        self.meta_storage.set_last_verified_address(address_type, keychain, low_index)?;
+                        return Ok(Some(low_index))
+                    }
+                }
+
+                // TODO: could add an error for if the whole address space is explored, although
+                // this is more than 2x all IPv4 addresses, so it's unlikely
+            }
+        }
+
+        Ok(None)
     }
 }
 
