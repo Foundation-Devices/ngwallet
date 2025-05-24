@@ -7,7 +7,7 @@ use crate::ngwallet::NgWallet;
 use crate::store::MetaStorage;
 use crate::transaction::{BitcoinTransaction, Output};
 use crate::utils::get_address_type;
-use anyhow::{Context, Error, anyhow};
+use anyhow::{Context, Error, anyhow, bail};
 use bdk_wallet::bitcoin::Transaction;
 use bdk_wallet::chain::spk_client::FullScanRequest;
 use bdk_wallet::chain::spk_client::SyncRequest;
@@ -72,7 +72,7 @@ impl<P: WalletPersister> NgAccount<P> {
                 meta.clone(),
                 descriptor.bdk_persister,
             )
-            .with_context(|| "Failed to create wallet")?;
+                .with_context(|| "Failed to create wallet")?;
             wallets.push(wallet);
         }
 
@@ -100,8 +100,8 @@ impl<P: WalletPersister> NgAccount<P> {
         descriptors: Vec<Descriptor<P>>,
         db_path: Option<String>,
     ) -> anyhow::Result<Self>
-    where
-        <P as WalletPersister>::Error: Debug,
+        where
+            <P as WalletPersister>::Error: Debug,
     {
         let meta_storage = RedbMetaStorage::from_file(db_path)?;
         Self::open_account_inner(descriptors, Arc::new(meta_storage))
@@ -111,8 +111,8 @@ impl<P: WalletPersister> NgAccount<P> {
         descriptors: Vec<Descriptor<P>>,
         backend: impl StorageBackend,
     ) -> anyhow::Result<Self>
-    where
-        <P as WalletPersister>::Error: Debug,
+        where
+            <P as WalletPersister>::Error: Debug,
     {
         let meta_storage = RedbMetaStorage::from_backend(backend)?;
         Self::open_account_inner(descriptors, Arc::new(meta_storage))
@@ -456,8 +456,8 @@ impl<P: WalletPersister> NgAccount<P> {
         descriptors: Vec<Descriptor<P>>,
         meta_storage: Arc<dyn MetaStorage>,
     ) -> anyhow::Result<Self>
-    where
-        <P as WalletPersister>::Error: Debug,
+        where
+            <P as WalletPersister>::Error: Debug,
     {
         let config = meta_storage
             .get_config()
@@ -473,7 +473,7 @@ impl<P: WalletPersister> NgAccount<P> {
                 meta_storage.clone(),
                 descriptor.bdk_persister.clone(),
             )
-            .with_context(|| "Failed to load wallet")?;
+                .with_context(|| "Failed to load wallet")?;
             wallets.push(wallet);
         }
 

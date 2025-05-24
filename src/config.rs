@@ -1,6 +1,7 @@
 use std::sync::Arc;
+use anyhow::bail;
 
-use crate::account::{Descriptor, NgAccount};
+use crate::account::{Descriptor, NgAccount, RemoteUpdate};
 use crate::db::RedbMetaStorage;
 use crate::store::MetaStorage;
 use crate::utils::get_address_type;
@@ -63,6 +64,18 @@ impl NgAccountConfig {
 
     pub fn deserialize(data: &str) -> Self {
         serde_json::from_str(data).unwrap()
+    }
+
+    pub fn from_remote(remote_update: Vec<u8>) -> anyhow::Result<NgAccountConfig> {
+        let update: RemoteUpdate = minicbor_serde::from_slice(&remote_update)?;
+        match update.metadata {
+            None => {
+                bail!("expected metadata")
+            }
+            Some(update) => {
+                Ok(update)
+            }
+        }
     }
 }
 
