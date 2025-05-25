@@ -7,8 +7,10 @@ use crate::ngwallet::NgWallet;
 use crate::store::MetaStorage;
 use crate::transaction::{BitcoinTransaction, Output};
 use crate::utils::get_address_type;
-use anyhow::{Context, Error, anyhow};
-use bdk_wallet::bitcoin::Transaction;
+use anyhow::{anyhow, Context, Error};
+use base64::prelude::BASE64_STANDARD;
+use base64::Engine;
+use bdk_wallet::bitcoin::{Psbt, Transaction};
 use bdk_wallet::chain::spk_client::FullScanRequest;
 use bdk_wallet::chain::spk_client::SyncRequest;
 use bdk_wallet::{AddressInfo, Balance, KeychainKind, Update, WalletPersister};
@@ -345,12 +347,18 @@ impl<P: WalletPersister> NgAccount<P> {
     }
 
     pub fn sign(&self, psbt: &str) -> anyhow::Result<String> {
-        let mut psbt = psbt.to_string();
+        let tx = BASE64_STANDARD
+            .decode(psbt)
+            .with_context(|| "Failed to decode PSBT")?;
+
+        let mut psbt = Psbt::deserialize(&tx).with_context(|| "Failed to deserialize PSBT")?;
+
         for wallet in self.wallets.iter() {
-            psbt = wallet.sign(&psbt)?;
+            wallet.sign_psbt(&mut psbt)?;
         }
 
-        Ok(psbt)
+        let encoded_psbt = BASE64_STANDARD.encode(psbt.serialize_hex());
+        Ok(encoded_psbt)
     }
 
     pub fn is_hot(&self) -> bool {
