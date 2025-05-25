@@ -501,7 +501,7 @@ impl<P: WalletPersister> NgAccount<P> {
 
         let receive_start = self.meta_storage.get_last_verified_address(address_type, KeychainKind::External)?;
         let change_start = self.meta_storage.get_last_verified_address(address_type, KeychainKind::Internal)?;
-        let attempt_offset = attempt_number * chunk_size;
+        let attempt_offset = attempt_number * (chunk_size / 2);
 
         for (keychain, start) in [(KeychainKind::External, receive_start), (KeychainKind::Internal, change_start)] {
             for step in 0..(chunk_size / 2) {

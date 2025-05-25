@@ -17,11 +17,11 @@ pub mod tests_util {
     use std::time::{SystemTime, UNIX_EPOCH};
 
     pub fn get_ng_hot_wallet() -> NgAccount<Connection> {
-        const CHANGE_DESCRIPTOR: &str = "sh(wpkh(tprv8ZgxMBicQKsPeLx4U7UmbcYU5VhS4BRxv86o1gNqNqxEEJL47F9ZZhvBi1EVbKPmmFYnTEZ6uArarK6zZyrZf7mSyWZRAuNKQp4dHfxBdMM/49'/1'/0'/1/*))#ehhlgts8";
-        const DESCRIPTOR: &str = "tr(tprv8ZgxMBicQKsPeLx4U7UmbcYU5VhS4BRxv86o1gNqNqxEEJL47F9ZZhvBi1EVbKPmmFYnTEZ6uArarK6zZyrZf7mSyWZRAuNKQp4dHfxBdMM/86'/1'/0'/0/*)#uw0tj973";
+        const CHANGE_DESCRIPTOR: &str = "sh(wpkh(tprv8ZgxMBicQKsPeF3suFMx4YnZMeEemCKLTmTCWDzg92YSB2tLhmWmyvmCXn8anZ4XuZAuwiGB9Q4UkZKcEHFZFy792UtGSRtAqaHWc64QH2q/49'/1'/0'/1/*))#ncxfs3tl";
+        const DESCRIPTOR: &str = "tr(tprv8ZgxMBicQKsPeF3suFMx4YnZMeEemCKLTmTCWDzg92YSB2tLhmWmyvmCXn8anZ4XuZAuwiGB9Q4UkZKcEHFZFy792UtGSRtAqaHWc64QH2q/86'/1'/0'/0/*)#fx8l3ud5";
 
-        const CHANGE_DESCRIPTOR_2: &str = "sh(wpkh(tprv8ZgxMBicQKsPeLx4U7UmbcYU5VhS4BRxv86o1gNqNqxEEJL47F9ZZhvBi1EVbKPmmFYnTEZ6uArarK6zZyrZf7mSyWZRAuNKQp4dHfxBdMM/49'/1'/0'/1/*))#ehhlgts8";
-        const DESCRIPTOR_2: &str = "wpkh(tprv8ZgxMBicQKsPeLx4U7UmbcYU5VhS4BRxv86o1gNqNqxEEJL47F9ZZhvBi1EVbKPmmFYnTEZ6uArarK6zZyrZf7mSyWZRAuNKQp4dHfxBdMM/84'/1'/0'/0/*)#gksznsj0";
+        const CHANGE_DESCRIPTOR_2: &str = "sh(wpkh(tprv8ZgxMBicQKsPeF3suFMx4YnZMeEemCKLTmTCWDzg92YSB2tLhmWmyvmCXn8anZ4XuZAuwiGB9Q4UkZKcEHFZFy792UtGSRtAqaHWc64QH2q/49'/1'/0'/1/*))#ncxfs3tl";
+        const DESCRIPTOR_2: &str = "wpkh(tprv8ZgxMBicQKsPeF3suFMx4YnZMeEemCKLTmTCWDzg92YSB2tLhmWmyvmCXn8anZ4XuZAuwiGB9Q4UkZKcEHFZFy792UtGSRtAqaHWc64QH2q/84'/1'/0'/0/*)#kqma4m73";
 
         let descriptors = vec![
             Descriptor {
@@ -55,11 +55,11 @@ pub mod tests_util {
 
     //creates a new account with the descriptors,in memory db's
     pub fn get_ng_watch_only_account() -> NgAccount<Connection> {
-        const CHANGE_DESCRIPTOR: &str = "sh(wpkh([b32cb478/49'/1'/0']tpubDCe1VCD4yuxQxY6XUT1v7K2vLpfHNoVosUTwfRrkxetL5ADh7DsdiVSGfyCEy13jvrYZJVKNXeTRTDqYUL9PfPwRF1o9jFmaucj5WH34rZ6/1/*))#wpq5kysn";
-        const DESCRIPTOR: &str = "tr([b32cb478/86'/1'/0']tpubDDoYQrzVMLsiAyHic7ddJ4wbPVTmgMrP2VqJKxotZRZbzShPfTK1mdyxUzWdtrEgGm3xeMaWkPMnyFG3TVb4zbPgUizD8prMGteYHAT8V9o/0/*)#pjg8jh2k";
+        const CHANGE_DESCRIPTOR: &str = "sh(wpkh([20a6ab53/49'/1'/0']tpubDCSHQvE5xErAQFkY7WuQLpVJJmhbcLf6R3711p4oG32ojtn8SGM48bQ6bkHorT117BKGEorR3MJJVk4mrRLyG41g1kEfRbVAthRVoLi43Dq/1/*))#4p50dftv";
+        const DESCRIPTOR: &str = "tr([20a6ab53/86'/1'/0']tpubDC8wiq86H9ZMiscQMoG1LcvQayTKs9Ef32n4fpVV8JR2FfCDgbTE2yECxi2Bgtkb7UEUheRyeprMtWRFdMXWQq8bx6ugwdTaMp6s2bNYjSV/0/*)#taglzc2a";
 
-        const CHANGE_DESCRIPTOR_2: &str = "sh(wpkh([b32cb478/49'/1'/0']tpubDCe1VCD4yuxQxY6XUT1v7K2vLpfHNoVosUTwfRrkxetL5ADh7DsdiVSGfyCEy13jvrYZJVKNXeTRTDqYUL9PfPwRF1o9jFmaucj5WH34rZ6/1/*))#wpq5kysn";
-        const DESCRIPTOR_2: &str = "wpkh([b32cb478/84'/1'/0']tpubDC5rRpwGYWMofEkdcFH18PuxhjyUtQe4brjrkcG1qvyKRyDeSYCdRKTFVEfDn3sAwEmM2LYGK9oi15BRu8Wb6nDNex5jhDauPLztkR56KQ8/0/*)#t587tjpy";
+        const CHANGE_DESCRIPTOR_2: &str = "sh(wpkh([20a6ab53/49'/1'/0']tpubDCSHQvE5xErAQFkY7WuQLpVJJmhbcLf6R3711p4oG32ojtn8SGM48bQ6bkHorT117BKGEorR3MJJVk4mrRLyG41g1kEfRbVAthRVoLi43Dq/1/*))#4p50dftv";
+        const DESCRIPTOR_2: &str = "wpkh([20a6ab53/84'/1'/0']tpubDC4BKZc39XVBnaTSKLw9ks63KuuEFKdRB17PZMx6GfgxaMHhV79e3zSoVT2TDe9yxwyzm1YHMS8JFNQYWoTvkLJNHa5mTyA5Gkx8NwWVkvU/0/*)#m2myh9ws";
 
         let descriptors = vec![
             Descriptor {
@@ -107,7 +107,7 @@ pub mod tests_util {
     fn fill_with_unconfirmed<P: WalletPersister>(ngwallet: &&NgWallet<P>) {
         let mut wallet = ngwallet.bdk_wallet.lock().unwrap();
         let to_address =
-            Address::from_str("tb1pspfcrvz538vvj9f9gfkd85nu5ty98zw9y5e302kha6zurv6vg07s8z7a8w")
+            Address::from_str("tb1phv4spu4u6uakttj3mqqcr77la4u6a28j943d3cxjh02a6ny78d0s7tupl5")
                 .unwrap()
                 .require_network(Network::Signet)
                 .unwrap();

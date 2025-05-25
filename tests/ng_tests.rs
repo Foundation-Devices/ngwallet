@@ -308,26 +308,29 @@ mod tests {
         let account = utils::tests_util::get_ng_hot_wallet();
         // TODO: get address for test wallet
         // testnet segwit receive address 0
-        assert_eq!(account.verify_address(String::from("bc1qm6aw3ek0jvsngylhu3rnw66wv9g67ukah2lenl"), 0, 50).unwrap().unwrap(), 0);
+        assert_eq!(account.verify_address(String::from("tb1qp3s35d5579w9mtx4vkx2lngfpnwyjx8jxhveym"), 0, 50).unwrap().unwrap(), 0);
+
+        // testnet segwit receive address 1
+        assert_eq!(account.verify_address(String::from("tb1qnwqcuelz0xt79rls06ed9987q7zuecxr2zu5ht"), 0, 50).unwrap().unwrap(), 1);
 
         // testnet segwit receive address 30
-        assert_eq!(account.verify_address(String::from("bc1qm6aw3ek0jvsngylhu3rnw66wv9g67ukah2lenl"), 0, 50).unwrap(), None);
-        assert_eq!(account.verify_address(String::from("bc1qm6aw3ek0jvsngylhu3rnw66wv9g67ukah2lenl"), 1, 50).unwrap().unwrap(), 30);
+        assert_eq!(account.verify_address(String::from("tb1qsqtlt0q4why79qmf9jddp53nncyrutv90wdjkz"), 0, 50).unwrap(), None);
+        assert_eq!(account.verify_address(String::from("tb1qsqtlt0q4why79qmf9jddp53nncyrutv90wdjkz"), 1, 50).unwrap().unwrap(), 30);
 
         // test that we resume the search from the last verified address, and the downward search
         // works
         // testnet segwit receive address 5
-        assert_eq!(account.verify_address(String::from("bc1qm6aw3ek0jvsngylhu3rnw66wv9g67ukah2lenl"), 0, 50).unwrap(), None);
-        assert_eq!(account.verify_address(String::from("bc1qm6aw3ek0jvsngylhu3rnw66wv9g67ukah2lenl"), 1, 50).unwrap().unwrap(), 5);
+        assert_eq!(account.verify_address(String::from("tb1qttqxp75y56gvnrr6cy9p8ynvgyjf683ce6d9c4"), 0, 50).unwrap(), None);
+        assert_eq!(account.verify_address(String::from("tb1qttqxp75y56gvnrr6cy9p8ynvgyjf683ce6d9c4"), 1, 50).unwrap().unwrap(), 5);
 
         // testnet segwit change address 0
-        assert_eq!(account.verify_address(String::from("bc1qm6aw3ek0jvsngylhu3rnw66wv9g67ukah2lenl"), 0, 50).unwrap(), None);
+        assert_eq!(account.verify_address(String::from("tb1qm2rus4zu75exrlu9rrk0l3ctktkujtetqrjd88"), 0, 50).unwrap(), None);
 
         // mainnet segwit receive address 0, should fail network requirement
-        assert!(account.verify_address(String::from("bc1qm6aw3ek0jvsngylhu3rnw66wv9g67ukah2lenl"), 0, 50).is_err());
+        assert!(account.verify_address(String::from("bc1q99mxpdle2pqs3pkaxcz2wmk8l0avgskyuuc6pl"), 0, 50).is_err());
 
         // testnet taproot receive address 0
-        assert_eq!(account.verify_address(String::from("bc1qm6aw3ek0jvsngylhu3rnw66wv9g67ukah2lenl"), 0, 50).unwrap().unwrap(), 0);
+        assert_eq!(account.verify_address(String::from("tb1phv4spu4u6uakttj3mqqcr77la4u6a28j943d3cxjh02a6ny78d0s7tupl5"), 0, 50).unwrap().unwrap(), 0);
     }
 
     #[test]
