@@ -351,13 +351,14 @@ impl<P: WalletPersister> NgAccount<P> {
             .decode(psbt)
             .with_context(|| "Failed to decode PSBT")?;
 
-        let psbt = Psbt::deserialize(&tx).with_context(|| "Failed to deserialize PSBT")?;
+        let mut psbt = Psbt::deserialize(&tx).with_context(|| "Failed to deserialize PSBT")?;
 
         for wallet in self.wallets.iter() {
-            psbt = wallet.sign(&mut psbt)?;
+            wallet.sign_psbt(&mut psbt)?;
         }
 
-        Ok(psbt.serialize_hex())
+        let encoded_psbt = BASE64_STANDARD.encode(psbt.serialize_hex());
+        Ok(encoded_psbt)
     }
 
     pub fn is_hot(&self) -> bool {
