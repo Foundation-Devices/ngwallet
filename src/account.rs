@@ -480,7 +480,7 @@ impl<P: WalletPersister> NgAccount<P> {
         }
     }
 
-    pub fn verify_address(&self, address: String, attempt_number: u32, chunk_size: u32) -> anyhow::Result<Option<u32>> {
+    pub fn verify_address(&self, address: String, attempt_number: u32, chunk_size: u32) -> anyhow::Result<(Option<u32>, u32, u32, u32, u32)> {
         let address_type = self.get_address_script_type(&address)?;
 
         let wallet = self
@@ -496,29 +496,42 @@ impl<P: WalletPersister> NgAccount<P> {
         // Optimization to always check address 0, which is often used during pairing
         if address == wallet.peek_address(KeychainKind::External, 0).to_string() {
             self.meta_storage.set_last_verified_address(address_type, KeychainKind::External, 0)?;
-            return Ok(Some(0));
+            return Ok((Some(0), 0, 0, 0, 0));
         }
 
         let receive_start = self.meta_storage.get_last_verified_address(address_type, KeychainKind::External)?;
         let change_start = self.meta_storage.get_last_verified_address(address_type, KeychainKind::Internal)?;
         let attempt_offset = attempt_number * (chunk_size / 2);
 
-        for (keychain, start) in [(KeychainKind::External, receive_start), (KeychainKind::Internal, change_start)] {
-            for step in 0..(chunk_size / 2) {
+        let mut change_lower = change_start.saturating_sub(attempt_offset);
+        let mut change_upper = change_start.saturating_add(attempt_offset);
+        let mut receive_lower = receive_start.saturating_sub(attempt_offset);
+        let mut receive_upper = receive_start.saturating_add(attempt_offset);
+
+        for step in 0..(chunk_size / 2) {
+            for (keychain, start) in [(KeychainKind::External, receive_start), (KeychainKind::Internal, change_start)] {
 
                 // Start higher index at 1, and the lower index at 0,
                 // to search a total of chunk_size addresses
-                if let Some(high_index) = start.checked_add(attempt_offset + step + 1) {
-                    if address == wallet.peek_address(keychain, high_index).to_string() {
-                        self.meta_storage.set_last_verified_address(address_type, keychain, high_index)?;
-                        return Ok(Some(high_index))
+                if let Some(low_index) = start.checked_sub(attempt_offset + step) {
+                    match keychain {
+                        KeychainKind::Internal => change_lower = low_index,
+                        KeychainKind::External => receive_lower = low_index,
+                    }
+                    if address == wallet.peek_address(keychain, low_index).to_string() {
+                        self.meta_storage.set_last_verified_address(address_type, keychain, low_index)?;
+                        return Ok((Some(low_index), change_lower, change_upper, receive_lower, receive_upper))
                     }
                 }
 
-                if let Some(low_index) = start.checked_sub(attempt_offset + step) {
-                    if address == wallet.peek_address(keychain, low_index).to_string() {
-                        self.meta_storage.set_last_verified_address(address_type, keychain, low_index)?;
-                        return Ok(Some(low_index))
+                if let Some(high_index) = start.checked_add(attempt_offset + step + 1) {
+                    match keychain {
+                        KeychainKind::Internal => change_upper = high_index,
+                        KeychainKind::External => receive_upper = high_index,
+                    }
+                    if address == wallet.peek_address(keychain, high_index).to_string() {
+                        self.meta_storage.set_last_verified_address(address_type, keychain, high_index)?;
+                        return Ok((Some(high_index), change_lower, change_upper, receive_lower, receive_upper))
                     }
                 }
 
@@ -527,7 +540,7 @@ impl<P: WalletPersister> NgAccount<P> {
             }
         }
 
-        Ok(None)
+        Ok((None, change_lower, change_upper, receive_lower, receive_upper))
     }
 }
 
