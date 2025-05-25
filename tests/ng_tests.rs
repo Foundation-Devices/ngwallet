@@ -273,13 +273,14 @@ mod tests {
         println!("params: {:?}", params);
         let compose_transaction = account.compose_psbt(params.clone());
         if let Ok(transaction) = compose_transaction {
-
-            let parsed = account.get_bitcoin_tx_from_psbt(&transaction.psbt_base64).unwrap();
+            let parsed = account
+                .get_bitcoin_tx_from_psbt(&transaction.psbt_base64)
+                .unwrap();
             assert_eq!(parsed.address, params.clone().address);
             assert_eq!(parsed.fee, transaction.transaction.fee);
             assert_eq!(parsed.amount as u64, params.amount);
             assert_eq!(parsed.fee_rate, params.fee_rate);
-        }else {
+        } else {
             panic!("Failed to compose transaction: {:?}", compose_transaction);
         }
     }

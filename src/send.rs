@@ -92,11 +92,11 @@ impl<P: WalletPersister> NgAccount<P> {
 
         //clippy is wrong about max_fee unused_assignments
         #[allow(unused_assignments)]
-            let mut max_fee = spendable_balance - amount;
+        let mut max_fee = spendable_balance - amount;
 
         //clippy is wrong about  max_fee_rate unused_assignments
         #[allow(unused_assignments)]
-            let mut max_fee_rate = 1;
+        let mut max_fee_rate = 1;
 
         let mut receive_amount = amount;
         //if user is trying to sweep in order to find the max fee we set receive to min spend…
