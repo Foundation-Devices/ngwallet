@@ -1,9 +1,9 @@
 use crate::ngwallet::NgWallet;
-use anyhow::Result;
+use anyhow::{Context, Result};
 use base64::prelude::*;
 use bdk_wallet::bitcoin::secp256k1::Secp256k1;
 use bdk_wallet::bitcoin::{
-    Address, Amount, FeeRate, Psbt, ScriptBuf, Transaction, TxIn, Txid, Weight, psbt,
+    psbt, Address, Amount, FeeRate, Psbt, ScriptBuf, Transaction, TxIn, Txid, Weight,
 };
 use bdk_wallet::coin_selection::InsufficientFunds;
 use bdk_wallet::error::CreateTxError;
@@ -759,9 +759,9 @@ impl<P: WalletPersister> NgAccount<P> {
     pub fn get_bitcoin_tx_from_psbt(&self, psbt_base64: &str) -> Result<BitcoinTransaction> {
         let tx = BASE64_STANDARD
             .decode(psbt_base64)
-            .map_err(|e| anyhow::anyhow!("Failed to decode PSBT: {}", e))
-            .unwrap();
-        let psbt = Psbt::deserialize(tx.as_slice()).unwrap();
+            .with_context(|| "Failed to decode PSBT")?;
+        let psbt =
+            Psbt::deserialize(tx.as_slice()).with_context(|| "Failed to deserialize PSBT")?;
 
         let transaction = psbt.clone().unsigned_tx;
         let mut amount = 0;
