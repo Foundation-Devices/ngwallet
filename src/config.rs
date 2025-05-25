@@ -1,5 +1,5 @@
-use std::sync::Arc;
 use anyhow::bail;
+use std::sync::Arc;
 
 use crate::account::{Descriptor, NgAccount, RemoteUpdate};
 use crate::db::RedbMetaStorage;
@@ -72,9 +72,7 @@ impl NgAccountConfig {
             None => {
                 bail!("expected metadata")
             }
-            Some(update) => {
-                Ok(update)
-            }
+            Some(update) => Ok(update),
         }
     }
 }
