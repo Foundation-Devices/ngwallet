@@ -1,5 +1,6 @@
-use crate::config::NgAccountConfig;
+use crate::config::{AddressType, NgAccountConfig};
 use anyhow::Result;
+use bdk_wallet::KeychainKind;
 use std::{
     fmt::Debug,
     sync::{Arc, Mutex},
@@ -21,6 +22,9 @@ pub trait MetaStorage: Debug + Send + Sync {
     fn set_config(&self, deserialized_config: &str) -> Result<()>;
     fn get_config(&self) -> Result<Option<NgAccountConfig>>;
 
+    fn set_last_verified_address(&self, address_type: AddressType, keychain: KeychainKind, index: u32) -> Result<()>;
+    fn get_last_verified_address(&self, address_type: AddressType, keychain: KeychainKind) -> Result<u32>;
+
     fn persist(&self) -> Result<bool>;
 }
 
@@ -31,6 +35,7 @@ pub struct InMemoryMetaStorage {
     tag_store: Map<String, String>,
     tag_list: Map<String, String>,
     do_not_spend_store: Map<String, bool>,
+    last_verified_address_store: Map<(AddressType, KeychainKind), u32>
 }
 
 type Map<K, V> = Arc<Mutex<std::collections::HashMap<K, V>>>;
@@ -98,6 +103,17 @@ impl MetaStorage for InMemoryMetaStorage {
         } else {
             Ok(None)
         }
+    }
+
+    fn set_last_verified_address(&self, address_type: AddressType, keychain: KeychainKind, index: u32) -> Result<()> {
+        let mut map = self.last_verified_address_store.lock().unwrap();
+        map.insert((address_type, keychain), index);
+        Ok(())
+    }
+
+    fn get_last_verified_address(&self, address_type: AddressType, keychain: KeychainKind) -> Result<u32> {
+        let map = self.last_verified_address_store.lock().unwrap();
+        Ok(map.get(&(address_type, keychain)).unwrap_or(&0).to_owned())
     }
 
     fn persist(&self) -> Result<bool> {
