@@ -107,7 +107,7 @@ pub mod tests_util {
     fn fill_with_unconfirmed<P: WalletPersister>(ngwallet: &&NgWallet<P>) {
         let mut wallet = ngwallet.bdk_wallet.lock().unwrap();
         let to_address =
-            Address::from_str("tb1phv4spu4u6uakttj3mqqcr77la4u6a28j943d3cxjh02a6ny78d0s7tupl5")
+            Address::from_str("tb1pspfcrvz538vvj9f9gfkd85nu5ty98zw9y5e302kha6zurv6vg07s8z7a8w")
                 .unwrap()
                 .require_network(Network::Signet)
                 .unwrap();
