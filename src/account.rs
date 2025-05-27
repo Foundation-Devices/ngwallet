@@ -348,7 +348,7 @@ impl<P: WalletPersister> NgAccount<P> {
         derivation_index
     }
 
-    pub fn sign(&self, psbt: &str) -> anyhow::Result<String> {
+    pub fn sign(&self, psbt: &str, options: bdk_wallet::SignOptions) -> anyhow::Result<String> {
         let tx = BASE64_STANDARD
             .decode(psbt)
             .with_context(|| "Failed to decode PSBT")?;
@@ -356,7 +356,7 @@ impl<P: WalletPersister> NgAccount<P> {
         let mut psbt = Psbt::deserialize(&tx).with_context(|| "Failed to deserialize PSBT")?;
 
         for wallet in self.wallets.iter() {
-            wallet.sign_psbt(&mut psbt)?;
+            wallet.sign_psbt(&mut psbt, options.clone())?;
         }
 
         let encoded_psbt = BASE64_STANDARD.encode(psbt.serialize());

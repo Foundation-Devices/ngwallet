@@ -476,11 +476,8 @@ impl<P: WalletPersister> NgWallet<P> {
         Ok(psbt.serialize_hex())
     }
 
-    pub fn sign_psbt(&self, psbt: &mut Psbt) -> Result<()> {
-        self.bdk_wallet
-            .lock()
-            .unwrap()
-            .sign(psbt, SignOptions::default())?;
+    pub fn sign_psbt(&self, psbt: &mut Psbt, options: SignOptions) -> Result<()> {
+        self.bdk_wallet.lock().unwrap().sign(psbt, options)?;
         Ok(())
     }
 
