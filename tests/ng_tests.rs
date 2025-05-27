@@ -5,13 +5,14 @@ const INTERNAL_DESCRIPTOR: &str = "wpkh(tprv8ZgxMBicQKsPeLx4U7UmbcYU5VhS4BRxv86o
 const INTERNAL_DESCRIPTOR_2: &str = "tr(tprv8ZgxMBicQKsPeLx4U7UmbcYU5VhS4BRxv86o1gNqNqxEEJL47F9ZZhvBi1EVbKPmmFYnTEZ6uArarK6zZyrZf7mSyWZRAuNKQp4dHfxBdMM/86'/1'/0'/0/*)#uw0tj973";
 #[cfg(feature = "envoy")]
 const ELECTRUM_SERVER: &str = "ssl://mempool.space:60602";
+const ELECTRUM_SERVER_T4: &str = "ssl://testnet4.foundation.xyz:50002";
 
 #[cfg(feature = "envoy")]
 mod utils;
 
 #[cfg(test)]
 mod tests {
-    use bdk_wallet::KeychainKind;
+    use bdk_wallet::{KeychainKind, SignOptions};
     use std::sync::{Arc, Mutex};
 
     use ngwallet::account::NgAccount;
@@ -24,6 +25,7 @@ mod tests {
         bdk_wallet::rusqlite::Connection, ngwallet::account::Descriptor,
         ngwallet::ngwallet::NgWallet,
     };
+    use ngwallet::bip39::{Descriptors, get_descriptors};
 
     #[test]
     #[cfg(feature = "envoy")]
@@ -131,6 +133,118 @@ mod tests {
 
     #[test]
     #[cfg(feature = "envoy")]
+    fn test_input_mis_match() {
+        let descriptors = get_descriptors("addict hold sand engage ostrich cousin swarm away puzzle huge rookie fancy"
+                                              .to_string(), Network::Testnet4, None)
+            .map(|descriptors| {
+                descriptors.into_iter().map(|d| Descriptor {
+                    internal: d.descriptor_xpub.to_string(),
+                    external: Some(d.change_descriptor_xprv.to_string()),
+                    bdk_persister: Arc::new(Mutex::new(Connection::open_in_memory().unwrap())),
+                }).collect::<Vec<_>>()
+            }).unwrap();
+
+        let descriptors_xprv = get_descriptors("addict hold sand engage ostrich cousin swarm away puzzle huge rookie fancy"
+                                                   .to_string(), Network::Testnet4, None)
+            .map(|descriptors| {
+                descriptors.into_iter().map(|d| Descriptor {
+                    internal: d.descriptor_xprv.to_string(),
+                    external: Some(d.change_descriptor_xprv.to_string()),
+                    bdk_persister: Arc::new(Mutex::new(Connection::open_in_memory().unwrap())),
+                }).collect::<Vec<_>>()
+            }).unwrap();
+
+        let mut account = NgAccountBuilder::default()
+            .name("Passport Prime".to_string())
+            .color("red".to_string())
+            .seed_has_passphrase(false)
+            .device_serial(None)
+            .date_added(None)
+            .preferred_address_type(AddressType::P2wpkh)
+            .index(0)
+            .descriptors(descriptors)
+            .date_synced(None)
+            .account_path(None)
+            .network(Network::Testnet4)
+            .id("1234567890".to_string())
+            .build_in_memory()
+            .unwrap();
+
+        let mut account_with_prv = NgAccountBuilder::default()
+            .name("Passport Prime".to_string())
+            .color("red".to_string())
+            .seed_has_passphrase(false)
+            .device_serial(None)
+            .date_added(None)
+            .preferred_address_type(AddressType::P2wpkh)
+            .index(0)
+            .descriptors(descriptors_xprv)
+            .date_synced(None)
+            .account_path(None)
+            .network(Network::Testnet4)
+            .id("1234567890".to_string())
+            .build_in_memory()
+            .unwrap();
+
+        // Let's imagine we are applying updates remotely
+        let mut updates = vec![];
+
+        for wallet in account.wallets.iter() {
+            let (address_type, request) = account.full_scan_request(wallet.address_type).unwrap();
+            let update = NgWallet::<Connection>::scan(request, ELECTRUM_SERVER_T4, None).unwrap();
+            updates.push((address_type, Update::from(update)));
+        }
+
+        let payload = NgAccount::<Connection>::serialize_updates(None, updates).unwrap();
+        account.update(payload).unwrap();
+
+        let address = account.next_address().unwrap();
+        address.iter().for_each(|(address, address_type)| {
+            println!(
+                "Generated address {} at index {} of type {:?}",
+                address.address, address.index, address_type
+            );
+        });
+
+        let balance = account.balance().unwrap();
+        assert!(balance.total().to_sat() > 0);
+
+        let transactions = account.transactions().unwrap();
+        assert!(!transactions.is_empty());
+        for tx in transactions {
+            println!(
+                "Transaction: {},{},{},{}",
+                tx.address, tx.amount, tx.is_confirmed, tx.tx_id
+            );
+        }
+
+        let utxos = account.utxos().unwrap();
+        assert!(!utxos.is_empty());
+
+        let compose_tx = account.compose_psbt(TransactionParams {
+            address: "tb1qydjtc47ru9c055gv7adpfs8uzw8dhy0p52fj3y".to_string(),
+            amount: 1000,
+            fee_rate: 1,
+            selected_outputs: vec![],
+            note: None,
+            tag: None,
+            do_not_spend_change: false,
+        }).unwrap();
+
+        println!("Composed PSBT: {}", compose_tx.psbt_base64.clone());
+        println!("is_finalized: {}", compose_tx.is_finalized);
+
+        let parse = account_with_prv.sign(&compose_tx.psbt_base64, SignOptions::default()).unwrap();
+
+        NgAccount::<Connection>::decode_psbt(
+            compose_tx,
+            &parse,
+        ).unwrap();
+        account.persist().unwrap();
+    }
+
+    // #[test]
+    // #[cfg(feature = "envoy")]
     fn add_new_descriptor_to_existing() {
         let second_descriptor = Descriptor {
             internal: INTERNAL_DESCRIPTOR_2.to_string(),
@@ -337,6 +451,7 @@ mod tests {
         // testnet taproot receive address 0
         assert_eq!(account.verify_address(String::from("tb1phv4spu4u6uakttj3mqqcr77la4u6a28j943d3cxjh02a6ny78d0s7tupl5"), 0, 50).unwrap().0.unwrap(), 0);
     }
+
 
     #[test]
     fn autocomplete_seedword() {

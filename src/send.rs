@@ -425,9 +425,10 @@ impl<P: WalletPersister> NgAccount<P> {
             .map_err(|e| anyhow::anyhow!("Failed to decode PSBT: {}", e))?;
         let psbt = Psbt::deserialize(psbt_bytes.as_slice())
             .map_err(|e| anyhow::anyhow!("Failed to deserialize PSBT: {}", e))?;
+        info!("psbt {:?}",psbt.serialize_hex());
         let psbt_finalized = psbt
             .finalize(&Secp256k1::verification_only())
-            .map_err(|(_, _)| anyhow::anyhow!("Failed to finalize PSBT"))?;
+            .map_err(|(_, err)| anyhow::anyhow!("Failed to finalize PSBT {err:?}"))?;
         Ok(DraftTransaction {
             psbt_base64: BASE64_STANDARD
                 .encode(psbt_finalized.clone().serialize())
