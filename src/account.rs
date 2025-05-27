@@ -1,6 +1,6 @@
 use std::fmt::Debug;
-use std::sync::{Arc, Mutex};
 use std::str::FromStr;
+use std::sync::{Arc, Mutex};
 
 use crate::config::{AddressType, NgAccountBackup, NgAccountConfig, NgDescriptor};
 use crate::db::RedbMetaStorage;
@@ -11,8 +11,8 @@ use crate::utils::get_address_type;
 use anyhow::{anyhow, Context, Error};
 use base64::prelude::BASE64_STANDARD;
 use base64::Engine;
+use bdk_wallet::bitcoin::address::{NetworkChecked, NetworkUnchecked};
 use bdk_wallet::bitcoin::{Address, AddressType as BdkAddressType, Psbt, Transaction};
-use bdk_wallet::bitcoin::address::{NetworkUnchecked, NetworkChecked};
 use bdk_wallet::chain::spk_client::FullScanRequest;
 use bdk_wallet::chain::spk_client::SyncRequest;
 use bdk_wallet::{AddressInfo, Balance, KeychainKind, Update, WalletPersister};
@@ -359,7 +359,7 @@ impl<P: WalletPersister> NgAccount<P> {
             wallet.sign_psbt(&mut psbt)?;
         }
 
-        let encoded_psbt = BASE64_STANDARD.encode(psbt.serialize_hex());
+        let encoded_psbt = BASE64_STANDARD.encode(psbt.serialize());
         Ok(encoded_psbt)
     }
 
@@ -461,8 +461,15 @@ impl<P: WalletPersister> NgAccount<P> {
     }
 
     pub fn get_address_script_type(&self, address: &str) -> anyhow::Result<AddressType> {
-        let address: Address<NetworkUnchecked> = Address::from_str(address).map_err(|_| anyhow::anyhow!("Could not parse address"))?;
-        let address: Address<NetworkChecked> = address.require_network(self.config.network).map_err(|_| anyhow::anyhow!("Address is invalid for current network: {}", self.config.network))?;
+        let address: Address<NetworkUnchecked> =
+            Address::from_str(address).map_err(|_| anyhow::anyhow!("Could not parse address"))?;
+        let address: Address<NetworkChecked> =
+            address.require_network(self.config.network).map_err(|_| {
+                anyhow::anyhow!(
+                    "Address is invalid for current network: {}",
+                    self.config.network
+                )
+            })?;
         match address.address_type() {
             Some(t) => {
                 // TODO: could we switch to just using BDK's address type?
@@ -480,13 +487,15 @@ impl<P: WalletPersister> NgAccount<P> {
         }
     }
 
-    pub fn verify_address(&self, address: String, attempt_number: u32, chunk_size: u32) -> anyhow::Result<(Option<u32>, u32, u32, u32, u32)> {
+    pub fn verify_address(
+        &self,
+        address: String,
+        attempt_number: u32,
+        chunk_size: u32,
+    ) -> anyhow::Result<(Option<u32>, u32, u32, u32, u32)> {
         let address_type = self.get_address_script_type(&address)?;
 
-        let wallet = self
-            .wallets
-            .iter()
-            .find(|w| w.address_type == address_type);
+        let wallet = self.wallets.iter().find(|w| w.address_type == address_type);
 
         let wallet = match wallet {
             Some(w) => w.bdk_wallet.lock().unwrap(),
@@ -495,12 +504,17 @@ impl<P: WalletPersister> NgAccount<P> {
 
         // Optimization to always check address 0, which is often used during pairing
         if address == wallet.peek_address(KeychainKind::External, 0).to_string() {
-            self.meta_storage.set_last_verified_address(address_type, KeychainKind::External, 0)?;
+            self.meta_storage
+                .set_last_verified_address(address_type, KeychainKind::External, 0)?;
             return Ok((Some(0), 0, 0, 0, 0));
         }
 
-        let receive_start = self.meta_storage.get_last_verified_address(address_type, KeychainKind::External)?;
-        let change_start = self.meta_storage.get_last_verified_address(address_type, KeychainKind::Internal)?;
+        let receive_start = self
+            .meta_storage
+            .get_last_verified_address(address_type, KeychainKind::External)?;
+        let change_start = self
+            .meta_storage
+            .get_last_verified_address(address_type, KeychainKind::Internal)?;
         let attempt_offset = attempt_number * (chunk_size / 2);
 
         let mut change_lower = change_start.saturating_sub(attempt_offset);
@@ -509,8 +523,10 @@ impl<P: WalletPersister> NgAccount<P> {
         let mut receive_upper = receive_start.saturating_add(attempt_offset);
 
         for step in 0..(chunk_size / 2) {
-            for (keychain, start) in [(KeychainKind::External, receive_start), (KeychainKind::Internal, change_start)] {
-
+            for (keychain, start) in [
+                (KeychainKind::External, receive_start),
+                (KeychainKind::Internal, change_start),
+            ] {
                 // Start higher index at 1, and the lower index at 0,
                 // to search a total of chunk_size addresses
                 if let Some(low_index) = start.checked_sub(attempt_offset + step) {
@@ -519,8 +535,18 @@ impl<P: WalletPersister> NgAccount<P> {
                         KeychainKind::External => receive_lower = low_index,
                     }
                     if address == wallet.peek_address(keychain, low_index).to_string() {
-                        self.meta_storage.set_last_verified_address(address_type, keychain, low_index)?;
-                        return Ok((Some(low_index), change_lower, change_upper, receive_lower, receive_upper))
+                        self.meta_storage.set_last_verified_address(
+                            address_type,
+                            keychain,
+                            low_index,
+                        )?;
+                        return Ok((
+                            Some(low_index),
+                            change_lower,
+                            change_upper,
+                            receive_lower,
+                            receive_upper,
+                        ));
                     }
                 }
 
@@ -530,8 +556,18 @@ impl<P: WalletPersister> NgAccount<P> {
                         KeychainKind::External => receive_upper = high_index,
                     }
                     if address == wallet.peek_address(keychain, high_index).to_string() {
-                        self.meta_storage.set_last_verified_address(address_type, keychain, high_index)?;
-                        return Ok((Some(high_index), change_lower, change_upper, receive_lower, receive_upper))
+                        self.meta_storage.set_last_verified_address(
+                            address_type,
+                            keychain,
+                            high_index,
+                        )?;
+                        return Ok((
+                            Some(high_index),
+                            change_lower,
+                            change_upper,
+                            receive_lower,
+                            receive_upper,
+                        ));
                     }
                 }
 
@@ -540,7 +576,13 @@ impl<P: WalletPersister> NgAccount<P> {
             }
         }
 
-        Ok((None, change_lower, change_upper, receive_lower, receive_upper))
+        Ok((
+            None,
+            change_lower,
+            change_upper,
+            receive_lower,
+            receive_upper,
+        ))
     }
 }
 
