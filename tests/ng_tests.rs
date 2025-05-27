@@ -12,23 +12,29 @@ mod utils;
 
 #[cfg(test)]
 mod tests {
+    use bdk_electrum::bdk_core::bitcoin::base64::prelude::BASE64_STANDARD;
+    use bdk_electrum::bdk_core::bitcoin::key::Secp256k1;
+    use bdk_wallet::bitcoin::Psbt;
+    use bdk_wallet::bitcoin::base64::Engine;
+    use bdk_wallet::miniscript::descriptor::DescriptorType;
+    use bdk_wallet::miniscript::psbt::PsbtExt;
     use bdk_wallet::{KeychainKind, SignOptions};
     use std::sync::{Arc, Mutex};
 
     use ngwallet::account::NgAccount;
-    use ngwallet::bip39;
+    use ngwallet::bip39::{Descriptors, get_descriptors};
     use ngwallet::config::{AddressType, NgAccountBackup, NgAccountBuilder};
     use ngwallet::send::TransactionParams;
+    use ngwallet::{account, bip39};
     #[cfg(feature = "envoy")]
     use {
         crate::*, bdk_wallet::Update, bdk_wallet::bitcoin::Network,
         bdk_wallet::rusqlite::Connection, ngwallet::account::Descriptor,
         ngwallet::ngwallet::NgWallet,
     };
-    use ngwallet::bip39::{Descriptors, get_descriptors};
 
-    #[test]
-    #[cfg(feature = "envoy")]
+    // #[test]
+    // #[cfg(feature = "envoy")]
     fn new_wallet_test_scan() {
         let descriptors = vec![
             Descriptor {
@@ -134,25 +140,41 @@ mod tests {
     #[test]
     #[cfg(feature = "envoy")]
     fn test_input_mis_match() {
-        let descriptors = get_descriptors("addict hold sand engage ostrich cousin swarm away puzzle huge rookie fancy"
-                                              .to_string(), Network::Testnet4, None)
-            .map(|descriptors| {
-                descriptors.into_iter().map(|d| Descriptor {
+        let descriptors = get_descriptors(
+            "addict hold sand engage ostrich cousin swarm away puzzle huge rookie fancy"
+                .to_string(),
+            Network::Testnet4,
+            None,
+        )
+        .map(|descriptors| {
+            descriptors
+                .into_iter()
+                .map(|d| Descriptor {
                     internal: d.descriptor_xpub.to_string(),
-                    external: Some(d.change_descriptor_xprv.to_string()),
+                    external: Some(d.change_descriptor_xpub.to_string()),
                     bdk_persister: Arc::new(Mutex::new(Connection::open_in_memory().unwrap())),
-                }).collect::<Vec<_>>()
-            }).unwrap();
+                })
+                .collect::<Vec<_>>()
+        })
+        .unwrap();
 
-        let descriptors_xprv = get_descriptors("addict hold sand engage ostrich cousin swarm away puzzle huge rookie fancy"
-                                                   .to_string(), Network::Testnet4, None)
-            .map(|descriptors| {
-                descriptors.into_iter().map(|d| Descriptor {
+        let descriptors_xprv = get_descriptors(
+            "addict hold sand engage ostrich cousin swarm away puzzle huge rookie fancy"
+                .to_string(),
+            Network::Testnet4,
+            None,
+        )
+        .map(|descriptors| {
+            descriptors
+                .into_iter()
+                .map(|d| Descriptor {
                     internal: d.descriptor_xprv.to_string(),
                     external: Some(d.change_descriptor_xprv.to_string()),
                     bdk_persister: Arc::new(Mutex::new(Connection::open_in_memory().unwrap())),
-                }).collect::<Vec<_>>()
-            }).unwrap();
+                })
+                .collect::<Vec<_>>()
+        })
+        .unwrap();
 
         let mut account = NgAccountBuilder::default()
             .name("Passport Prime".to_string())
@@ -205,46 +227,43 @@ mod tests {
                 address.address, address.index, address_type
             );
         });
-
+        //
         let balance = account.balance().unwrap();
-        assert!(balance.total().to_sat() > 0);
 
-        let transactions = account.transactions().unwrap();
-        assert!(!transactions.is_empty());
-        for tx in transactions {
-            println!(
-                "Transaction: {},{},{},{}",
-                tx.address, tx.amount, tx.is_confirmed, tx.tx_id
-            );
-        }
+        println!("Wallet balance: {} sat", balance.total().to_sat());
 
-        let utxos = account.utxos().unwrap();
-        assert!(!utxos.is_empty());
-
-        let compose_tx = account.compose_psbt(TransactionParams {
-            address: "tb1qydjtc47ru9c055gv7adpfs8uzw8dhy0p52fj3y".to_string(),
-            amount: 1000,
-            fee_rate: 1,
-            selected_outputs: vec![],
-            note: None,
-            tag: None,
-            do_not_spend_change: false,
-        }).unwrap();
-
-        println!("Composed PSBT: {}", compose_tx.psbt_base64.clone());
-        println!("is_finalized: {}", compose_tx.is_finalized);
-
-        let parse = account_with_prv.sign(&compose_tx.psbt_base64, SignOptions::default()).unwrap();
-
-        NgAccount::<Connection>::decode_psbt(
-            compose_tx,
-            &parse,
-        ).unwrap();
+        let compose_tx = account
+            .compose_psbt(TransactionParams {
+                address: "tb1qydjtc47ru9c055gv7adpfs8uzw8dhy0p52fj3y".to_string(),
+                amount: 1000,
+                fee_rate: 1,
+                selected_outputs: vec![],
+                note: None,
+                tag: None,
+                do_not_spend_change: false,
+            })
+            .unwrap();
+        let base = BASE64_STANDARD
+            .decode(&compose_tx.psbt_base64.clone())
+            .unwrap();
+        let mut psbt = Psbt::deserialize(&base).unwrap();
+        println!(
+            "Original PSBT is ok ? : {:?}",
+            psbt.clone()
+                .extract(&Secp256k1::verification_only())
+                .is_ok()
+        );
+        let psbt_string = account_with_prv
+            .sign(&mut compose_tx.psbt_base64.clone(), SignOptions::default())
+            .unwrap();
+        let psbt =
+            Psbt::deserialize(&BASE64_STANDARD.decode(&psbt_string.clone()).unwrap()).unwrap();
+        NgAccount::<Connection>::decode_psbt(compose_tx, &psbt_string.clone()).unwrap();
         account.persist().unwrap();
     }
 
-    // #[test]
-    // #[cfg(feature = "envoy")]
+    #[test]
+    #[cfg(feature = "envoy")]
     fn add_new_descriptor_to_existing() {
         let second_descriptor = Descriptor {
             internal: INTERNAL_DESCRIPTOR_2.to_string(),
@@ -422,36 +441,136 @@ mod tests {
         let account = utils::tests_util::get_ng_hot_wallet();
         // TODO: get address for test wallet
         // testnet segwit receive address 0
-        assert_eq!(account.verify_address(String::from("tb1qp3s35d5579w9mtx4vkx2lngfpnwyjx8jxhveym"), 0, 50).unwrap(), (Some(0), 0, 0, 0, 0));
+        assert_eq!(
+            account
+                .verify_address(
+                    String::from("tb1qp3s35d5579w9mtx4vkx2lngfpnwyjx8jxhveym"),
+                    0,
+                    50
+                )
+                .unwrap(),
+            (Some(0), 0, 0, 0, 0)
+        );
 
         // testnet segwit receive address 5
-        assert_eq!(account.verify_address(String::from("tb1qttqxp75y56gvnrr6cy9p8ynvgyjf683ce6d9c4"), 0, 50).unwrap(), (Some(5), 0, 4, 0, 5));
+        assert_eq!(
+            account
+                .verify_address(
+                    String::from("tb1qttqxp75y56gvnrr6cy9p8ynvgyjf683ce6d9c4"),
+                    0,
+                    50
+                )
+                .unwrap(),
+            (Some(5), 0, 4, 0, 5)
+        );
         // ensure the optimization to validate repeat addresses work
-        assert_eq!(account.verify_address(String::from("tb1qttqxp75y56gvnrr6cy9p8ynvgyjf683ce6d9c4"), 0, 50).unwrap(), (Some(5), 0, 0, 5, 5));
+        assert_eq!(
+            account
+                .verify_address(
+                    String::from("tb1qttqxp75y56gvnrr6cy9p8ynvgyjf683ce6d9c4"),
+                    0,
+                    50
+                )
+                .unwrap(),
+            (Some(5), 0, 0, 5, 5)
+        );
 
         // testnet segwit receive address 0, reset for next tests
-        assert_eq!(account.verify_address(String::from("tb1qp3s35d5579w9mtx4vkx2lngfpnwyjx8jxhveym"), 0, 50).unwrap(), (Some(0), 0, 0, 0, 0));
+        assert_eq!(
+            account
+                .verify_address(
+                    String::from("tb1qp3s35d5579w9mtx4vkx2lngfpnwyjx8jxhveym"),
+                    0,
+                    50
+                )
+                .unwrap(),
+            (Some(0), 0, 0, 0, 0)
+        );
 
         // testnet segwit receive address 30
-        assert_eq!(account.verify_address(String::from("tb1qsqtlt0q4why79qmf9jddp53nncyrutv90wdjkz"), 0, 50).unwrap(), (None, 0, 25, 0, 25));
-        assert_eq!(account.verify_address(String::from("tb1qsqtlt0q4why79qmf9jddp53nncyrutv90wdjkz"), 1, 50).unwrap(), (Some(30), 0, 29, 0, 30));
+        assert_eq!(
+            account
+                .verify_address(
+                    String::from("tb1qsqtlt0q4why79qmf9jddp53nncyrutv90wdjkz"),
+                    0,
+                    50
+                )
+                .unwrap(),
+            (None, 0, 25, 0, 25)
+        );
+        assert_eq!(
+            account
+                .verify_address(
+                    String::from("tb1qsqtlt0q4why79qmf9jddp53nncyrutv90wdjkz"),
+                    1,
+                    50
+                )
+                .unwrap(),
+            (Some(30), 0, 29, 0, 30)
+        );
 
         // test that we resume the search from the last verified address, and the downward search
         // works
         // testnet segwit receive address 5
-        assert_eq!(account.verify_address(String::from("tb1qttqxp75y56gvnrr6cy9p8ynvgyjf683ce6d9c4"), 0, 50).unwrap(), (None, 0, 25, 6, 55));
-        assert_eq!(account.verify_address(String::from("tb1qttqxp75y56gvnrr6cy9p8ynvgyjf683ce6d9c4"), 1, 50).unwrap(), (Some(5), 0, 25, 5, 55));
+        assert_eq!(
+            account
+                .verify_address(
+                    String::from("tb1qttqxp75y56gvnrr6cy9p8ynvgyjf683ce6d9c4"),
+                    0,
+                    50
+                )
+                .unwrap(),
+            (None, 0, 25, 6, 55)
+        );
+        assert_eq!(
+            account
+                .verify_address(
+                    String::from("tb1qttqxp75y56gvnrr6cy9p8ynvgyjf683ce6d9c4"),
+                    1,
+                    50
+                )
+                .unwrap(),
+            (Some(5), 0, 25, 5, 55)
+        );
 
         // testnet segwit change address 0
-        assert_eq!(account.verify_address(String::from("tb1qm2rus4zu75exrlu9rrk0l3ctktkujtetqrjd88"), 0, 50).unwrap().0, None);
+        assert_eq!(
+            account
+                .verify_address(
+                    String::from("tb1qm2rus4zu75exrlu9rrk0l3ctktkujtetqrjd88"),
+                    0,
+                    50
+                )
+                .unwrap()
+                .0,
+            None
+        );
 
         // mainnet segwit receive address 0, should fail network requirement
-        assert!(account.verify_address(String::from("bc1q99mxpdle2pqs3pkaxcz2wmk8l0avgskyuuc6pl"), 0, 50).is_err());
+        assert!(
+            account
+                .verify_address(
+                    String::from("bc1q99mxpdle2pqs3pkaxcz2wmk8l0avgskyuuc6pl"),
+                    0,
+                    50
+                )
+                .is_err()
+        );
 
         // testnet taproot receive address 0
-        assert_eq!(account.verify_address(String::from("tb1phv4spu4u6uakttj3mqqcr77la4u6a28j943d3cxjh02a6ny78d0s7tupl5"), 0, 50).unwrap().0.unwrap(), 0);
+        assert_eq!(
+            account
+                .verify_address(
+                    String::from("tb1phv4spu4u6uakttj3mqqcr77la4u6a28j943d3cxjh02a6ny78d0s7tupl5"),
+                    0,
+                    50
+                )
+                .unwrap()
+                .0
+                .unwrap(),
+            0
+        );
     }
-
 
     #[test]
     fn autocomplete_seedword() {

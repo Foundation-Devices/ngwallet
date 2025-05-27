@@ -3,7 +3,7 @@ use anyhow::{Context, Result};
 use base64::prelude::*;
 use bdk_wallet::bitcoin::secp256k1::Secp256k1;
 use bdk_wallet::bitcoin::{
-    psbt, Address, Amount, FeeRate, Psbt, ScriptBuf, Transaction, TxIn, Txid, Weight,
+    Address, Amount, FeeRate, Psbt, ScriptBuf, Transaction, TxIn, Txid, Weight, psbt,
 };
 use bdk_wallet::coin_selection::InsufficientFunds;
 use bdk_wallet::error::CreateTxError;
@@ -423,19 +423,18 @@ impl<P: WalletPersister> NgAccount<P> {
         let psbt_bytes = BASE64_STANDARD
             .decode(psbt_base64)
             .map_err(|e| anyhow::anyhow!("Failed to decode PSBT: {}", e))?;
-        let psbt = Psbt::deserialize(psbt_bytes.as_slice())
+        let mut psbt = Psbt::deserialize(&psbt_bytes)
             .map_err(|e| anyhow::anyhow!("Failed to deserialize PSBT: {}", e))?;
-        info!("psbt {:?}",psbt.serialize_hex());
-        let psbt_finalized = psbt
-            .finalize(&Secp256k1::verification_only())
-            .map_err(|(_, err)| anyhow::anyhow!("Failed to finalize PSBT {err:?}"))?;
+        // If the PSBT is not finalized, finalize it, passport will not finalize but prime will finalize
+        if !psbt.extract(&Secp256k1::verification_only()).is_ok() {
+            psbt = psbt
+                .clone()
+                .finalize(&Secp256k1::verification_only())
+                .map_err(|(_, err)| anyhow::anyhow!("Failed to finalize PSBT {err:?}"))?;
+        }
         Ok(DraftTransaction {
-            psbt_base64: BASE64_STANDARD
-                .encode(psbt_finalized.clone().serialize())
-                .to_string(),
-            is_finalized: psbt_finalized
-                .extract(&Secp256k1::verification_only())
-                .is_ok(),
+            psbt_base64: BASE64_STANDARD.encode(psbt.clone().serialize()).to_string(),
+            is_finalized: psbt.extract(&Secp256k1::verification_only()).is_ok(),
             input_tags: draft_transaction.input_tags,
             change_out_put_tag: draft_transaction.change_out_put_tag,
             transaction: draft_transaction.transaction,
@@ -746,7 +745,7 @@ impl<P: WalletPersister> NgAccount<P> {
         input_for_fore
     }
 
-    fn sign_psbt(wallets: Vec<&NgWallet<P>>, psbt: &mut Psbt, sign_options: SignOptions) {
+    pub fn sign_psbt(wallets: Vec<&NgWallet<P>>, psbt: &mut Psbt, sign_options: SignOptions) {
         for wallet in wallets {
             let mut wallet = wallet.bdk_wallet.lock().unwrap();
             wallet.sign(psbt, sign_options.clone()).unwrap_or(false);
