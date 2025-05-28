@@ -13,7 +13,8 @@ const DO_NOT_SPEND_TABLE: TableDefinition<&str, bool> = TableDefinition::new("do
 
 const ACCOUNT_CONFIG: TableDefinition<&str, &str> = TableDefinition::new("config");
 
-const LAST_VERIFIED_ADDRESS_TABLE: TableDefinition<&str, u32> = TableDefinition::new("last_verified_address");
+const LAST_VERIFIED_ADDRESS_TABLE: TableDefinition<&str, u32> =
+    TableDefinition::new("last_verified_address");
 
 #[derive(Debug)]
 pub struct RedbMetaStorage {
@@ -186,26 +187,40 @@ impl MetaStorage for RedbMetaStorage {
         }
     }
 
-    fn set_last_verified_address(&self, address_type: AddressType, keychain: KeychainKind, index: u32) -> Result<()> {
+    fn set_last_verified_address(
+        &self,
+        address_type: AddressType,
+        keychain: KeychainKind,
+        index: u32,
+    ) -> Result<()> {
         let write_txn = self.db.begin_write()?;
         {
             let mut table = write_txn.open_table(LAST_VERIFIED_ADDRESS_TABLE)?;
-            table.insert(format!("{},{}", address_type as u8, keychain as u8).as_str(), index)?;
+            table.insert(
+                format!("{},{}", address_type as u8, keychain as u8).as_str(),
+                index,
+            )?;
         }
         write_txn
             .commit()
             .map_err(|e| anyhow::anyhow!(e.to_string()))
     }
 
-    fn get_last_verified_address(&self, address_type: AddressType, keychain: KeychainKind) -> Result<u32> {
+    fn get_last_verified_address(
+        &self,
+        address_type: AddressType,
+        keychain: KeychainKind,
+    ) -> Result<u32> {
         let read_txn = self.db.begin_read()?;
         match read_txn.open_table(LAST_VERIFIED_ADDRESS_TABLE) {
-            Ok(table) => match table.get(format!("{},{}", address_type as u8, keychain as u8).as_str()) {
-                Ok(v) => match v {
-                    None => Ok(0),
-                    Some(value) => Ok(value.value()),
-                },
-                Err(e) => Err(anyhow::anyhow!(e.to_string())),
+            Ok(table) => {
+                match table.get(format!("{},{}", address_type as u8, keychain as u8).as_str()) {
+                    Ok(v) => match v {
+                        None => Ok(0),
+                        Some(value) => Ok(value.value()),
+                    },
+                    Err(e) => Err(anyhow::anyhow!(e.to_string())),
+                }
             }
             Err(_) => Ok(0),
         }

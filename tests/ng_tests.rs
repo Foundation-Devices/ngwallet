@@ -16,16 +16,15 @@ mod tests {
     use bdk_electrum::bdk_core::bitcoin::key::Secp256k1;
     use bdk_wallet::bitcoin::Psbt;
     use bdk_wallet::bitcoin::base64::Engine;
-    use bdk_wallet::miniscript::descriptor::DescriptorType;
     use bdk_wallet::miniscript::psbt::PsbtExt;
     use bdk_wallet::{KeychainKind, SignOptions};
     use std::sync::{Arc, Mutex};
 
     use ngwallet::account::NgAccount;
-    use ngwallet::bip39::{Descriptors, get_descriptors};
+    use ngwallet::bip39;
+    use ngwallet::bip39::get_descriptors;
     use ngwallet::config::{AddressType, NgAccountBackup, NgAccountBuilder};
     use ngwallet::send::TransactionParams;
-    use ngwallet::{account, bip39};
     #[cfg(feature = "envoy")]
     use {
         crate::*, bdk_wallet::Update, bdk_wallet::bitcoin::Network,
@@ -33,8 +32,8 @@ mod tests {
         ngwallet::ngwallet::NgWallet,
     };
 
-    // #[test]
-    // #[cfg(feature = "envoy")]
+    #[test]
+    #[cfg(feature = "envoy")]
     fn new_wallet_test_scan() {
         let descriptors = vec![
             Descriptor {
@@ -192,7 +191,7 @@ mod tests {
             .build_in_memory()
             .unwrap();
 
-        let mut account_with_prv = NgAccountBuilder::default()
+        let account_with_prv = NgAccountBuilder::default()
             .name("Passport Prime".to_string())
             .color("red".to_string())
             .seed_has_passphrase(false)
@@ -244,9 +243,9 @@ mod tests {
             })
             .unwrap();
         let base = BASE64_STANDARD
-            .decode(&compose_tx.psbt_base64.clone())
+            .decode(compose_tx.psbt_base64.clone())
             .unwrap();
-        let mut psbt = Psbt::deserialize(&base).unwrap();
+        let psbt = Psbt::deserialize(&base).unwrap();
         println!(
             "Original PSBT is ok ? : {:?}",
             psbt.clone()
@@ -254,10 +253,9 @@ mod tests {
                 .is_ok()
         );
         let psbt_string = account_with_prv
-            .sign(&mut compose_tx.psbt_base64.clone(), SignOptions::default())
+            .sign(&compose_tx.psbt_base64.clone(), SignOptions::default())
             .unwrap();
-        let psbt =
-            Psbt::deserialize(&BASE64_STANDARD.decode(&psbt_string.clone()).unwrap()).unwrap();
+        let _ = Psbt::deserialize(&BASE64_STANDARD.decode(psbt_string.clone()).unwrap()).unwrap();
         NgAccount::<Connection>::decode_psbt(compose_tx, &psbt_string.clone()).unwrap();
         account.persist().unwrap();
     }

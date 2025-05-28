@@ -426,7 +426,7 @@ impl<P: WalletPersister> NgAccount<P> {
         let mut psbt = Psbt::deserialize(&psbt_bytes)
             .map_err(|e| anyhow::anyhow!("Failed to deserialize PSBT: {}", e))?;
         // If the PSBT is not finalized, finalize it, passport will not finalize but prime will finalize
-        if !psbt.extract(&Secp256k1::verification_only()).is_ok() {
+        if psbt.extract(&Secp256k1::verification_only()).is_err() {
             psbt = psbt
                 .clone()
                 .finalize(&Secp256k1::verification_only())
