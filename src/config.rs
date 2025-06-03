@@ -1,4 +1,5 @@
 use anyhow::bail;
+use std::collections::HashMap;
 use std::sync::Arc;
 
 use crate::account::{Descriptor, NgAccount, RemoteUpdate};
@@ -55,6 +56,9 @@ pub struct NgAccountConfig {
 pub struct NgAccountBackup {
     pub ng_account_config: NgAccountConfig,
     pub last_used_index: Vec<(AddressType, KeychainKind, u32)>,
+    pub notes: HashMap<String, String>,
+    pub tags: HashMap<String, String>,
+    pub do_not_spend: HashMap<String, bool>,
 }
 
 impl NgAccountConfig {

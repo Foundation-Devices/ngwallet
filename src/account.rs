@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::fmt::Debug;
 use std::str::FromStr;
 use std::sync::{Arc, Mutex};
@@ -176,9 +177,30 @@ impl<P: WalletPersister> NgAccount<P> {
                 config.descriptors = vec![];
             }
             let last_used_index = self.get_derivation_index();
+            let transactions = self.transactions()?;
+            let utxos = self.utxos()?;
+            let mut notes: HashMap<String, String> = HashMap::default();
+            let mut tags: HashMap<String, String> = HashMap::default();
+            let mut do_not_spend: HashMap<String, bool> = HashMap::default();
+            for utxo in utxos {
+                if utxo.do_not_spend {
+                    do_not_spend.insert(utxo.get_id().to_string(), true);
+                }
+                if utxo.tag.is_some() {
+                    tags.insert(utxo.get_id().to_string(), utxo.tag.clone().unwrap());
+                }
+            }
+            for tx in transactions {
+                if tx.note.is_some() {
+                    notes.insert(tx.tx_id, tx.note.clone().unwrap());
+                }
+            }
             NgAccountBackup {
                 ng_account_config: config,
                 last_used_index,
+                notes,
+                tags,
+                do_not_spend,
             }
         };
         match serde_json::to_string(&config) {
@@ -254,9 +276,9 @@ impl<P: WalletPersister> NgAccount<P> {
         Ok(true)
     }
 
-    pub fn set_tag(&mut self, output: &Output, tag: &str) -> anyhow::Result<bool> {
+    pub fn set_tag(&mut self, output_id: &str, tag: &str) -> anyhow::Result<bool> {
         self.meta_storage
-            .set_tag(output.get_id().as_str(), tag)
+            .set_tag(output_id, tag)
             .with_context(|| "Could not set tag")?;
         self.meta_storage
             .add_tag(tag.to_string().as_str())
@@ -411,7 +433,7 @@ impl<P: WalletPersister> NgAccount<P> {
                 Some(existing_tag) => {
                     let new_tag = rename_to.unwrap_or("");
                     if existing_tag.eq(target_tag) {
-                        self.set_tag(&output, new_tag)?;
+                        self.set_tag(output.get_id().as_str(), new_tag)?;
                     }
                 }
             }
