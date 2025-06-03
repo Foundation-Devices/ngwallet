@@ -128,7 +128,7 @@ mod tests {
             assert_eq!(utxo_tag, tag);
 
             println!("\nSetting do not spend : {:?}", false);
-            account.set_do_not_spend(first_utxo, true).unwrap();
+            account.set_do_not_spend(first_utxo.get_id().as_str(), true).unwrap();
 
             let utxos = account.utxos().unwrap_or_default();
             let utxo_tag = &utxos[0];
@@ -358,7 +358,7 @@ mod tests {
 
         account.set_note(&first_tx.tx_id, &note).unwrap();
         account.set_tag(first_utxo.get_id().as_str(), &tag).unwrap();
-        account.set_do_not_spend(&first_utxo, true).unwrap();
+        account.set_do_not_spend(first_utxo.get_id().as_str(), true).unwrap();
 
         let config = account.config.clone();
         assert!(account.is_hot());

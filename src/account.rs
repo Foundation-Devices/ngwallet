@@ -286,9 +286,9 @@ impl<P: WalletPersister> NgAccount<P> {
         Ok(true)
     }
 
-    pub fn set_do_not_spend(&mut self, output: &Output, state: bool) -> anyhow::Result<()> {
+    pub fn set_do_not_spend(&mut self, output_id: &str, state: bool) -> anyhow::Result<()> {
         self.meta_storage
-            .set_do_not_spend(output.get_id().as_str(), state)
+            .set_do_not_spend(output_id, state)
     }
 
     #[cfg(feature = "envoy")]
