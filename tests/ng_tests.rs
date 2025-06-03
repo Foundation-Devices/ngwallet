@@ -119,14 +119,16 @@ mod tests {
             let tag = "Test Tag".to_string();
             println!("\nSetting tag: {:?}", tag);
             let first_utxo = &utxos[0];
-            account.set_tag(first_utxo, tag.as_str()).unwrap();
+            account
+                .set_tag(first_utxo.get_id().as_str(), tag.as_str())
+                .unwrap();
             let utxos = account.utxos().unwrap_or_default();
             let utxo_tag = utxos[0].tag.clone().unwrap_or("".to_string());
             println!("Utxo tag: {:?}", utxo_tag);
             assert_eq!(utxo_tag, tag);
 
             println!("\nSetting do not spend : {:?}", false);
-            account.set_do_not_spend(first_utxo, true).unwrap();
+            account.set_do_not_spend(first_utxo.get_id().as_str(), true).unwrap();
 
             let utxos = account.utxos().unwrap_or_default();
             let utxo_tag = &utxos[0];
@@ -343,12 +345,21 @@ mod tests {
 
     #[test]
     #[cfg(feature = "envoy")]
-    fn check_hot_backup() {
+    fn check_hot_wallet_backup() {
+        let note = "This is a test note".to_string();
+        let tag = "Test Tag".to_string();
         let mut account = utils::tests_util::get_ng_hot_wallet();
         //add funds to the wallet to increment the index
         utils::tests_util::add_funds_to_wallet(&mut account);
         utils::tests_util::add_funds_to_wallet(&mut account);
         account.persist().unwrap();
+        let first_tx = account.transactions().unwrap()[0].clone();
+        let first_utxo = account.utxos().unwrap()[0].clone();
+
+        account.set_note(&first_tx.tx_id, &note).unwrap();
+        account.set_tag(first_utxo.get_id().as_str(), &tag).unwrap();
+        account.set_do_not_spend(first_utxo.get_id().as_str(), true).unwrap();
+
         let config = account.config.clone();
         assert!(account.is_hot());
         let backup = account.get_backup_json().unwrap();
@@ -361,6 +372,13 @@ mod tests {
         //hot wallet doesnt export descriptors, since they contain xprv
         assert_eq!(config_from_backup.descriptors.len(), 0);
         let last_used_index = account_backup.last_used_index;
+
+        let note_from_backup = account_backup.notes.get(&first_tx.tx_id);
+        let tag_from_backup = account_backup.tags.get(&first_utxo.get_id());
+        let do_not_spend_from_backup = account_backup.do_not_spend.get(&first_utxo.get_id());
+        assert_eq!(note_from_backup, Some(&note));
+        assert_eq!(tag_from_backup, Some(&tag));
+        assert_eq!(do_not_spend_from_backup, Some(&true));
 
         for &index in last_used_index.iter() {
             if index.1 == KeychainKind::External {
@@ -444,7 +462,7 @@ mod tests {
                 .verify_address(
                     String::from("tb1qp3s35d5579w9mtx4vkx2lngfpnwyjx8jxhveym"),
                     0,
-                    50
+                    50,
                 )
                 .unwrap(),
             (Some(0), 0, 0, 0, 0)
@@ -456,7 +474,7 @@ mod tests {
                 .verify_address(
                     String::from("tb1qttqxp75y56gvnrr6cy9p8ynvgyjf683ce6d9c4"),
                     0,
-                    50
+                    50,
                 )
                 .unwrap(),
             (Some(5), 0, 4, 0, 5)
@@ -467,7 +485,7 @@ mod tests {
                 .verify_address(
                     String::from("tb1qttqxp75y56gvnrr6cy9p8ynvgyjf683ce6d9c4"),
                     0,
-                    50
+                    50,
                 )
                 .unwrap(),
             (Some(5), 0, 0, 5, 5)
@@ -479,7 +497,7 @@ mod tests {
                 .verify_address(
                     String::from("tb1qp3s35d5579w9mtx4vkx2lngfpnwyjx8jxhveym"),
                     0,
-                    50
+                    50,
                 )
                 .unwrap(),
             (Some(0), 0, 0, 0, 0)
@@ -491,7 +509,7 @@ mod tests {
                 .verify_address(
                     String::from("tb1qsqtlt0q4why79qmf9jddp53nncyrutv90wdjkz"),
                     0,
-                    50
+                    50,
                 )
                 .unwrap(),
             (None, 0, 25, 0, 25)
@@ -501,7 +519,7 @@ mod tests {
                 .verify_address(
                     String::from("tb1qsqtlt0q4why79qmf9jddp53nncyrutv90wdjkz"),
                     1,
-                    50
+                    50,
                 )
                 .unwrap(),
             (Some(30), 0, 29, 0, 30)
@@ -515,7 +533,7 @@ mod tests {
                 .verify_address(
                     String::from("tb1qttqxp75y56gvnrr6cy9p8ynvgyjf683ce6d9c4"),
                     0,
-                    50
+                    50,
                 )
                 .unwrap(),
             (None, 0, 25, 6, 55)
@@ -525,7 +543,7 @@ mod tests {
                 .verify_address(
                     String::from("tb1qttqxp75y56gvnrr6cy9p8ynvgyjf683ce6d9c4"),
                     1,
-                    50
+                    50,
                 )
                 .unwrap(),
             (Some(5), 0, 25, 5, 55)
@@ -537,7 +555,7 @@ mod tests {
                 .verify_address(
                     String::from("tb1qm2rus4zu75exrlu9rrk0l3ctktkujtetqrjd88"),
                     0,
-                    50
+                    50,
                 )
                 .unwrap()
                 .0,
@@ -550,7 +568,7 @@ mod tests {
                 .verify_address(
                     String::from("bc1q99mxpdle2pqs3pkaxcz2wmk8l0avgskyuuc6pl"),
                     0,
-                    50
+                    50,
                 )
                 .is_err()
         );
@@ -561,7 +579,7 @@ mod tests {
                 .verify_address(
                     String::from("tb1phv4spu4u6uakttj3mqqcr77la4u6a28j943d3cxjh02a6ny78d0s7tupl5"),
                     0,
-                    50
+                    50,
                 )
                 .unwrap()
                 .0
