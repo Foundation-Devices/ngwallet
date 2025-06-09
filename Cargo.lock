@@ -85,20 +85,11 @@ name = "bdk_chain"
 version = "0.23.0"
 source = "git+https://github.com/Foundation-Devices/bdk-1?rev=fd5b8152fdb49b3d457ec4c92591bdc45f00f43f#fd5b8152fdb49b3d457ec4c92591bdc45f00f43f"
 dependencies = [
- "bdk_core 0.6.0",
+ "bdk_core",
  "bitcoin",
  "miniscript",
  "rusqlite",
  "serde",
-]
-
-[[package]]
-name = "bdk_core"
-version = "0.5.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2cb2496e93fd104e32a36cd5dfb0638fc8376d83d80696b3b75f27abe39df343"
-dependencies = [
- "bitcoin",
 ]
 
 [[package]]
@@ -113,11 +104,10 @@ dependencies = [
 
 [[package]]
 name = "bdk_electrum"
-version = "0.22.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "295a7ed643de69210328002bff5efdd1939ed251ce280761e9e1f591fdd8ae30"
+version = "0.23.0"
+source = "git+https://github.com/Foundation-Devices/bdk-1?rev=fd5b8152fdb49b3d457ec4c92591bdc45f00f43f#fd5b8152fdb49b3d457ec4c92591bdc45f00f43f"
 dependencies = [
- "bdk_core 0.5.0",
+ "bdk_core",
  "electrum-client",
 ]
 
@@ -1173,8 +1163,3 @@ name = "zeroize"
 version = "1.8.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ced3678a2879b30306d323f4542626697a464a97c0a07c9aebf7ebca65cd4dde"
-
-[[patch.unused]]
-name = "bdk_electrum"
-version = "0.23.0"
-source = "git+https://github.com/Foundation-Devices/bdk-1?rev=fd5b8152fdb49b3d457ec4c92591bdc45f00f43f#fd5b8152fdb49b3d457ec4c92591bdc45f00f43f"
