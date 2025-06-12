@@ -12,10 +12,8 @@ mod utils;
 
 #[cfg(test)]
 mod tests {
-    use bdk_electrum::bdk_core::bitcoin::base64::prelude::BASE64_STANDARD;
-    use bdk_electrum::bdk_core::bitcoin::key::Secp256k1;
     use bdk_wallet::bitcoin::Psbt;
-    use bdk_wallet::bitcoin::base64::Engine;
+    use bdk_wallet::bitcoin::key::Secp256k1;
     use bdk_wallet::miniscript::psbt::PsbtExt;
     use bdk_wallet::{KeychainKind, SignOptions};
     use std::sync::{Arc, Mutex};
@@ -128,7 +126,9 @@ mod tests {
             assert_eq!(utxo_tag, tag);
 
             println!("\nSetting do not spend : {:?}", false);
-            account.set_do_not_spend(first_utxo.get_id().as_str(), true).unwrap();
+            account
+                .set_do_not_spend(first_utxo.get_id().as_str(), true)
+                .unwrap();
 
             let utxos = account.utxos().unwrap_or_default();
             let utxo_tag = &utxos[0];
@@ -244,9 +244,7 @@ mod tests {
                 do_not_spend_change: false,
             })
             .unwrap();
-        let base = BASE64_STANDARD
-            .decode(compose_tx.psbt_base64.clone())
-            .unwrap();
+        let base = compose_tx.psbt.clone();
         let psbt = Psbt::deserialize(&base).unwrap();
         println!(
             "Original PSBT is ok ? : {:?}",
@@ -254,11 +252,11 @@ mod tests {
                 .extract(&Secp256k1::verification_only())
                 .is_ok()
         );
-        let psbt_string = account_with_prv
-            .sign(&compose_tx.psbt_base64.clone(), SignOptions::default())
+        let signed_psbt = account_with_prv
+            .sign(&compose_tx.psbt.clone(), SignOptions::default())
             .unwrap();
-        let _ = Psbt::deserialize(&BASE64_STANDARD.decode(psbt_string.clone()).unwrap()).unwrap();
-        NgAccount::<Connection>::decode_psbt(compose_tx, &psbt_string.clone()).unwrap();
+        let _ = Psbt::deserialize(&signed_psbt.clone()).unwrap();
+        NgAccount::<Connection>::decode_psbt(compose_tx, &signed_psbt.clone()).unwrap();
         account.persist().unwrap();
     }
 
@@ -358,7 +356,9 @@ mod tests {
 
         account.set_note(&first_tx.tx_id, &note).unwrap();
         account.set_tag(first_utxo.get_id().as_str(), &tag).unwrap();
-        account.set_do_not_spend(first_utxo.get_id().as_str(), true).unwrap();
+        account
+            .set_do_not_spend(first_utxo.get_id().as_str(), true)
+            .unwrap();
 
         let config = account.config.clone();
         assert!(account.is_hot());
@@ -423,9 +423,7 @@ mod tests {
         println!("params: {:?}", params);
         let compose_transaction = account.compose_psbt(params.clone());
         if let Ok(transaction) = compose_transaction {
-            let parsed = account
-                .get_bitcoin_tx_from_psbt(&transaction.psbt_base64)
-                .unwrap();
+            let parsed = account.get_bitcoin_tx_from_psbt(&transaction.psbt).unwrap();
             assert_eq!(parsed.address, params.clone().address);
             assert_eq!(parsed.fee, transaction.transaction.fee);
             assert_eq!(parsed.amount as u64, params.amount);

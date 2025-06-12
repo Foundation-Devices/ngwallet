@@ -1,6 +1,5 @@
 use crate::account::NgAccount;
 use anyhow::Result;
-use base64::prelude::*;
 use bdk_wallet::bitcoin::policy::DEFAULT_INCREMENTAL_RELAY_FEE;
 use bdk_wallet::bitcoin::secp256k1::Secp256k1;
 use bdk_wallet::bitcoin::{Address, Amount, FeeRate, OutPoint, Psbt, Txid};
@@ -188,7 +187,7 @@ impl<P: WalletPersister> NgAccount<P> {
                 };
 
                 Ok(DraftTransaction {
-                    psbt_base64: BASE64_STANDARD.encode(psbt.clone().serialize()).to_string(),
+                    psbt: psbt.clone().serialize(),
                     is_finalized: psbt.extract(&Secp256k1::verification_only()).is_ok(),
                     input_tags: vec![],
                     change_out_put_tag: None,
@@ -476,7 +475,7 @@ impl<P: WalletPersister> NgAccount<P> {
                     .collect();
 
                 Ok(DraftTransaction {
-                    psbt_base64: BASE64_STANDARD.encode(psbt.clone().serialize()).to_string(),
+                    psbt: psbt.clone().serialize(),
                     is_finalized: psbt.extract(&Secp256k1::verification_only()).is_ok(),
                     input_tags,
                     change_out_put_tag,

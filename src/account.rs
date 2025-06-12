@@ -10,8 +10,6 @@ use crate::store::MetaStorage;
 use crate::transaction::{BitcoinTransaction, Output};
 use crate::utils::get_address_type;
 use anyhow::{Context, Error, anyhow};
-use base64::Engine;
-use base64::prelude::BASE64_STANDARD;
 use bdk_wallet::bitcoin::address::{NetworkChecked, NetworkUnchecked};
 use bdk_wallet::bitcoin::{Address, AddressType as BdkAddressType, Psbt, Transaction};
 use bdk_wallet::chain::spk_client::FullScanRequest;
@@ -287,8 +285,7 @@ impl<P: WalletPersister> NgAccount<P> {
     }
 
     pub fn set_do_not_spend(&mut self, output_id: &str, state: bool) -> anyhow::Result<()> {
-        self.meta_storage
-            .set_do_not_spend(output_id, state)
+        self.meta_storage.set_do_not_spend(output_id, state)
     }
 
     #[cfg(feature = "envoy")]
@@ -370,18 +367,14 @@ impl<P: WalletPersister> NgAccount<P> {
         derivation_index
     }
 
-    pub fn sign(&self, psbt: &str, options: bdk_wallet::SignOptions) -> anyhow::Result<String> {
-        let tx = BASE64_STANDARD
-            .decode(psbt)
-            .with_context(|| "Failed to decode PSBT")?;
-
-        let mut psbt = Psbt::deserialize(&tx).with_context(|| "Failed to deserialize PSBT")?;
+    pub fn sign(&self, psbt: &[u8], options: bdk_wallet::SignOptions) -> anyhow::Result<Vec<u8>> {
+        let mut psbt = Psbt::deserialize(psbt).with_context(|| "Failed to deserialize PSBT")?;
 
         for wallet in self.wallets.iter() {
             wallet.sign_psbt(&mut psbt, options.clone())?;
         }
 
-        let encoded_psbt = BASE64_STANDARD.encode(psbt.serialize());
+        let encoded_psbt = psbt.serialize();
         Ok(encoded_psbt)
     }
 

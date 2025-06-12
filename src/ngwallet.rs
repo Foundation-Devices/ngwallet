@@ -147,7 +147,10 @@ impl<P: WalletPersister> NgWallet<P> {
                     let block_height = anchor.block_id.height;
                     if block_height > 0 { block_height } else { 0 }
                 }
-                Unconfirmed { first_seen: _first_seen, last_seen } => {
+                Unconfirmed {
+                    first_seen: _first_seen,
+                    last_seen,
+                } => {
                     match last_seen {
                         None => {}
                         Some(last_seen) => {
@@ -403,7 +406,10 @@ impl<P: WalletPersister> NgWallet<P> {
                             };
                             if block_height > 0 { block_height } else { 0 }
                         }
-                        Unconfirmed { first_seen: _first_seen, last_seen } => {
+                        Unconfirmed {
+                            first_seen: _first_seen,
+                            last_seen,
+                        } => {
                             match last_seen {
                                 None => {}
                                 Some(last_seen) => {

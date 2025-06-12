@@ -26,7 +26,7 @@ use bdk_electrum::electrum_client::Error;
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DraftTransaction {
     pub transaction: BitcoinTransaction,
-    pub psbt_base64: String,
+    pub psbt: Vec<u8>,
     pub change_out_put_tag: Option<String>,
     pub input_tags: Vec<String>,
     pub is_finalized: bool,
@@ -246,7 +246,7 @@ impl<P: WalletPersister> NgAccount<P> {
                     max_fee_rate,
                     min_fee_rate: 1,
                     draft_transaction: DraftTransaction {
-                        psbt_base64: BASE64_STANDARD.encode(psbt.clone().serialize()).to_string(),
+                        psbt: psbt.clone().serialize(),
                         is_finalized: psbt.extract(&Secp256k1::verification_only()).is_ok(),
                         input_tags,
                         change_out_put_tag,
@@ -386,7 +386,7 @@ impl<P: WalletPersister> NgAccount<P> {
                     .collect();
 
                 Ok(DraftTransaction {
-                    psbt_base64: BASE64_STANDARD.encode(psbt.clone().serialize()).to_string(),
+                    psbt: psbt.clone().serialize(),
                     is_finalized: psbt.extract(&Secp256k1::verification_only()).is_ok(),
                     input_tags,
                     change_out_put_tag,
@@ -405,7 +405,7 @@ impl<P: WalletPersister> NgAccount<P> {
     ) -> std::result::Result<Txid, Error> {
         let bdk_client = utils::build_electrum_client(electrum_server, socks_proxy);
         let tx = BASE64_STANDARD
-            .decode(spend.psbt_base64)
+            .decode(spend.psbt)
             .expect("Failed to decode PSBT");
         let psbt = Psbt::deserialize(tx.as_slice()).expect("Failed to deserialize PSBT:");
 
@@ -418,12 +418,9 @@ impl<P: WalletPersister> NgAccount<P> {
 
     pub fn decode_psbt(
         draft_transaction: DraftTransaction,
-        psbt_base64: &str,
+        psbt: &[u8],
     ) -> Result<DraftTransaction> {
-        let psbt_bytes = BASE64_STANDARD
-            .decode(psbt_base64)
-            .map_err(|e| anyhow::anyhow!("Failed to decode PSBT: {}", e))?;
-        let mut psbt = Psbt::deserialize(&psbt_bytes)
+        let mut psbt = Psbt::deserialize(psbt)
             .map_err(|e| anyhow::anyhow!("Failed to deserialize PSBT: {}", e))?;
         // If the PSBT is not finalized, finalize it, passport will not finalize but prime will finalize
         if psbt.extract(&Secp256k1::verification_only()).is_err() {
@@ -433,7 +430,7 @@ impl<P: WalletPersister> NgAccount<P> {
                 .map_err(|(_, err)| anyhow::anyhow!("Failed to finalize PSBT {err:?}"))?;
         }
         Ok(DraftTransaction {
-            psbt_base64: BASE64_STANDARD.encode(psbt.clone().serialize()).to_string(),
+            psbt: psbt.clone().serialize(),
             is_finalized: psbt.extract(&Secp256k1::verification_only()).is_ok(),
             input_tags: draft_transaction.input_tags,
             change_out_put_tag: draft_transaction.change_out_put_tag,
@@ -756,12 +753,8 @@ impl<P: WalletPersister> NgAccount<P> {
     }
 
     ///TODO, verify inputs belongs to the wallet
-    pub fn get_bitcoin_tx_from_psbt(&self, psbt_base64: &str) -> Result<BitcoinTransaction> {
-        let tx = BASE64_STANDARD
-            .decode(psbt_base64)
-            .with_context(|| "Failed to decode PSBT")?;
-        let psbt =
-            Psbt::deserialize(tx.as_slice()).with_context(|| "Failed to deserialize PSBT")?;
+    pub fn get_bitcoin_tx_from_psbt(&self, psbt: &[u8]) -> Result<BitcoinTransaction> {
+        let psbt = Psbt::deserialize(psbt).with_context(|| "Failed to deserialize PSBT")?;
 
         let transaction = psbt.clone().unsigned_tx;
         let mut amount = 0;
