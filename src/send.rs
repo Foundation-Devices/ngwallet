@@ -1,6 +1,5 @@
 use crate::ngwallet::NgWallet;
 use anyhow::{Context, Result};
-use base64::prelude::*;
 use bdk_wallet::bitcoin::secp256k1::Secp256k1;
 use bdk_wallet::bitcoin::{
     Address, Amount, FeeRate, Psbt, ScriptBuf, Transaction, TxIn, Txid, Weight, psbt,
@@ -404,10 +403,7 @@ impl<P: WalletPersister> NgAccount<P> {
         socks_proxy: Option<&str>,
     ) -> std::result::Result<Txid, Error> {
         let bdk_client = utils::build_electrum_client(electrum_server, socks_proxy);
-        let tx = BASE64_STANDARD
-            .decode(spend.psbt)
-            .expect("Failed to decode PSBT");
-        let psbt = Psbt::deserialize(tx.as_slice()).expect("Failed to deserialize PSBT:");
+        let psbt = Psbt::deserialize(spend.psbt.as_slice()).expect("Failed to deserialize PSBT:");
 
         let transaction = psbt
             .extract_tx()
