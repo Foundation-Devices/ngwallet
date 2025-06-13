@@ -76,13 +76,25 @@ checksum = "9d297deb1925b89f2ccc13d7635fa0714f12c87adce1c75356b39ca9b7178567"
 
 [[package]]
 name = "bdk_chain"
-version = "0.23.0"
-source = "git+https://github.com/Foundation-Devices/bdk-1?rev=fd5b8152fdb49b3d457ec4c92591bdc45f00f43f#fd5b8152fdb49b3d457ec4c92591bdc45f00f43f"
+version = "0.22.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "260ac6b2feb080a9af6e1df060e09ea78b2034955aeabef81b87309d6b7cfd47"
 dependencies = [
- "bdk_core",
+ "bdk_core 0.5.0",
  "bitcoin",
  "miniscript",
  "rusqlite",
+ "serde",
+]
+
+[[package]]
+name = "bdk_core"
+version = "0.5.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2cb2496e93fd104e32a36cd5dfb0638fc8376d83d80696b3b75f27abe39df343"
+dependencies = [
+ "bitcoin",
+ "hashbrown",
  "serde",
 ]
 
@@ -92,8 +104,6 @@ version = "0.6.0"
 source = "git+https://github.com/Foundation-Devices/bdk-1?rev=fd5b8152fdb49b3d457ec4c92591bdc45f00f43f#fd5b8152fdb49b3d457ec4c92591bdc45f00f43f"
 dependencies = [
  "bitcoin",
- "hashbrown",
- "serde",
 ]
 
 [[package]]
@@ -101,14 +111,14 @@ name = "bdk_electrum"
 version = "0.23.0"
 source = "git+https://github.com/Foundation-Devices/bdk-1?rev=fd5b8152fdb49b3d457ec4c92591bdc45f00f43f#fd5b8152fdb49b3d457ec4c92591bdc45f00f43f"
 dependencies = [
- "bdk_core",
+ "bdk_core 0.6.0",
  "electrum-client",
 ]
 
 [[package]]
 name = "bdk_wallet"
-version = "2.0.0"
-source = "git+https://github.com/Foundation-Devices/bdk_wallet?rev=bb69c11920c762f751f967535228cc75bca58cef#bb69c11920c762f751f967535228cc75bca58cef"
+version = "2.0.0-alpha.0"
+source = "git+https://github.com/Foundation-Devices/bdk_wallet#646fc24237427f9c0a669411c5ac709910ba5be5"
 dependencies = [
  "bdk_chain",
  "bip39",
