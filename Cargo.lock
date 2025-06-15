@@ -108,7 +108,7 @@ dependencies = [
 [[package]]
 name = "bdk_wallet"
 version = "2.0.0"
-source = "git+https://github.com/Foundation-Devices/bdk_wallet?rev=bb69c11920c762f751f967535228cc75bca58cef#bb69c11920c762f751f967535228cc75bca58cef"
+source = "git+https://github.com/Foundation-Devices/bdk_wallet?rev=c35b0fd03fa3b858b97208cf663974da019995fd#c35b0fd03fa3b858b97208cf663974da019995fd"
 dependencies = [
  "bdk_chain",
  "bip39",
