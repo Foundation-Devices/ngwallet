@@ -22,6 +22,14 @@ use crate::utils;
 #[cfg(feature = "envoy")]
 use bdk_electrum::electrum_client::Error;
 
+/// from bdk_wallet
+/// From [`FeeRate`], the maximum fee rate that is used for extracting transactions.
+/// The default `max_fee_rate` value used for extracting transactions with [`extract_tx`]
+///
+/// As of 2023, even the biggest overpayers during the highest fee markets only paid around
+/// 1000 sats/vByte. 25k sats/vByte is obviously a mistake at this point.
+pub const DEFAULT_MAX_FEE_RATE: FeeRate = FeeRate::from_sat_per_vb_unchecked(25_000);
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DraftTransaction {
     pub transaction: BitcoinTransaction,
@@ -47,6 +55,23 @@ pub struct TransactionParams {
     pub note: Option<String>,
     pub tag: Option<String>,
     pub do_not_spend_change: bool,
+}
+
+#[derive(Debug)]
+pub enum TransactionComposeError {
+    CreateTxError(CreateTxError),
+    WalletError(String),
+    Error(String),
+}
+
+impl fmt::Display for TransactionComposeError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            TransactionComposeError::CreateTxError(e) => write!(f, "CreateTxError: {}", e),
+            TransactionComposeError::WalletError(e) => write!(f, "WalletError: {}", e),
+            TransactionComposeError::Error(e) => write!(f, "Error: {}", e),
+        }
+    }
 }
 
 // TODO: chore: cleanup duplicate code
