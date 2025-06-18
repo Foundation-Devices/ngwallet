@@ -11,7 +11,6 @@ use bdk_wallet::chain::spk_client::{FullScanRequest, FullScanResponse, SyncReque
 use bdk_wallet::{CreateWithPersistError, LoadWithPersistError, PersistedWallet, SignOptions};
 use bdk_wallet::{KeychainKind, WalletPersister};
 use bdk_wallet::{Update, Wallet};
-use log::info;
 
 use crate::config::AddressType;
 #[cfg(feature = "envoy")]
@@ -132,7 +131,6 @@ impl<P: WalletPersister> NgWallet<P> {
 
         //add date to transaction
         for canonical_tx in wallet.transactions() {
-            let mut date: Option<u64> = None;
             let tx = canonical_tx.tx_node.tx;
             let tx_id = canonical_tx.tx_node.txid.to_string();
             let (sent, received) = wallet.sent_and_received(tx.as_ref());
@@ -140,6 +138,8 @@ impl<P: WalletPersister> NgWallet<P> {
                 .calculate_fee(tx.as_ref())
                 .unwrap_or(Amount::from_sat(0))
                 .to_sat();
+            #[allow(unused_assignments)]
+            let mut date: Option<u64> = None;
             let block_height = match canonical_tx.chain_position {
                 Confirmed { anchor, .. } => {
                     //to milliseconds
@@ -148,15 +148,25 @@ impl<P: WalletPersister> NgWallet<P> {
                     if block_height > 0 { block_height } else { 0 }
                 }
                 Unconfirmed {
-                    first_seen: _first_seen,
+                    first_seen,
                     last_seen,
                 } => {
-                    match last_seen {
-                        None => {}
-                        Some(last_seen) => {
+                    match first_seen {
+                        None => {
+                            match last_seen {
+                                None => {
+                                    //no date available
+                                    date = None;
+                                }
+                                Some(last_seen) => {
+                                    //to milliseconds
+                                    date = Some(last_seen);
+                                }
+                            }
+                        }
+                        Some(first_seen) => {
                             //to milliseconds
-                            date = Some(last_seen);
-                            info!("block last_seen {}", last_seen);
+                            date = Some(first_seen);
                         }
                     }
                     0
