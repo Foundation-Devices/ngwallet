@@ -1,5 +1,6 @@
 use crate::ngwallet::NgWallet;
 use anyhow::{Context, Result};
+use bdk_wallet::bitcoin::psbt::ExtractTxError;
 use bdk_wallet::bitcoin::secp256k1::Secp256k1;
 use bdk_wallet::bitcoin::{
     Address, Amount, FeeRate, Psbt, ScriptBuf, Transaction, TxIn, Txid, Weight, psbt,
@@ -10,6 +11,7 @@ use bdk_wallet::error::CreateTxError::CoinSelection;
 use bdk_wallet::miniscript::psbt::PsbtExt;
 use bdk_wallet::psbt::PsbtUtils;
 use bdk_wallet::{KeychainKind, PersistedWallet, SignOptions, TxOrdering, WalletPersister};
+use core::fmt;
 use log::info;
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
@@ -21,6 +23,14 @@ use crate::transaction::{BitcoinTransaction, Input, KeyChain, Output};
 use crate::utils;
 #[cfg(feature = "envoy")]
 use bdk_electrum::electrum_client::Error;
+
+/// from bdk_wallet
+/// From [`FeeRate`], the maximum fee rate that is used for extracting transactions.
+/// The default `max_fee_rate` value used for extracting transactions with [`extract_tx`]
+///
+/// As of 2023, even the biggest overpayers during the highest fee markets only paid around
+/// 1000 sats/vByte. 25k sats/vByte is obviously a mistake at this point.
+pub const DEFAULT_MAX_FEE_RATE: FeeRate = FeeRate::from_sat_per_vb_unchecked(25_000);
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DraftTransaction {
@@ -49,25 +59,48 @@ pub struct TransactionParams {
     pub do_not_spend_change: bool,
 }
 
+#[derive(Debug)]
+pub enum TransactionComposeError {
+    CreateTxError(CreateTxError),
+    WalletError(String),
+    Error(String),
+}
+
+impl fmt::Display for TransactionComposeError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            TransactionComposeError::CreateTxError(e) => write!(f, "CreateTxError: {}", e),
+            TransactionComposeError::WalletError(e) => write!(f, "WalletError: {}", e),
+            TransactionComposeError::Error(e) => write!(f, "Error: {}", e),
+        }
+    }
+}
+
 // TODO: chore: cleanup duplicate code
 impl<P: WalletPersister> NgAccount<P> {
     //noinspection RsExternalLinter
     pub fn get_max_fee(
         &self,
         transaction_params: TransactionParams,
-    ) -> Result<TransactionFeeResult, CreateTxError> {
-        let utxos = self.utxos().unwrap();
-        let mut coordinator_wallet = self.get_coordinator_wallet().bdk_wallet.lock().unwrap();
-        let address = transaction_params.address;
-        let tag = transaction_params.tag;
-        let default_fee = transaction_params.fee_rate;
-        let selected_outputs = transaction_params.selected_outputs;
-        let amount = transaction_params.amount;
+    ) -> Result<TransactionFeeResult, TransactionComposeError> {
+        let utxos = self
+            .utxos()
+            .map_err(|e| TransactionComposeError::Error(format!("Failed to get UTXOs: {}", e)))?;
+        let mut coordinator_wallet = self
+            .get_coordinator_wallet()
+            .bdk_wallet
+            .lock()
+            .map_err(|_| TransactionComposeError::WalletError("Failed to lock wallet".into()))?;
+        let param = transaction_params.clone();
+        let address = param.address;
+        let default_fee = param.fee_rate;
+        let selected_outputs = param.selected_outputs;
+        let amount = param.amount;
 
         let address = Address::from_str(&address)
-            .unwrap()
+            .map_err(|_| TransactionComposeError::Error("Invalid address format".into()))?
             .require_network(coordinator_wallet.network())
-            .unwrap();
+            .map_err(|_| TransactionComposeError::Error("Address network mismatch".into()))?;
         let script: ScriptBuf = address.clone().into();
 
         //do not spend
@@ -80,13 +113,21 @@ impl<P: WalletPersister> NgAccount<P> {
             &mut spendables,
         );
 
+        if spendables.is_empty() {
+            return Err(TransactionComposeError::Error(
+                "No spendable outputs available".into(),
+            ));
+        }
+
         let spendable_balance: u64 = spendables.clone().iter().map(|utxo| utxo.amount).sum();
 
         if amount > spendable_balance {
-            return Err(CoinSelection(InsufficientFunds {
-                available: Amount::from_sat(spendable_balance),
-                needed: Amount::from_sat(spendable_balance.checked_div(amount).unwrap_or(0)),
-            }));
+            return Err(TransactionComposeError::CreateTxError(CoinSelection(
+                InsufficientFunds {
+                    available: Amount::from_sat(spendable_balance),
+                    needed: Amount::from_sat(amount),
+                },
+            )));
         }
 
         //clippy is wrong about max_fee unused_assignments
@@ -104,17 +145,26 @@ impl<P: WalletPersister> NgAccount<P> {
             receive_amount = 573; //dust limit
         }
 
-        //get absolute max fee from spendable balance
-        max_fee = spendable_balance
-            .checked_sub(receive_amount)
-            .ok_or_else(|| {
-                CoinSelection(InsufficientFunds {
-                    available: Amount::from_sat(spendable_balance),
-                    needed: Amount::from_sat(spendable_balance.saturating_sub(amount)),
-                })
-            })?;
+        // Fix 4: Use saturating_sub to prevent underflow
+        max_fee = spendable_balance.saturating_sub(receive_amount);
+        if max_fee == 0 {
+            return Err(TransactionComposeError::Error(
+                "Insufficient funds for fee calculation".into(),
+            ));
+        }
+
+        // Add a maximum iteration count to prevent infinite loops
+        let mut iterations = 0;
+        let max_iterations = 20;
 
         loop {
+            iterations += 1;
+            if iterations > max_iterations {
+                return Err(TransactionComposeError::Error(
+                    "Failed to calculate maximum fee rate after maximum iterations".into(),
+                ));
+            }
+
             let psbt = self.prepare_psbt(
                 &mut coordinator_wallet,
                 script.clone(),
@@ -125,6 +175,7 @@ impl<P: WalletPersister> NgAccount<P> {
                 receive_amount,
                 false,
             );
+
             match psbt {
                 Ok(mut psbt) => {
                     let sign_options = SignOptions {
@@ -142,29 +193,69 @@ impl<P: WalletPersister> NgAccount<P> {
                         &mut psbt,
                         sign_options.clone(),
                     );
-                    match psbt.fee_rate() {
-                        None => {}
-                        Some(r) => {
-                            max_fee_rate = r.to_sat_per_vb_floor();
+
+                    match psbt.clone().extract_tx_fee_rate_limit() {
+                        Ok(..) => {
+                            max_fee_rate = psbt
+                                .fee_rate()
+                                .unwrap_or(FeeRate::from_sat_per_vb_unchecked(1))
+                                .to_sat_per_vb_floor();
+                            if max_fee_rate < 1 {
+                                max_fee_rate = 1;
+                            }
                             break;
                         }
+                        Err(error) => match error {
+                            ExtractTxError::AbsurdFeeRate { .. } => {
+                                max_fee_rate = DEFAULT_MAX_FEE_RATE.to_sat_per_vb_floor();
+                                break;
+                            }
+                            ExtractTxError::MissingInputValue { .. } => {
+                                max_fee_rate = psbt
+                                    .fee_rate()
+                                    .unwrap_or(FeeRate::from_sat_per_vb_unchecked(1))
+                                    .to_sat_per_vb_floor();
+                                break;
+                            }
+                            ExtractTxError::SendingTooMuch { psbt } => {
+                                max_fee_rate = psbt
+                                    .fee_rate()
+                                    .unwrap_or(FeeRate::from_sat_per_vb_unchecked(1))
+                                    .to_sat_per_vb_floor();
+                                break;
+                            }
+                            _er => {
+                                info!("Error calculating fee rate: {:?}", _er);
+                                max_fee = max_fee.saturating_sub(receive_amount);
+                                if max_fee == 0 {
+                                    return Err(TransactionComposeError::Error(
+                                        "Cannot calculate fee: available amount too low".into(),
+                                    ));
+                                }
+                            }
+                        },
+                    }
+                    if let Some(r) = psbt.fee_rate() {
+                        max_fee_rate = r.to_sat_per_vb_floor();
+                        // Fix 6: Ensure max_fee_rate is at least 1
+                        if max_fee_rate < 1 {
+                            max_fee_rate = 1;
+                        }
+                        break;
                     }
                 }
                 Err(e) => match e {
-                    CoinSelection(erorr) => {
-                        max_fee = erorr
-                            .available
-                            .to_sat()
-                            .checked_sub(receive_amount)
-                            .ok_or_else(|| {
-                                CoinSelection(InsufficientFunds {
-                                    available: Amount::from_sat(erorr.available.to_sat()),
-                                    needed: Amount::from_sat(receive_amount),
-                                })
-                            })?
+                    CoinSelection(error) => {
+                        max_fee = error.available.to_sat().saturating_sub(receive_amount);
+                        if max_fee == 0 {
+                            return Err(TransactionComposeError::Error(
+                                "Cannot calculate fee: available amount too low".into(),
+                            ));
+                        }
                     }
                     err => {
-                        return Err(err);
+                        info!("Create tx error: {:?}", err);
+                        return Err(TransactionComposeError::CreateTxError(err));
                     }
                 },
             }
@@ -191,95 +282,50 @@ impl<P: WalletPersister> NgAccount<P> {
         );
 
         match psbt {
-            Ok(mut psbt) => {
-                let sign_options = SignOptions {
-                    trust_witness_utxo: true,
-                    ..Default::default()
-                };
-                // Always try signing
-                let _ = coordinator_wallet
-                    .sign(&mut psbt, sign_options.clone())
-                    .is_ok();
-                coordinator_wallet.cancel_tx(&psbt.clone().unsigned_tx);
-                Self::sign_psbt(
-                    self.non_coordinator_wallets(),
-                    &mut psbt,
-                    sign_options.clone(),
-                );
-
-                let outputs = Self::apply_meta_to_psbt_outputs(
-                    &coordinator_wallet,
-                    &self.non_coordinator_wallets(),
+            Ok(psbt) => {
+                let draft_transaction = self.prepare_draft_transaction(
+                    psbt,
+                    &mut coordinator_wallet,
                     utxos.clone(),
-                    tag,
-                    false,
-                    psbt.clone().unsigned_tx,
-                );
-                let inputs = Self::apply_meta_to_inputs(
-                    &coordinator_wallet,
-                    &self.non_coordinator_wallets(),
-                    psbt.clone().unsigned_tx,
-                    utxos.clone(),
-                );
-                let transaction = Self::transform_psbt_to_bitcointx(
-                    psbt.clone(),
-                    address.clone().to_string(),
+                    transaction_params.clone(),
                     default_fee_rate,
-                    outputs.clone(),
-                    inputs.clone(),
-                    transaction_params.note,
                 );
-                let mut change_out_put_tag: Option<String> = None;
-                for output in transaction.outputs.clone() {
-                    if output.keychain == Some(KeyChain::Internal) {
-                        change_out_put_tag = output.tag.clone();
-                    }
-                }
-                let input_tags: Vec<String> = inputs
-                    .clone()
-                    .iter()
-                    .map(|input| input.tag.clone().unwrap_or("untagged".to_string()))
-                    .collect();
 
                 Ok(TransactionFeeResult {
                     max_fee_rate,
                     min_fee_rate: 1,
-                    draft_transaction: DraftTransaction {
-                        psbt: psbt.clone().serialize(),
-                        is_finalized: psbt.extract(&Secp256k1::verification_only()).is_ok(),
-                        input_tags,
-                        change_out_put_tag,
-                        transaction,
-                    },
+                    draft_transaction,
                 })
             }
-            Err(e) => Err(e),
+            Err(e) => Err(TransactionComposeError::CreateTxError(e)),
         }
     }
 
     pub fn compose_psbt(
         &self,
         spend_params: TransactionParams,
-    ) -> Result<DraftTransaction, CreateTxError> {
-        let address = spend_params.address;
-        let amount = spend_params.amount;
-        let fee_rate = spend_params.fee_rate;
-        let selected_outputs = spend_params.selected_outputs;
-        let note = spend_params.note;
-        let tag = spend_params.tag;
-        let do_not_spend_change = spend_params.do_not_spend_change;
+    ) -> Result<DraftTransaction, TransactionComposeError> {
+        let params = spend_params.clone();
+        let address = params.address;
+        let amount = params.amount;
+        let fee_rate = params.fee_rate;
+        let selected_outputs = params.selected_outputs;
 
         //get current utxo set and balance
         let utxos = self.utxos().unwrap();
 
         // The wallet will be locked for the rest of the spend method,
         // so calling other NgWallet APIs won't succeed.
-        let mut coordinator_wallet = self.get_coordinator_wallet().bdk_wallet.lock().unwrap();
+        let mut coordinator_wallet = self
+            .get_coordinator_wallet()
+            .bdk_wallet
+            .lock()
+            .map_err(|_| TransactionComposeError::WalletError("Failed to lock wallet".into()))?;
 
         let address = Address::from_str(&address)
             .unwrap()
             .require_network(coordinator_wallet.network())
-            .unwrap();
+            .map_err(|_| TransactionComposeError::Error("Address network mismatch".into()))?;
         let script: ScriptBuf = address.clone().into();
 
         //do not spend
@@ -295,7 +341,7 @@ impl<P: WalletPersister> NgAccount<P> {
 
         let mut do_not_spend_amount = 0;
 
-        for do_not_spend_utxo in do_not_spend_utxos.clone() {
+        for do_not_spend_utxo in &do_not_spend_utxos {
             do_not_spend_amount += do_not_spend_utxo.amount;
         }
 
@@ -308,10 +354,12 @@ impl<P: WalletPersister> NgAccount<P> {
         }
 
         if amount > spendable_balance {
-            return Err(CoinSelection(InsufficientFunds {
-                available: Amount::from_sat(spendable_balance),
-                needed: Amount::from_sat(spendable_balance.checked_div(amount).unwrap_or(0)),
-            }));
+            return Err(TransactionComposeError::CreateTxError(CoinSelection(
+                InsufficientFunds {
+                    available: Amount::from_sat(spendable_balance),
+                    needed: Amount::from_sat(spendable_balance.checked_div(amount).unwrap_or(0)),
+                },
+            )));
         }
 
         let sweep = amount == spendable_balance;
@@ -329,70 +377,14 @@ impl<P: WalletPersister> NgAccount<P> {
         );
 
         match psbt {
-            Ok(mut psbt) => {
-                // Always try signing
-                let sign_options = SignOptions {
-                    trust_witness_utxo: true,
-                    ..Default::default()
-                };
-
-                // Always try signing
-                let _ = coordinator_wallet
-                    .sign(&mut psbt, sign_options.clone())
-                    .is_ok();
-                //reset index,
-                coordinator_wallet.cancel_tx(&psbt.clone().unsigned_tx);
-                Self::sign_psbt(
-                    self.non_coordinator_wallets(),
-                    &mut psbt,
-                    sign_options.clone(),
-                );
-                //extract outputs from tx and add tags and do_not_spend states
-                let outputs = Self::apply_meta_to_psbt_outputs(
-                    &coordinator_wallet,
-                    &self.non_coordinator_wallets(),
-                    utxos.clone(),
-                    tag.clone(),
-                    do_not_spend_change,
-                    psbt.clone().unsigned_tx,
-                );
-                let inputs = Self::apply_meta_to_inputs(
-                    &coordinator_wallet,
-                    &self.non_coordinator_wallets(),
-                    psbt.clone().unsigned_tx,
-                    utxos.clone(),
-                );
-                let transaction = Self::transform_psbt_to_bitcointx(
-                    psbt.clone(),
-                    address.clone().to_string(),
-                    fee_rate,
-                    outputs.clone(),
-                    inputs.clone(),
-                    note,
-                );
-
-                let mut change_out_put_tag: Option<String> = None;
-                for output in transaction.outputs.clone() {
-                    if output.keychain == Some(KeyChain::Internal) {
-                        change_out_put_tag = output.tag.clone();
-                    }
-                }
-
-                let input_tags: Vec<String> = inputs
-                    .clone()
-                    .iter()
-                    .map(|input| input.tag.clone().unwrap_or("untagged".to_string()))
-                    .collect();
-
-                Ok(DraftTransaction {
-                    psbt: psbt.clone().serialize(),
-                    is_finalized: psbt.extract(&Secp256k1::verification_only()).is_ok(),
-                    input_tags,
-                    change_out_put_tag,
-                    transaction,
-                })
-            }
-            Err(e) => Err(e),
+            Ok(psbt) => Ok(self.prepare_draft_transaction(
+                psbt,
+                &mut coordinator_wallet,
+                utxos.clone(),
+                spend_params,
+                fee_rate,
+            )),
+            Err(e) => Err(TransactionComposeError::CreateTxError(e)),
         }
     }
 
@@ -403,7 +395,7 @@ impl<P: WalletPersister> NgAccount<P> {
         socks_proxy: Option<&str>,
     ) -> std::result::Result<Txid, Error> {
         let bdk_client = utils::build_electrum_client(electrum_server, socks_proxy);
-        let psbt = Psbt::deserialize(spend.psbt.as_slice()).expect("Failed to deserialize PSBT:");
+        let psbt = Psbt::deserialize(&spend.psbt).expect("Failed to deserialize PSBT:");
 
         let transaction = psbt
             .extract_tx()
@@ -418,7 +410,6 @@ impl<P: WalletPersister> NgAccount<P> {
     ) -> Result<DraftTransaction> {
         let mut psbt = Psbt::deserialize(psbt)
             .map_err(|e| anyhow::anyhow!("Failed to deserialize PSBT: {}", e))?;
-        // If the PSBT is not finalized, finalize it, passport will not finalize but prime will finalize
         if psbt.extract(&Secp256k1::verification_only()).is_err() {
             psbt = psbt
                 .clone()
@@ -501,28 +492,26 @@ impl<P: WalletPersister> NgAccount<P> {
         do_not_spend_change: bool,
         transaction: Transaction,
     ) -> Vec<Output> {
-        let change_tag = if tag.is_none() {
-            let tags: Vec<String> = transaction
-                .input
-                .clone()
-                .iter()
-                .map(|input| {
-                    let tx_id = input.clone().previous_output.txid.to_string();
-                    let utxo_id = format!("{}:{}", tx_id, input.previous_output.vout).to_string();
-                    wallet.get_utxo(input.previous_output).unwrap();
-                    let mut tag = "untagged".to_string();
-                    for utxo in utxos.clone() {
-                        if utxo.get_id() == utxo_id {
-                            tag = utxo.tag.unwrap_or("untagged".to_string());
-                        }
-                    }
-                    tag
-                })
-                .collect();
-            let is_input_comes_from_same_tag =
-                tags.clone().iter().rev().collect::<HashSet<_>>().len() == 1;
+        let need_to_find_change = tag.as_ref().is_none_or(|t| t.is_empty());
 
-            if is_input_comes_from_same_tag {
+        let change_tag = if need_to_find_change {
+            let mut tags = Vec::new();
+            for input in &transaction.input {
+                let tx_id = input.previous_output.txid.to_string();
+                let utxo_id = format!("{}:{}", tx_id, input.previous_output.vout);
+                let mut input_tag = "untagged".to_string();
+                for utxo in &utxos {
+                    if utxo.get_id() == utxo_id {
+                        input_tag = utxo.tag.clone().unwrap_or_else(|| "untagged".to_string());
+                        break; // Found the matching utxo, no need to continue
+                    }
+                }
+                tags.push(input_tag);
+            }
+
+            let unique_tags: HashSet<&String> = tags.iter().collect();
+
+            if !tags.is_empty() && unique_tags.len() == 1 {
                 Some(tags[0].clone())
             } else {
                 None
@@ -530,64 +519,63 @@ impl<P: WalletPersister> NgAccount<P> {
         } else {
             tag.clone()
         };
-        transaction
-            .output
-            .clone()
-            .iter()
-            .enumerate()
-            .map(|(index, tx_out)| {
-                let script = tx_out.script_pubkey.clone();
-                let mut derivation = wallet.derivation_of_spk(script.clone());
-                let address = Address::from_script(&script, wallet.network())
-                    .unwrap()
-                    .to_string();
-                let mut out_put_tag: Option<String> = None;
-                let mut out_put_do_not_spend_change = false;
 
-                if derivation.is_some() {
-                    let path = derivation.unwrap();
-                    //if the output belongs to change keychain,
-                    if path.0 == KeychainKind::Internal {
-                        out_put_tag = change_tag.clone();
-                        out_put_do_not_spend_change = do_not_spend_change;
-                    }
-                } else {
-                    //check if the change output belongs to the non-coordinator wallets
-                    for wallet in non_coordinator_wallets.iter() {
-                        let wallet = wallet.bdk_wallet.lock().unwrap();
-                        derivation = wallet.derivation_of_spk(script.clone());
-                        match derivation {
-                            None => {}
-                            Some(path) => {
-                                if path.0 == KeychainKind::Internal {
-                                    out_put_tag = change_tag.clone();
-                                    out_put_do_not_spend_change = do_not_spend_change;
-                                }
+        let mut outputs = Vec::with_capacity(transaction.output.len());
+
+        for (index, tx_out) in transaction.output.iter().enumerate() {
+            let script = tx_out.script_pubkey.clone();
+            let mut derivation = wallet.derivation_of_spk(script.clone());
+            let address = match Address::from_script(&script, wallet.network()) {
+                Ok(addr) => addr.to_string(),
+                Err(_) => continue, // Skip invalid addresses
+            };
+
+            let mut out_put_tag: Option<String> = None;
+            let mut out_put_do_not_spend_change = false;
+
+            if let Some(path) = derivation {
+                // If the output belongs to change keychain
+                if path.0 == KeychainKind::Internal {
+                    out_put_tag = change_tag.clone();
+                    out_put_do_not_spend_change = do_not_spend_change;
+                }
+            } else {
+                // Check if the change output belongs to the non-coordinator wallets
+                for wallet in non_coordinator_wallets.iter() {
+                    if let Ok(wallet_lock) = wallet.bdk_wallet.lock() {
+                        derivation = wallet_lock.derivation_of_spk(script.clone());
+                        if let Some(path) = derivation {
+                            if path.0 == KeychainKind::Internal {
+                                out_put_tag = change_tag.clone();
+                                out_put_do_not_spend_change = do_not_spend_change;
+                                break; // Found the wallet, no need to continue
                             }
                         }
                     }
                 }
-                //if the output belongs to the wallet
-                Output {
-                    tx_id: transaction.compute_txid().to_string(),
-                    vout: index as u32,
-                    address,
-                    amount: tx_out.value.to_sat(),
-                    tag: out_put_tag,
-                    date: None,
-                    is_confirmed: false,
-                    keychain: derivation.map(|x| {
-                        if x.0 == KeychainKind::External {
-                            KeyChain::External
-                        } else {
-                            KeyChain::Internal
-                        }
-                    }),
-                    do_not_spend: out_put_do_not_spend_change,
-                }
-            })
-            .clone()
-            .collect::<Vec<Output>>()
+            }
+
+            // If the output belongs to the wallet
+            outputs.push(Output {
+                tx_id: transaction.compute_txid().to_string(),
+                vout: index as u32,
+                address,
+                amount: tx_out.value.to_sat(),
+                tag: out_put_tag,
+                date: None,
+                is_confirmed: false,
+                keychain: derivation.map(|x| {
+                    if x.0 == KeychainKind::External {
+                        KeyChain::External
+                    } else {
+                        KeyChain::Internal
+                    }
+                }),
+                do_not_spend: out_put_do_not_spend_change,
+            });
+        }
+
+        outputs
     }
 
     pub(crate) fn apply_meta_to_inputs(
@@ -596,35 +584,45 @@ impl<P: WalletPersister> NgAccount<P> {
         transaction: Transaction,
         utxos: Vec<Output>,
     ) -> Vec<Input> {
-        transaction
-            .input
-            .clone()
-            .iter()
-            .map(|input| {
-                let tx_id = input.clone().previous_output.txid.to_string();
-                let v_index = input.clone().previous_output.vout;
-                let mut amount = Self::get_amount_from_tx_in(wallet, input, &tx_id, v_index);
-                if amount == 0 {
-                    for wallet in non_coordinator_wallets {
-                        let wallet = wallet.bdk_wallet.lock().unwrap();
-                        amount = Self::get_amount_from_tx_in(&wallet, input, &tx_id, v_index);
-                    }
-                }
-                let mut tag: Option<String> = None;
-                for utxo in utxos.clone() {
-                    if utxo.get_id() == format!("{}:{}", tx_id, input.previous_output.vout) {
-                        tag = utxo.tag;
-                    }
-                }
+        let mut inputs = Vec::with_capacity(transaction.input.len());
 
-                Input {
-                    tx_id,
-                    vout: input.previous_output.vout,
-                    amount,
-                    tag,
+        for input in &transaction.input {
+            let tx_id = input.previous_output.txid.to_string();
+            let v_index = input.previous_output.vout;
+            let mut amount = Self::get_amount_from_tx_in(wallet, input, &tx_id, v_index);
+
+            if amount == 0 {
+                for wallet in non_coordinator_wallets {
+                    let wallet = wallet.bdk_wallet.lock().unwrap_or_else(|poisoned| {
+                        info!("Mutex poisoned, recovering...");
+                        poisoned.into_inner() // Recover from poisoned mutex
+                    });
+                    amount = Self::get_amount_from_tx_in(&wallet, input, &tx_id, v_index);
+                    if amount > 0 {
+                        break; // Found the amount, no need to check other wallets
+                    }
                 }
-            })
-            .collect()
+            }
+
+            let utxo_id = format!("{}:{}", tx_id, v_index);
+            let mut tag: Option<String> = None;
+
+            for utxo in &utxos {
+                if utxo.get_id() == utxo_id {
+                    tag = utxo.tag.clone();
+                    break; // Found the matching utxo, no need to continue
+                }
+            }
+
+            inputs.push(Input {
+                tx_id,
+                vout: v_index,
+                amount,
+                tag,
+            });
+        }
+
+        inputs
     }
 
     fn get_amount_from_tx_in(
@@ -721,13 +719,13 @@ impl<P: WalletPersister> NgAccount<P> {
                                         input_for_fore = Some((input.clone(), weight));
                                     }
                                     Err(e) => {
-                                        println!("Error getting max weight to satisfy: {:?}", e);
+                                        info!("Error getting max weight to satisfy: {:?}", e);
                                     }
                                 }
                             }
                         }
                         Err(e) => {
-                            println!("Error getting max weight to satisfy: {:?}", e);
+                            info!("Error getting max weight to satisfy: {:?}", e);
                         }
                     }
                 }
@@ -803,5 +801,75 @@ impl<P: WalletPersister> NgAccount<P> {
             date: None,
             vsize: 0,
         })
+    }
+
+    pub(crate) fn prepare_draft_transaction(
+        &self,
+        mut psbt: Psbt,
+        coordinator_wallet: &mut MutexGuard<PersistedWallet<P>>,
+        utxos: Vec<Output>,
+        transaction_params: TransactionParams,
+        fee_rate: FeeRate,
+    ) -> DraftTransaction {
+        // Always try signing
+        let sign_options = SignOptions {
+            trust_witness_utxo: true,
+            ..Default::default()
+        };
+        // Always try signing
+        let _ = coordinator_wallet
+            .sign(&mut psbt, sign_options.clone())
+            .is_ok();
+        //reset index,
+        coordinator_wallet.cancel_tx(&psbt.clone().unsigned_tx);
+        Self::sign_psbt(
+            self.non_coordinator_wallets(),
+            &mut psbt,
+            sign_options.clone(),
+        );
+        //extract outputs from tx and add tags and do_not_spend states
+        let outputs = Self::apply_meta_to_psbt_outputs(
+            coordinator_wallet,
+            &self.non_coordinator_wallets(),
+            utxos.clone(),
+            transaction_params.tag,
+            transaction_params.do_not_spend_change,
+            psbt.clone().unsigned_tx,
+        );
+        let inputs = Self::apply_meta_to_inputs(
+            coordinator_wallet,
+            &self.non_coordinator_wallets(),
+            psbt.clone().unsigned_tx,
+            utxos,
+        );
+        let transaction = Self::transform_psbt_to_bitcointx(
+            psbt.clone(),
+            transaction_params.address,
+            fee_rate,
+            outputs.clone(),
+            inputs.clone(),
+            transaction_params.note,
+        );
+
+        let mut change_out_put_tag: Option<String> = None;
+        for output in transaction.outputs.clone() {
+            if output.keychain == Some(KeyChain::Internal) {
+                change_out_put_tag = output.tag.clone();
+            }
+        }
+
+        info!("Send::Change output : {:?}", change_out_put_tag.clone());
+        let input_tags: Vec<String> = inputs
+            .iter()
+            .map(|input| input.tag.clone().unwrap_or("untagged".to_string()))
+            .collect();
+
+        DraftTransaction {
+            psbt: psbt.serialize(),
+            is_finalized: psbt.extract(&Secp256k1::verification_only()).is_ok(),
+            input_tags,
+            change_out_put_tag,
+            transaction,
+        }
     }
 }
