@@ -1,6 +1,6 @@
 use crate::ngwallet::NgWallet;
 use anyhow::{Context, Result};
-use bdk_electrum::bdk_core::bitcoin::psbt::ExtractTxError;
+use bdk_wallet::bitcoin::psbt::ExtractTxError;
 use bdk_wallet::bitcoin::secp256k1::Secp256k1;
 use bdk_wallet::bitcoin::{
     Address, Amount, FeeRate, Psbt, ScriptBuf, Transaction, TxIn, Txid, Weight, psbt,
