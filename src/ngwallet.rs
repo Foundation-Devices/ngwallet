@@ -4,7 +4,7 @@ use std::str::FromStr;
 use std::sync::{Arc, Mutex};
 
 use anyhow::Result;
-use bdk_wallet::bitcoin::{Address, Amount, Network, Psbt};
+use bdk_wallet::bitcoin::{Address, Amount, Network, Psbt, Transaction};
 use bdk_wallet::chain::ChainPosition::{Confirmed, Unconfirmed};
 use bdk_wallet::chain::local_chain::CannotConnectError;
 use bdk_wallet::chain::spk_client::{FullScanRequest, FullScanResponse, SyncRequest, SyncResponse};
@@ -128,9 +128,8 @@ impl<P: WalletPersister> NgWallet<P> {
         let mut transactions: Vec<BitcoinTransaction> = vec![];
         let tip_height = wallet.latest_checkpoint().height();
         let storage = &self.meta_storage;
-
         //add date to transaction
-        for canonical_tx in wallet.transactions() {
+        for (index, canonical_tx) in wallet.transactions().enumerate() {
             let tx = canonical_tx.tx_node.tx;
             let tx_id = canonical_tx.tx_node.txid.to_string();
             let (sent, received) = wallet.sent_and_received(tx.as_ref());
@@ -160,13 +159,13 @@ impl<P: WalletPersister> NgWallet<P> {
                                 }
                                 Some(last_seen) => {
                                     //to milliseconds
-                                    date = Some(last_seen);
+                                    date = Some(last_seen + (index as u64));
                                 }
                             }
                         }
                         Some(first_seen) => {
                             //to milliseconds
-                            date = Some(first_seen);
+                            date = Some(first_seen + (index as u64));
                         }
                     }
                     0
@@ -392,7 +391,7 @@ impl<P: WalletPersister> NgWallet<P> {
         let tip_height = wallet.latest_checkpoint().height();
 
         let meta_storage = &self.meta_storage;
-        for local_output in wallet.list_unspent() {
+        for (index, local_output) in wallet.list_unspent().enumerate() {
             let mut date: Option<u64> = None;
             let out_put_id = format!(
                 "{}:{}",
@@ -417,14 +416,14 @@ impl<P: WalletPersister> NgWallet<P> {
                             if block_height > 0 { block_height } else { 0 }
                         }
                         Unconfirmed {
-                            first_seen: _first_seen,
-                            last_seen,
+                            first_seen,
+                            last_seen: _last_seen,
                         } => {
-                            match last_seen {
+                            match first_seen {
                                 None => {}
-                                Some(last_seen) => {
+                                Some(first_seen) => {
                                     //to milliseconds
-                                    date = Some(last_seen);
+                                    date = Some(first_seen + (index as u64));
                                 }
                             }
                             0
@@ -482,6 +481,9 @@ impl<P: WalletPersister> NgWallet<P> {
             .unwrap()
             .sign(&mut psbt, SignOptions::default())?;
         Ok(psbt.serialize_hex())
+    }
+    pub fn sent_and_received(&self, tx: &Transaction) -> (Amount, Amount) {
+        self.bdk_wallet.lock().unwrap().sent_and_received(tx)
     }
 
     pub fn sign_psbt(&self, psbt: &mut Psbt, options: SignOptions) -> Result<()> {

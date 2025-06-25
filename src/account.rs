@@ -11,7 +11,9 @@ use crate::transaction::{BitcoinTransaction, Output};
 use crate::utils::get_address_type;
 use anyhow::{Context, Error, anyhow};
 use bdk_wallet::bitcoin::address::{NetworkChecked, NetworkUnchecked};
-use bdk_wallet::bitcoin::{Address, AddressType as BdkAddressType, Psbt, Transaction};
+use bdk_wallet::bitcoin::{
+    Address, AddressType as BdkAddressType, Amount, Psbt, Transaction, Txid,
+};
 use bdk_wallet::chain::spk_client::FullScanRequest;
 use bdk_wallet::chain::spk_client::SyncRequest;
 use bdk_wallet::{AddressInfo, Balance, KeychainKind, Update, WalletPersister};
@@ -248,13 +250,31 @@ impl<P: WalletPersister> NgAccount<P> {
         }
         Ok(balances)
     }
-
     pub fn transactions(&self) -> anyhow::Result<Vec<BitcoinTransaction>> {
         let mut transactions = vec![];
         for wallet in self.wallets.iter() {
-            transactions.extend(wallet.transactions()?);
+            let wallet_txs = wallet.transactions().unwrap_or_default();
+            for wallet_tx in wallet_txs {
+                let tx = {
+                    let bdk = wallet.bdk_wallet.lock().expect("Failed to lock wallet");
+                    let tx = bdk
+                        .get_tx(Txid::from_str(&wallet_tx.tx_id)?)
+                        .with_context(|| "Failed to get transaction ".to_string())?;
+                    tx.tx_node.tx
+                };
+                //use account level sent and received amounts (all wallets)
+                let (sent, received) = self.sent_and_received(&tx);
+                let mut tx = wallet_tx.clone();
+                let amount: i64 = (received.to_sat() as i64) - (sent.to_sat() as i64);
+                tx.amount = amount;
+                let exist = transactions
+                    .iter()
+                    .any(|t: &BitcoinTransaction| t.tx_id == tx.tx_id);
+                if !exist {
+                    transactions.push(tx)
+                }
+            }
         }
-
         Ok(transactions)
     }
 
@@ -385,6 +405,16 @@ impl<P: WalletPersister> NgAccount<P> {
             }
         }
         false
+    }
+    pub fn sent_and_received(&self, tx: &Transaction) -> (Amount, Amount) {
+        let mut sent = Amount::from_sat(0);
+        let mut received = Amount::from_sat(0);
+        for wallet in self.wallets.iter() {
+            let (_send, _received) = wallet.sent_and_received(tx);
+            sent += _send;
+            received += _received;
+        }
+        (sent, received)
     }
 
     pub fn list_tags(&self) -> anyhow::Result<Vec<String>> {
