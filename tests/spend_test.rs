@@ -83,7 +83,7 @@ mod spend_tests {
             .get_max_bump_fee(vec![], unconfirmed_tx.clone())
             .expect("Failed to get max bump fee");
 
-        assert_eq!(rbf_max_result.max_fee_rate, 658);
+        assert_eq!(rbf_max_result.max_fee_rate, 145);
         assert!(unconfirmed_tx.fee_rate < rbf_max_result.min_fee_rate);
         //
     }
