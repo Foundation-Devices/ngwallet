@@ -491,6 +491,11 @@ impl<P: WalletPersister> NgWallet<P> {
         Ok(())
     }
 
+    pub fn cancel_tx(&self, tx: &Transaction) -> Result<()> {
+        self.bdk_wallet.lock().unwrap().cancel_tx(tx);
+        Ok(())
+    }
+
     pub fn parse_psbt(&self, psbt_str: &str) -> Result<PsbtInfo> {
         let psbt = Psbt::from_str(psbt_str)?;
         let tx = psbt.extract_tx()?;

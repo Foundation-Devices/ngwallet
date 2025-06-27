@@ -666,19 +666,19 @@ impl<P: WalletPersister> NgAccount<P> {
         sweep: bool,
     ) -> Result<Psbt, CreateTxError> {
         let mut builder = wallet.build_tx();
-
         builder.ordering(TxOrdering::Shuffle);
         for do_not_spend_utxo in do_not_spend_utxos.iter().clone() {
             builder.add_unspendable(do_not_spend_utxo.get_outpoint());
         }
         for spendable_utxo in spendable_utxos {
             let outpoint = spendable_utxo.get_outpoint();
-            match self.get_utxo_input(spendable_utxo) {
+            match self.get_utxo_input(spendable_utxo, self.non_coordinator_wallets()) {
                 None => {}
                 Some((input, weight)) => {
                     builder
                         .add_foreign_utxo(outpoint, input, weight)
                         .map_err(|_| CreateTxError::NoUtxosSelected)?;
+                    // For Taproot: input.tap_key_origins.insert(x_only_pubkey, (origin, path, leaf_hashes));
                 }
             }
         }
@@ -702,9 +702,13 @@ impl<P: WalletPersister> NgAccount<P> {
         builder.finish()
     }
 
-    pub(crate) fn get_utxo_input(&self, output: &Output) -> Option<(psbt::Input, Weight)> {
+    pub(crate) fn get_utxo_input(
+        &self,
+        output: &Output,
+        wallets: Vec<&NgWallet<P>>,
+    ) -> Option<(psbt::Input, Weight)> {
         let mut input_for_fore: Option<(psbt::Input, Weight)> = None;
-        for wallet in self.non_coordinator_wallets() {
+        for wallet in wallets.iter() {
             let wallet = wallet.bdk_wallet.lock().unwrap();
             let local_output = wallet.get_utxo(output.get_outpoint());
             match local_output {

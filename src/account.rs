@@ -387,6 +387,7 @@ impl<P: WalletPersister> NgAccount<P> {
         derivation_index
     }
 
+    //Signs serialized PSBTs. returns the signed PSBT as serialized bytes.
     pub fn sign(&self, psbt: &[u8], options: bdk_wallet::SignOptions) -> anyhow::Result<Vec<u8>> {
         let mut psbt = Psbt::deserialize(psbt).with_context(|| "Failed to deserialize PSBT")?;
 
@@ -394,6 +395,14 @@ impl<P: WalletPersister> NgAccount<P> {
             wallet.sign_psbt(&mut psbt, options.clone())?;
         }
 
+        let encoded_psbt = psbt.serialize();
+        Ok(encoded_psbt)
+    }
+
+    pub fn cancel_tx(&self, psbt: Psbt) -> anyhow::Result<Vec<u8>> {
+        for wallet in self.wallets.iter() {
+            wallet.cancel_tx(&psbt.unsigned_tx)?;
+        }
         let encoded_psbt = psbt.serialize();
         Ok(encoded_psbt)
     }
