@@ -4,6 +4,7 @@ use std::str::FromStr;
 use std::sync::{Arc, Mutex};
 
 use anyhow::Result;
+use bdk_electrum::bdk_core::TxUpdate;
 use bdk_wallet::bitcoin::{Address, Amount, Network, Psbt, Transaction};
 use bdk_wallet::chain::ChainPosition::{Confirmed, Unconfirmed};
 use bdk_wallet::chain::local_chain::CannotConnectError;
@@ -378,11 +379,38 @@ impl<P: WalletPersister> NgWallet<P> {
 
     #[cfg(feature = "envoy")]
     pub fn full_scan_request(&self) -> FullScanRequest<KeychainKind> {
-        self.bdk_wallet.lock().unwrap().start_full_scan().build()
+        match self.bdk_wallet.lock() {
+            Ok(wallet) => wallet.start_full_scan().build(),
+            Err(poisoned) => poisoned.into_inner().start_full_scan().build(),
+        }
     }
 
     pub fn apply_update(&self, update: Update) -> Result<(), CannotConnectError> {
-        self.bdk_wallet.lock().unwrap().apply_update(update)
+        match self.bdk_wallet.lock() {
+            Ok(mut wallet) => wallet.apply_update(update),
+            Err(poisoned) => {
+                // Recover from poisoned lock and continue
+                poisoned.into_inner().apply_update(update)
+            }
+        }
+    }
+
+    // Inserts a transaction into the wallet and updates the `seen_at` timestamp.
+    // After broadcasting a transaction, the wallet must wait for a sync to display it.
+    // This function is used to insert the transaction immediately for UI updates.
+    pub fn insert_tx(&self, tx: Transaction, seen_at: u64) {
+        let tx_id = tx.compute_txid();
+        let mut tx_update = TxUpdate::default();
+        tx_update.txs = vec![Arc::new(tx)];
+        tx_update.seen_ats = [(tx_id, seen_at)].into();
+        self.bdk_wallet
+            .lock()
+            .expect("Failed to lock bdk_wallet")
+            .apply_update(Update {
+                tx_update,
+                ..Default::default()
+            })
+            .expect("failed to apply update");
     }
 
     pub fn utxos(&self) -> Result<Vec<Output>> {
