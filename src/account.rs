@@ -275,6 +275,12 @@ impl<P: WalletPersister> NgAccount<P> {
                 }
             }
         }
+        transactions.sort_by(|a, b| match (a.date, b.date) {
+            (Some(a_date), Some(b_date)) => b_date.cmp(&a_date),
+            (Some(_), None) => std::cmp::Ordering::Less,
+            (None, Some(_)) => std::cmp::Ordering::Greater,
+            (None, None) => std::cmp::Ordering::Equal,
+        });
         Ok(transactions)
     }
 
