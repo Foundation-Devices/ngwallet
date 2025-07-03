@@ -82,6 +82,7 @@ pub struct BitcoinTransaction {
     pub note: Option<String>,
     pub date: Option<u64>,
     pub vsize: usize,
+    pub account_id: String,
 }
 
 impl BitcoinTransaction {

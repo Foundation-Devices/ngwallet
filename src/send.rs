@@ -457,6 +457,7 @@ impl<P: WalletPersister> NgAccount<P> {
         outputs: Vec<Output>,
         inputs: Vec<Input>,
         note: Option<String>,
+        account_id: String,
     ) -> BitcoinTransaction {
         let transaction = psbt.clone().unsigned_tx;
 
@@ -481,6 +482,7 @@ impl<P: WalletPersister> NgAccount<P> {
             note,
             date: None,
             vsize: 0,
+            account_id,
         }
     }
 
@@ -751,7 +753,7 @@ impl<P: WalletPersister> NgAccount<P> {
     ///TODO, verify inputs belongs to the wallet
     pub fn get_bitcoin_tx_from_psbt(&self, psbt: &[u8]) -> Result<BitcoinTransaction> {
         let psbt = Psbt::deserialize(psbt).with_context(|| "Failed to deserialize PSBT")?;
-
+        let account_id = self.config.id.clone();
         let transaction = psbt.clone().unsigned_tx;
         let mut amount = 0;
         let mut address = "".to_string();
@@ -804,6 +806,7 @@ impl<P: WalletPersister> NgAccount<P> {
             note: None,
             date: None,
             vsize: 0,
+            account_id,
         })
     }
 
@@ -853,6 +856,7 @@ impl<P: WalletPersister> NgAccount<P> {
             outputs.clone(),
             inputs.clone(),
             transaction_params.note,
+            self.config.id.clone(),
         );
 
         let mut change_out_put_tag: Option<String> = None;

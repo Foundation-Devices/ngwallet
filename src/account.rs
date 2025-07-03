@@ -275,6 +275,14 @@ impl<P: WalletPersister> NgAccount<P> {
                 }
             }
         }
+        transactions = transactions
+            .iter()
+            .map(|tx| {
+                let mut tx = tx.clone();
+                tx.account_id = self.config.id.clone();
+                tx
+            })
+            .collect();
         transactions.sort_by(|a, b| match (a.date, b.date) {
             (Some(a_date), Some(b_date)) => b_date.cmp(&a_date),
             (Some(_), None) => std::cmp::Ordering::Less,
