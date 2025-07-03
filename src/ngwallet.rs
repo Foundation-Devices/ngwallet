@@ -327,6 +327,8 @@ impl<P: WalletPersister> NgWallet<P> {
                 date,
                 vsize: tx.vsize(),
                 note: storage.get_note(&tx_id).unwrap(),
+                //empty account_id for now,will be populated from account later
+                account_id: "".to_string()
             })
         }
 
