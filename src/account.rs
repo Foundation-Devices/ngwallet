@@ -251,7 +251,8 @@ impl<P: WalletPersister> NgAccount<P> {
         Ok(balances)
     }
     pub fn transactions(&self) -> anyhow::Result<Vec<BitcoinTransaction>> {
-        let mut transactions = vec![];
+        let mut transactions: Vec<BitcoinTransaction> = vec![];
+
         for wallet in self.wallets.iter() {
             let wallet_txs = wallet.transactions().unwrap_or_default();
             for wallet_tx in wallet_txs {
@@ -267,14 +268,28 @@ impl<P: WalletPersister> NgAccount<P> {
                 let mut tx = wallet_tx.clone();
                 let amount: i64 = (received.to_sat() as i64) - (sent.to_sat() as i64);
                 tx.amount = amount;
-                let exist = transactions
-                    .iter()
-                    .any(|t: &BitcoinTransaction| t.tx_id == tx.tx_id);
-                if !exist {
+
+                //since there can be multiple wallets with the same tx_id (self spend between wallets),
+                //we will keep outgoing transactions
+                let exist = transactions.iter().find(|x| x.tx_id == tx.tx_id);
+                if exist.is_none() {
                     transactions.push(tx)
+                } else {
+                    let existing_tx = exist.unwrap();
+                    //if the tx amount is negative, it means it's an outgoing transaction
+                    if existing_tx.amount.is_negative() {
+                        if let Some(pos) = transactions
+                            .iter()
+                            .position(|x| x.tx_id == existing_tx.tx_id)
+                        {
+                            transactions.remove(pos);
+                            transactions.push(tx.clone());
+                        }
+                    }
                 }
             }
         }
+        //map transactions to include account_id
         transactions = transactions
             .iter()
             .map(|tx| {
@@ -283,6 +298,7 @@ impl<P: WalletPersister> NgAccount<P> {
                 tx
             })
             .collect();
+        // Sort transactions by date, most recent first
         transactions.sort_by(|a, b| match (a.date, b.date) {
             (Some(a_date), Some(b_date)) => b_date.cmp(&a_date),
             (Some(_), None) => std::cmp::Ordering::Less,

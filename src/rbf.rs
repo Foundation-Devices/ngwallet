@@ -457,7 +457,7 @@ impl<P: WalletPersister> NgAccount<P> {
                     new_outputs.clone(),
                     inputs.clone(),
                     rbf_note.clone(),
-                    current_transaction.account_id.clone()
+                    current_transaction.account_id.clone(),
                 );
 
                 let input_tags: Vec<String> = inputs
