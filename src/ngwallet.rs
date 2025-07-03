@@ -4,7 +4,7 @@ use std::str::FromStr;
 use std::sync::{Arc, Mutex};
 
 use anyhow::Result;
-use bdk_electrum::bdk_core::TxUpdate;
+use bdk_core::TxUpdate;
 use bdk_wallet::bitcoin::{Address, Amount, Network, Psbt, Transaction};
 use bdk_wallet::chain::ChainPosition::{Confirmed, Unconfirmed};
 use bdk_wallet::chain::local_chain::CannotConnectError;

@@ -2,7 +2,7 @@ use crate::account::NgAccount;
 use crate::ngwallet::NgWallet;
 use crate::rbf::BumpFeeError::ComposeTxError;
 use anyhow::Result;
-use bdk_electrum::bdk_core::bitcoin::{Network, ScriptBuf};
+use bdk_core::bitcoin::{Network, ScriptBuf};
 use bdk_wallet::bitcoin::policy::DEFAULT_INCREMENTAL_RELAY_FEE;
 use bdk_wallet::bitcoin::secp256k1::Secp256k1;
 use bdk_wallet::bitcoin::{Address, Amount, FeeRate, OutPoint, Psbt, Txid};
