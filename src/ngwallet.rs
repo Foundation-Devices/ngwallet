@@ -129,6 +129,7 @@ impl<P: WalletPersister> NgWallet<P> {
         let mut transactions: Vec<BitcoinTransaction> = vec![];
         let tip_height = wallet.latest_checkpoint().height();
         let storage = &self.meta_storage;
+
         //add date to transaction
         for (index, canonical_tx) in wallet.transactions().enumerate() {
             let tx = canonical_tx.tx_node.tx;
@@ -328,7 +329,7 @@ impl<P: WalletPersister> NgWallet<P> {
                 vsize: tx.vsize(),
                 note: storage.get_note(&tx_id).unwrap(),
                 //empty account_id for now,will be populated from account later
-                account_id: "".to_string()
+                account_id: "".to_string(),
             })
         }
 
@@ -405,14 +406,16 @@ impl<P: WalletPersister> NgWallet<P> {
         let mut tx_update = TxUpdate::default();
         tx_update.txs = vec![Arc::new(tx)];
         tx_update.seen_ats = [(tx_id, seen_at)].into();
-        self.bdk_wallet
-            .lock()
-            .expect("Failed to lock bdk_wallet")
-            .apply_update(Update {
-                tx_update,
-                ..Default::default()
-            })
-            .expect("failed to apply update");
+        {
+            self.bdk_wallet
+                .lock()
+                .expect("Failed to lock bdk_wallet")
+                .apply_update(Update {
+                    tx_update,
+                    ..Default::default()
+                })
+                .expect("failed to apply update");
+        }
     }
 
     pub fn utxos(&self) -> Result<Vec<Output>> {
