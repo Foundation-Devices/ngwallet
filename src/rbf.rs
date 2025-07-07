@@ -3,7 +3,6 @@ use crate::ngwallet::NgWallet;
 use crate::rbf::BumpFeeError::ComposeTxError;
 use anyhow::Result;
 use bdk_core::bitcoin::{Network, ScriptBuf};
-use bdk_wallet::bitcoin::policy::DEFAULT_INCREMENTAL_RELAY_FEE;
 use bdk_wallet::bitcoin::secp256k1::Secp256k1;
 use bdk_wallet::bitcoin::{Address, Amount, FeeRate, OutPoint, Psbt, Txid};
 use bdk_wallet::error::CreateTxError::CoinSelection;
@@ -52,164 +51,27 @@ impl<P: WalletPersister> NgAccount<P> {
         &self,
         original_transaction: BitcoinTransaction,
     ) -> Result<DraftTransaction, BumpFeeError> {
-        let unspend_outputs = self.utxos().unwrap();
-        let transactions = self.transactions().unwrap();
-        let tx_id = Txid::from_str(original_transaction.tx_id.as_str())
-            .map_err(|_| BumpFeeError::TransactionNotFound())?;
-
         let cancel_destination_address = self.get_address(KeychainKind::Internal);
-
-        let original_utxos: Vec<OutPoint> = vec![];
-
-        let wallet_index = Self::find_outgoing_wallet_index(&self.wallets, tx_id);
-        let Ok(mut wallet) = self
-            .wallets
-            .get(wallet_index)
-            .ok_or(BumpFeeError::UnableToAccessWallet)?
-            .bdk_wallet
-            .lock()
-        else {
-            return Err(BumpFeeError::UnableToAccessWallet);
-        };
-
-        let Some(original_local_tx) = wallet.get_tx(tx_id) else {
-            return Err(BumpFeeError::TransactionNotFound());
-        };
-        let original_tx_weight_vb = original_local_tx.tx_node.vsize();
-
-        let mut builder = wallet
-            .build_fee_bump(tx_id)
-            .map_err(BumpFeeError::ComposeBumpTxError)?;
-
-        builder.add_utxos(&original_utxos).map_err(|_| {
-            BumpFeeError::UnknownUtxo(OutPoint {
-                txid: Txid::from_str(original_transaction.tx_id.as_str()).unwrap(),
-                vout: 0,
-            })
-        })?;
-
-        let unconfirmed_utxos: Vec<Output> = unspend_outputs
-            .clone()
-            .iter()
-            .filter(|output| {
-                let tx = transactions
-                    .clone()
-                    .into_iter()
-                    .find(|tx| tx.tx_id == output.tx_id);
-                if let Some(tx) = tx {
-                    if !tx.is_confirmed {
-                        return true;
-                    }
-                }
-                false
-            })
-            .cloned()
-            .collect();
-
-        //all the unconfirmed utxos that are not part of the transaction
-        //these utxos will be marked as unspendable,
-        //so the builder wont pick any inputs from unconfirmed utxos
-        for unconfirmed_utxo in unconfirmed_utxos {
-            if unconfirmed_utxo.tx_id != original_transaction.tx_id {
-                builder.add_unspendable(unconfirmed_utxo.get_outpoint());
+        let unspend_outputs = self.utxos().unwrap();
+        //check if transaction is output is locked
+        for unspend_output in unspend_outputs.clone() {
+            if unspend_output.tx_id == original_transaction.clone().tx_id
+                && unspend_output.do_not_spend
+            {
+                return Err(BumpFeeError::ChangeOutputLocked);
             }
         }
-        //remove all existing outputs from the RBF transaction
-        builder.set_recipients(vec![]);
+        let min_fee_rate = original_transaction.fee_rate + 2;
 
-        //add internal address as a recipient, all the inputs will be
-        //drained to this address
-        builder.drain_to(cancel_destination_address.script_pubkey());
-
-        let rbf_fee =
-            ((original_tx_weight_vb as u64) * (DEFAULT_INCREMENTAL_RELAY_FEE as u64)) / 1000;
-        //higher fee and fee_absolute rate to replace original transaction
-        builder.fee_absolute(Amount::from_sat(original_transaction.fee + rbf_fee));
-
-        match builder.finish() {
-            Ok(mut psbt) => {
-                wallet
-                    .sign(&mut psbt, SignOptions::default())
-                    .unwrap_or(false);
-                //reset indexes, indexes will be updated once user broadcasts the tx
-                wallet.cancel_tx(&psbt.unsigned_tx);
-
-                let inputs = Self::apply_meta_to_inputs(
-                    &wallet,
-                    &self.non_coordinator_wallets(),
-                    psbt.clone().unsigned_tx,
-                    unspend_outputs.clone(),
-                );
-
-                let transaction = psbt
-                    .clone()
-                    .extract_tx()
-                    .map_err(|_| BumpFeeError::TransactionNotFound())?;
-
-                let new_outputs: Vec<Output> = transaction
-                    .output
-                    .clone()
-                    .iter()
-                    .enumerate()
-                    .map(|(index, tx_out)| {
-                        let script = tx_out.script_pubkey.clone();
-                        let derivation = wallet.derivation_of_spk(script.clone());
-                        let address = Address::from_script(&script, wallet.network())
-                            .unwrap()
-                            .to_string();
-                        let out_put_tag: Option<String> =
-                            original_transaction.clone().get_change_tag();
-                        //if the output belongs to the wallet
-                        Output {
-                            tx_id: transaction.compute_txid().to_string(),
-                            vout: index as u32,
-                            address,
-                            amount: tx_out.value.to_sat(),
-                            tag: out_put_tag,
-                            date: None,
-                            is_confirmed: false,
-                            keychain: derivation.map(|x| {
-                                if x.0 == KeychainKind::External {
-                                    KeyChain::External
-                                } else {
-                                    KeyChain::Internal
-                                }
-                            }),
-                            do_not_spend: false,
-                        }
-                    })
-                    .collect::<Vec<Output>>();
-                let transaction = BitcoinTransaction {
-                    tx_id: transaction.clone().compute_txid().to_string(),
-                    block_height: 0,
-                    confirmations: 0,
-                    is_confirmed: false,
-                    fee: psbt.fee().unwrap_or(Amount::from_sat(0)).to_sat(),
-                    fee_rate: psbt.fee_rate().unwrap().to_sat_per_vb_floor(),
-                    //amount will be zero for cancellation.
-                    amount: 0,
-                    inputs,
-                    address: cancel_destination_address.address.to_string(),
-                    outputs: new_outputs,
-                    note: original_transaction.note.clone(),
-                    date: None,
-                    vsize: 0,
-                    account_id: original_transaction.account_id.clone(),
-                };
-
-                Ok(DraftTransaction {
-                    psbt: psbt.clone().serialize(),
-                    is_finalized: psbt.extract(&Secp256k1::verification_only()).is_ok(),
-                    input_tags: vec![],
-                    change_out_put_tag: None,
-                    transaction,
-                })
-            }
-            Err(err) => {
-                info!("Error creating PSBT: {:?}", err);
-                Err(ComposeTxError(err))
-            }
-        }
+        self.get_rbf_draft_tx(
+            vec![],
+            original_transaction.clone(),
+            min_fee_rate,
+            None,
+            Some(cancel_destination_address.clone().address),
+            original_transaction.clone().get_change_tag(),
+            original_transaction.clone().note.clone(),
+        )
     }
 
     #[cfg(feature = "envoy")]
@@ -250,6 +112,7 @@ impl<P: WalletPersister> NgAccount<P> {
                     bitcoin_transaction.clone(),
                     min_fee_rate,
                     max_fee,
+                    None,
                 ) {
                     Ok(psbt) => match psbt.fee_rate() {
                         None => {
@@ -290,6 +153,7 @@ impl<P: WalletPersister> NgAccount<P> {
                         .unwrap_or(FeeRate::from_sat_per_vb_unchecked(min_fee_rate))
                         .to_sat_per_vb_floor(),
                     None,
+                    None,
                 ) {
                     Ok(psbt) => match psbt.fee_rate() {
                         None => {
@@ -327,6 +191,8 @@ impl<P: WalletPersister> NgAccount<P> {
             min_fee_rate,
             None,
             None,
+            bitcoin_transaction.get_change_tag(),
+            bitcoin_transaction.note.clone(),
         )?;
 
         Ok(TransactionFeeResult {
@@ -335,15 +201,25 @@ impl<P: WalletPersister> NgAccount<P> {
             draft_transaction: tx,
         })
     }
+
+    //Todo: grouping parameters to RBFParams?
+    #[allow(clippy::too_many_arguments)]
     pub fn get_rbf_draft_tx(
         &self,
         selected_outputs: Vec<Output>,
         current_transaction: BitcoinTransaction,
         fee_rate: u64,
-        note: Option<String>,
+        fee_absolute: Option<u64>,
+        drain_to: Option<Address>,
         tag: Option<String>,
+        note: Option<String>,
     ) -> Result<DraftTransaction, BumpFeeError> {
-        let address = current_transaction.clone().address;
+        let address = if drain_to.is_some() {
+            drain_to.clone().unwrap().to_string()
+        } else {
+            current_transaction.clone().address
+        };
+
         let change_out_put = current_transaction.clone().get_change_output();
         let mut rbf_note = current_transaction.clone().note;
         if note.is_some() {
@@ -360,7 +236,8 @@ impl<P: WalletPersister> NgAccount<P> {
             selected_outputs.clone(),
             current_transaction.clone(),
             fee_rate,
-            None,
+            fee_absolute,
+            drain_to.clone(),
         ) {
             Ok(psbt) => {
                 let transactions = self.transactions().unwrap();
@@ -484,6 +361,7 @@ impl<P: WalletPersister> NgAccount<P> {
         bitcoin_transaction: BitcoinTransaction,
         fee_rate: u64,
         fee_absolute: Option<u64>,
+        drain_to: Option<Address>,
     ) -> Result<Psbt, BumpFeeError> {
         let unspend_outputs = self.utxos().unwrap();
         let transactions = self.transactions().unwrap();
@@ -530,30 +408,41 @@ impl<P: WalletPersister> NgAccount<P> {
                 &mut do_not_spend_utxos,
                 &mut spendables,
             );
+
             for do_not_spend_utxo in do_not_spend_utxos.clone() {
                 tx_builder.add_unspendable(do_not_spend_utxo.get_outpoint());
             }
+            let draining = drain_to.is_some();
 
-            for spendable_utxo in spendables {
-                let outpoint = spendable_utxo.get_outpoint();
-                //find all wallets that doesnt include current tx_id
-                let non_coordinator_wallets: Vec<&NgWallet<P>> = self
-                    .wallets
-                    .iter()
-                    .enumerate()
-                    .filter(|(idx, _)| *idx != wallet_index)
-                    .map(|(_, w)| w)
-                    .collect();
+            if draining {
+                info!("Draining to address: {:?}", drain_to.clone());
+                tx_builder.set_recipients(vec![]);
+                tx_builder.drain_to(drain_to.clone().unwrap().script_pubkey());
+            }
+            //if user trying to drain inputs to a specific address
+            if !draining {
+                for spendable_utxo in spendables {
+                    let outpoint = spendable_utxo.get_outpoint();
+                    //find all wallets that doesnt include current tx_id
+                    let non_coordinator_wallets: Vec<&NgWallet<P>> = self
+                        .wallets
+                        .iter()
+                        .enumerate()
+                        .filter(|(idx, _)| *idx != wallet_index)
+                        .map(|(_, w)| w)
+                        .collect();
 
-                match self.get_utxo_input(&spendable_utxo, non_coordinator_wallets) {
-                    None => {}
-                    Some((input, weight)) => {
-                        tx_builder
-                            .add_foreign_utxo(outpoint, input, weight)
-                            .map_err(BumpFeeError::UnableToAddForeignUtxo)?;
+                    match self.get_utxo_input(&spendable_utxo, non_coordinator_wallets) {
+                        None => {}
+                        Some((input, weight)) => {
+                            tx_builder
+                                .add_foreign_utxo(outpoint, input, weight)
+                                .map_err(BumpFeeError::UnableToAddForeignUtxo)?;
+                        }
                     }
                 }
             }
+
             if let Some(fee) = fee_absolute {
                 tx_builder.fee_absolute(Amount::from_sat(fee));
             } else {

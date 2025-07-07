@@ -12,6 +12,7 @@ use bdk_wallet::chain::spk_client::{FullScanRequest, FullScanResponse, SyncReque
 use bdk_wallet::{CreateWithPersistError, LoadWithPersistError, PersistedWallet, SignOptions};
 use bdk_wallet::{KeychainKind, WalletPersister};
 use bdk_wallet::{Update, Wallet};
+use log::info;
 
 use crate::config::AddressType;
 #[cfg(feature = "envoy")]
@@ -352,7 +353,12 @@ impl<P: WalletPersister> NgWallet<P> {
         socks_proxy: Option<&str>,
     ) -> Result<SyncResponse> {
         let bdk_client = utils::build_electrum_client(electrum_server, socks_proxy);
-        let update = bdk_client.sync(request, BATCH_SIZE, true)?;
+        info!(
+            "Syncing wallet with request: {:?}, {:?}",
+            std::thread::current().name(),
+            std::thread::current().id()
+        );
+        let update = bdk_client.sync(request, BATCH_SIZE, false)?;
         Ok(update)
     }
 
