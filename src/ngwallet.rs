@@ -63,7 +63,7 @@ impl<P: WalletPersister> NgWallet<P> {
                 anyhow::anyhow!("Wallet already exist. Please use load method")
             }
             CreateWithPersistError::Descriptor(error) => {
-                anyhow::anyhow!("Could not create wallet from descriptor: {:?}", error)
+                anyhow::anyhow!("Could not create wallet from descriptor: {error:?}")
             }
         })?;
         let address_type = utils::get_address_type(
@@ -153,6 +153,10 @@ impl<P: WalletPersister> NgWallet<P> {
                     first_seen,
                     last_seen,
                 } => {
+                    info!(
+                        "UnconfirmedSeens first_seen: {first_seen:?}, last_seen: {last_seen:?}, Tx:ID {tx_id}",
+                    );
+
                     match first_seen {
                         None => {
                             match last_seen {

@@ -174,7 +174,7 @@ impl<P: WalletPersister> NgAccount<P> {
                                     error.clone().needed.to_sat()
                                 );
                                 max_fee = Some(error.available.to_sat());
-                                info!("max_fee: {:?} ", max_fee);
+                                info!("max_fee: {max_fee:?} ");
                             } else {
                                 return Err(BumpFeeError::ChangeOutputLocked);
                             }
@@ -462,7 +462,7 @@ impl<P: WalletPersister> NgAccount<P> {
                 Ok(psbt)
             }
             Err(err) => {
-                info!("Error creating PSBT: {:?}", err);
+                info!("Error creating PSBT: {err:?}");
                 Err(ComposeTxError(err))
             }
         }

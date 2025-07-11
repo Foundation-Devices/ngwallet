@@ -69,9 +69,9 @@ pub enum TransactionComposeError {
 impl fmt::Display for TransactionComposeError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            TransactionComposeError::CreateTxError(e) => write!(f, "CreateTxError: {}", e),
-            TransactionComposeError::WalletError(e) => write!(f, "WalletError: {}", e),
-            TransactionComposeError::Error(e) => write!(f, "Error: {}", e),
+            TransactionComposeError::CreateTxError(e) => write!(f, "CreateTxError: {e}"),
+            TransactionComposeError::WalletError(e) => write!(f, "WalletError: {e}"),
+            TransactionComposeError::Error(e) => write!(f, "Error: {e}"),
         }
     }
 }
@@ -85,7 +85,7 @@ impl<P: WalletPersister> NgAccount<P> {
     ) -> Result<TransactionFeeResult, TransactionComposeError> {
         let utxos = self
             .utxos()
-            .map_err(|e| TransactionComposeError::Error(format!("Failed to get UTXOs: {}", e)))?;
+            .map_err(|e| TransactionComposeError::Error(format!("Failed to get UTXOs: {e:?}")))?;
         let mut coordinator_wallet = self
             .get_coordinator_wallet()
             .bdk_wallet
@@ -225,7 +225,7 @@ impl<P: WalletPersister> NgAccount<P> {
                                 break;
                             }
                             _er => {
-                                info!("Error calculating fee rate: {:?}", _er);
+                                info!("Error calculating fee rate: {_er:?}");
                                 max_fee = max_fee.saturating_sub(receive_amount);
                                 if max_fee == 0 {
                                     return Err(TransactionComposeError::Error(
@@ -254,7 +254,7 @@ impl<P: WalletPersister> NgAccount<P> {
                         }
                     }
                     err => {
-                        info!("Create tx error: {:?}", err);
+                        info!("Create tx error: {err:?}");
                         return Err(TransactionComposeError::CreateTxError(err));
                     }
                 },
@@ -606,7 +606,7 @@ impl<P: WalletPersister> NgAccount<P> {
                 }
             }
 
-            let utxo_id = format!("{}:{}", tx_id, v_index);
+            let utxo_id = format!("{tx_id}:{v_index}");
             let mut tag: Option<String> = None;
 
             for utxo in &utxos {
@@ -725,13 +725,13 @@ impl<P: WalletPersister> NgAccount<P> {
                                         input_for_fore = Some((input.clone(), weight));
                                     }
                                     Err(e) => {
-                                        info!("Error getting max weight to satisfy: {:?}", e);
+                                        info!("Error getting max weight to satisfy: {e:?}");
                                     }
                                 }
                             }
                         }
                         Err(e) => {
-                            info!("Error getting max weight to satisfy: {:?}", e);
+                            info!("Error getting max weight to satisfy: {e:?}");
                         }
                     }
                 }

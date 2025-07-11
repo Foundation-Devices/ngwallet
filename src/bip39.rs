@@ -69,8 +69,7 @@ pub fn get_descriptors(
     let (bip48_2_xpub, _, _) = bip48_2_descriptor.extract(&secp)?;
 
     // TODO: get this right
-    println!("bip48_2 = {}", bip48_2_xpub);
-
+    println!("bip48_2 = {bip48_2_xpub}");
     let mut descriptors = vec![];
 
     let descriptor_templates = vec![
