@@ -51,7 +51,7 @@ pub fn get_persister_file_name(internal: &str, external: Option<&str>) -> String
     }
     let internal_id = get_last_eight_chars(internal).unwrap_or("".to_string());
     let external_id = get_last_eight_chars(external.unwrap_or("")).unwrap_or("".to_string());
-    format!("{}_{}.sqlite", internal_id, external_id)
+    format!("{internal_id}_{external_id}.sqlite")
 }
 
 impl<P: WalletPersister> NgAccount<P> {
@@ -707,7 +707,7 @@ impl<P: WalletPersister> NgAccount<P> {
         match meta_storage.get_config() {
             Ok(value) => value.clone(),
             Err(e) => {
-                info!("Error reading config {:?}", e);
+                info!("Error reading config {e:?}");
                 None
             }
         }

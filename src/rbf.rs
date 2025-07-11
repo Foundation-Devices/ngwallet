@@ -1,7 +1,10 @@
 use crate::account::NgAccount;
 use crate::ngwallet::NgWallet;
 use crate::rbf::BumpFeeError::ComposeTxError;
+use crate::send::{DraftTransaction, TransactionFeeResult};
+use crate::transaction::{BitcoinTransaction, Input, KeyChain, Output};
 use anyhow::Result;
+use bdk_core::bitcoin::policy::DEFAULT_INCREMENTAL_RELAY_FEE;
 use bdk_core::bitcoin::{Network, ScriptBuf};
 use bdk_wallet::bitcoin::secp256k1::Secp256k1;
 use bdk_wallet::bitcoin::{Address, Amount, FeeRate, OutPoint, Psbt, Txid};
@@ -12,9 +15,6 @@ use bdk_wallet::psbt::PsbtUtils;
 use bdk_wallet::{AddForeignUtxoError, AddressInfo, KeychainKind, SignOptions, WalletPersister};
 use log::info;
 use std::str::FromStr;
-
-use crate::send::{DraftTransaction, TransactionFeeResult};
-use crate::transaction::{BitcoinTransaction, Input, KeyChain, Output};
 
 #[derive(Debug)]
 pub enum BumpFeeError {
@@ -61,12 +61,11 @@ impl<P: WalletPersister> NgAccount<P> {
                 return Err(BumpFeeError::ChangeOutputLocked);
             }
         }
-        let min_fee_rate = original_transaction.fee_rate + 2;
-
+        let min_sats_per_vb = Self::get_minimum_rbf_fee_rate(&original_transaction);
         self.get_rbf_draft_tx(
             vec![],
             original_transaction.clone(),
-            min_fee_rate,
+            min_sats_per_vb,
             None,
             Some(cancel_destination_address.clone().address),
             original_transaction.clone().get_change_tag(),
@@ -90,13 +89,13 @@ impl<P: WalletPersister> NgAccount<P> {
             }
         }
 
-        let min_fee_rate = bitcoin_transaction.fee_rate + 2;
+        let min_sats_per_vb = Self::get_minimum_rbf_fee_rate(&bitcoin_transaction);
 
-        //do not spend
+        // will keep updating until the maximum fee boundary is found
         let mut max_fee: Option<u64> = None;
 
-        // TODO: check if clippy is right about this one
-        #[allow(unused_assignments)]
+        // sets max fee rate to 1000 sats/vB.
+        // this will eventually fail, and the error will reveal the available amount.
         let mut max_fee_rate = 1000;
 
         let mut tries = 0;
@@ -110,7 +109,8 @@ impl<P: WalletPersister> NgAccount<P> {
                 match self.get_rbf_bump_psbt(
                     selected_outputs.clone(),
                     bitcoin_transaction.clone(),
-                    min_fee_rate,
+                    //placeholder since max_fee will be used
+                    1,
                     max_fee,
                     None,
                 ) {
@@ -136,7 +136,7 @@ impl<P: WalletPersister> NgAccount<P> {
                                         - (bitcoin_transaction.amount.unsigned_abs()),
                                 );
                             } else {
-                                return Err(BumpFeeError::ChangeOutputLocked);
+                                return Err(ComposeTxError(error));
                             }
                         }
                         _err => {
@@ -146,11 +146,12 @@ impl<P: WalletPersister> NgAccount<P> {
                 }
                 info!("Max fee calculated: {} ", max_fee.unwrap());
             } else {
+                //use minimum
                 match self.get_rbf_bump_psbt(
                     selected_outputs.clone(),
                     bitcoin_transaction.clone(),
                     FeeRate::from_sat_per_vb(max_fee_rate)
-                        .unwrap_or(FeeRate::from_sat_per_vb_unchecked(min_fee_rate))
+                        .unwrap_or(FeeRate::from_sat_per_vb_unchecked(min_sats_per_vb))
                         .to_sat_per_vb_floor(),
                     None,
                     None,
@@ -173,7 +174,7 @@ impl<P: WalletPersister> NgAccount<P> {
                                     error.clone().needed.to_sat()
                                 );
                                 max_fee = Some(error.available.to_sat());
-                                info!("max_fee: {:?} ", max_fee);
+                                info!("max_fee: {max_fee:?} ");
                             } else {
                                 return Err(BumpFeeError::ChangeOutputLocked);
                             }
@@ -188,7 +189,7 @@ impl<P: WalletPersister> NgAccount<P> {
         let tx = self.get_rbf_draft_tx(
             selected_outputs.clone(),
             bitcoin_transaction.clone(),
-            min_fee_rate,
+            min_sats_per_vb,
             None,
             None,
             bitcoin_transaction.get_change_tag(),
@@ -197,7 +198,7 @@ impl<P: WalletPersister> NgAccount<P> {
 
         Ok(TransactionFeeResult {
             max_fee_rate,
-            min_fee_rate,
+            min_fee_rate: tx.transaction.fee_rate,
             draft_transaction: tx,
         })
     }
@@ -461,7 +462,7 @@ impl<P: WalletPersister> NgAccount<P> {
                 Ok(psbt)
             }
             Err(err) => {
-                info!("Error creating PSBT: {:?}", err);
+                info!("Error creating PSBT: {err:?}");
                 Err(ComposeTxError(err))
             }
         }
@@ -503,5 +504,31 @@ impl<P: WalletPersister> NgAccount<P> {
             }
         }
         wallet_index
+    }
+
+    fn get_minimum_rbf_fee_rate(transaction: &BitcoinTransaction) -> u64 {
+        let original_fee = transaction.fee; // fee is sats
+        let original_vsize = transaction.vsize as u64;
+        let relay_fee_per_vb = (DEFAULT_INCREMENTAL_RELAY_FEE / 1000) as u64; // 1 sats/vb
+
+        // calculate the minimum additional fee for RBF
+        let min_additional_fee = original_vsize * relay_fee_per_vb;
+        let min_replacement_fee = original_fee + min_additional_fee;
+        let mut min_sats_per_vb = min_replacement_fee.div_ceil(original_vsize);
+
+        // ensure the fee rate is at least 1 sat/vb higher than the original transaction's fee rate
+        let original_fee_rate = original_fee.div_ceil(original_vsize);
+        min_sats_per_vb = min_sats_per_vb.max(original_fee_rate + 1);
+
+        // Sanity check: ensure the fee rate meets or exceeds the network minimum
+        // If the transaction paid 1 sat/vb,
+        // the replacement should be at least 2 (relay_fee_per_vb + 1)
+        min_sats_per_vb = min_sats_per_vb.max(relay_fee_per_vb + 1);
+
+        // maybe if there is edge cases. the final RBF size can
+        // very if the builder includes too many inputs to cover the RBF
+        // min_sats_per_vb +=1;
+
+        min_sats_per_vb
     }
 }

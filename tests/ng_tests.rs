@@ -101,13 +101,13 @@ mod tests {
         //
         if !transactions.is_empty() {
             let message = "Test Message".to_string();
-            println!("\nSetting note: {:?}", message);
+            println!("\nSetting note: {message:?}");
             account
                 .set_note(&transactions[0].tx_id, &message.clone())
                 .unwrap();
             let transactions = account.transactions().unwrap();
             let firs_tx = transactions[0].note.clone().unwrap_or("".to_string());
-            println!("Transaction note: {:?}", firs_tx);
+            println!("Transaction note: {firs_tx:?}");
             assert_eq!(firs_tx, message);
         }
 
@@ -115,17 +115,17 @@ mod tests {
         println!("Utxos: {}", serde_json::to_string_pretty(&utxos).unwrap());
         if !utxos.is_empty() {
             let tag = "Test Tag".to_string();
-            println!("\nSetting tag: {:?}", tag);
+            println!("\nSetting tag: {tag:?}");
             let first_utxo = &utxos[0];
             account
                 .set_tag(first_utxo.get_id().as_str(), tag.as_str())
                 .unwrap();
             let utxos = account.utxos().unwrap_or_default();
             let utxo_tag = utxos[0].tag.clone().unwrap_or("".to_string());
-            println!("Utxo tag: {:?}", utxo_tag);
+            println!("Utxo tag: {utxo_tag:?}");
             assert_eq!(utxo_tag, tag);
 
-            println!("\nSetting do not spend : {:?}", false);
+            println!("\nSetting do not spend ");
             account
                 .set_do_not_spend(first_utxo.get_id().as_str(), true)
                 .unwrap();
@@ -133,7 +133,7 @@ mod tests {
             let utxos = account.utxos().unwrap_or_default();
             let utxo_tag = &utxos[0];
             assert!(utxo_tag.do_not_spend);
-            println!("Utxo After Do not Spend: {:?}", utxo_tag);
+            println!("Utxo After Do not Spend: {utxo_tag:?}");
         }
         account.persist().unwrap();
     }
@@ -363,7 +363,7 @@ mod tests {
         let config = account.config.clone();
         assert!(account.is_hot());
         let backup = account.get_backup_json().unwrap();
-        println!("backup: {}", backup);
+        println!("backup: {backup}");
         let account_backup = serde_json::from_str::<NgAccountBackup>(&backup).unwrap();
         let config_from_backup = account_backup.ng_account_config;
 
@@ -397,7 +397,7 @@ mod tests {
         let account_backup = serde_json::from_str::<NgAccountBackup>(&backup).unwrap();
         let config_from_backup = account_backup.ng_account_config;
         let last_used_index = account_backup.last_used_index;
-        println!("last_used_index: {:?}", last_used_index);
+        println!("last_used_index: {last_used_index:?}");
         assert_eq!(config_from_backup.name, config.name);
         assert_eq!(config_from_backup.network, config.network);
         //watch only must export public descriptors
@@ -420,7 +420,7 @@ mod tests {
             do_not_spend_change: false,
         };
 
-        println!("params: {:?}", params);
+        println!("params: {params:?}");
         let compose_transaction = account.compose_psbt(params.clone());
         if let Ok(transaction) = compose_transaction {
             let parsed = account.get_bitcoin_tx_from_psbt(&transaction.psbt).unwrap();
@@ -429,7 +429,7 @@ mod tests {
             assert_eq!(parsed.amount as u64, params.amount);
             assert_eq!(parsed.fee_rate, params.fee_rate);
         } else {
-            panic!("Failed to compose transaction: {:?}", compose_transaction);
+            panic!("Failed to compose transaction: {compose_transaction:?}");
         }
     }
 

@@ -26,7 +26,7 @@ impl RedbMetaStorage {
         let db = {
             let file_path = path
                 .clone()
-                .map(|p| format!("{}/account.meta", p))
+                .map(|p| format!("{p}/account.meta"))
                 .unwrap_or("account.meta".to_string());
             Builder::new()
                 .create(file_path)
