@@ -467,7 +467,7 @@ impl<P: WalletPersister> NgAccount<P> {
                 if let Some((keychain, index)) =
                     wallet_mut.derivation_of_spk(txout.script_pubkey.clone())
                 {
-                    wallet_mut.unmark_used(keychain, index);
+                    wallet_mut.mark_used(keychain, index);
                 }
             }
         }
