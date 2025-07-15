@@ -4,9 +4,9 @@ version = "1.1.1"
 edition = "2024"
 
 [dependencies]
-bdk_wallet = { git = "https://github.com/Foundation-Devices/bdk_wallet", rev = "c35b0fd03fa3b858b97208cf663974da019995fd", features = ["keys-bip39","test-utils"] }
-bdk_core = { git = "https://github.com/Foundation-Devices/bdk-1", rev = "fd5b8152fdb49b3d457ec4c92591bdc45f00f43f" }
-bdk_electrum = { git = "https://github.com/Foundation-Devices/bdk-1", rev = "fd5b8152fdb49b3d457ec4c92591bdc45f00f43f", optional = true }
+bdk_wallet = { git = "https://github.com/Foundation-Devices/bdk_wallet", rev = "622143d55c8a5607b144db70fca358ceb2c648f5", features = ["keys-bip39","test-utils"] }
+bdk_core = { git = "https://github.com/Foundation-Devices/bdk-1", rev = "aa0cad567e9fa3553e5649b3a682f8dfad930946" }
+bdk_electrum = { git = "https://github.com/Foundation-Devices/bdk-1", rev = "aa0cad567e9fa3553e5649b3a682f8dfad930946", optional = true }
 anyhow = "1.0.97"
 redb = "2.4.0"
 serde = { version = "1.0", features = ["derive"] }
