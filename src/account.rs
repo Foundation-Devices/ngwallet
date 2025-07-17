@@ -496,7 +496,10 @@ impl<P: WalletPersister> NgAccount<P> {
                 None => {}
                 Some(existing_tag) => {
                     let new_tag = rename_to.unwrap_or("");
-                    if existing_tag.eq(target_tag) {
+                    if existing_tag
+                        .to_lowercase()
+                        .eq(target_tag.to_lowercase().as_str())
+                    {
                         self.set_tag(output.get_id().as_str(), new_tag)?;
                     }
                 }

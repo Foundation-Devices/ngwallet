@@ -69,7 +69,7 @@ impl MetaStorage for InMemoryMetaStorage {
 
     fn add_tag(&self, tag: &str) -> Result<()> {
         let mut map = self.tag_list.lock().unwrap();
-        map.insert(tag.to_string(), tag.to_string());
+        map.insert(tag.to_lowercase().to_string(), tag.to_string());
         Ok(())
     }
 

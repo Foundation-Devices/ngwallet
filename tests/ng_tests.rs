@@ -139,6 +139,13 @@ mod tests {
             let utxo_tag = &utxos[0];
             assert!(utxo_tag.do_not_spend);
             println!("Utxo After Do not Spend: {utxo_tag:?}");
+
+            println!("removing tag");
+            account
+                .remove_tag(tag.to_lowercase().as_str(), None)
+                .unwrap();
+            let tags = account.list_tags();
+            assert!(tags.unwrap().is_empty());
         }
         account.persist().unwrap();
     }

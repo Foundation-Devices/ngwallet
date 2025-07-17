@@ -107,7 +107,8 @@ impl MetaStorage for RedbMetaStorage {
         let write_txn = self.db.begin_write()?;
         {
             let mut table = write_txn.open_table(TAGS_LIST)?;
-            table.remove(tag)?;
+            //keys are stored in lowercase
+            table.remove(tag.to_string().to_lowercase().as_str())?;
         }
         write_txn
             .commit()
