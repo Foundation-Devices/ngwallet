@@ -155,7 +155,7 @@ impl<P: WalletPersister> NgWallet<P> {
                     last_seen,
                 } => {
                     info!(
-                        "UnconfirmedSeens first_seen: {first_seen:?}, last_seen: {last_seen:?}, Tx:ID {tx_id}",
+                        "UnconfirmedSeens first_seen: {first_seen:?}, last_seen: {last_seen:?}, Txid {tx_id} ",
                     );
 
                     match first_seen {
