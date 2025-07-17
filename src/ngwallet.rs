@@ -8,6 +8,7 @@ use bdk_core::TxUpdate;
 use bdk_wallet::bitcoin::{Address, Amount, Network, Psbt, Transaction};
 use bdk_wallet::chain::ChainPosition::{Confirmed, Unconfirmed};
 use bdk_wallet::chain::local_chain::CannotConnectError;
+#[cfg(feature = "envoy")]
 use bdk_wallet::chain::spk_client::{FullScanRequest, FullScanResponse, SyncRequest, SyncResponse};
 use bdk_wallet::{CreateWithPersistError, LoadWithPersistError, PersistedWallet, SignOptions};
 use bdk_wallet::{KeychainKind, WalletPersister};

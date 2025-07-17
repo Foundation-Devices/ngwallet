@@ -14,7 +14,9 @@ use bdk_wallet::bitcoin::address::{NetworkChecked, NetworkUnchecked};
 use bdk_wallet::bitcoin::{
     Address, AddressType as BdkAddressType, Amount, Psbt, Transaction, Txid,
 };
+#[cfg(feature = "envoy")]
 use bdk_wallet::chain::spk_client::FullScanRequest;
+#[cfg(feature = "envoy")]
 use bdk_wallet::chain::spk_client::SyncRequest;
 use bdk_wallet::{AddressInfo, Balance, KeychainKind, Update, WalletPersister};
 use log::info;
