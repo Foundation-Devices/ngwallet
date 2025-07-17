@@ -1,14 +1,16 @@
 use crate::account::NgAccount;
 use crate::ngwallet::NgWallet;
 use crate::rbf::BumpFeeError::ComposeTxError;
+use crate::send::DraftTransaction;
 #[cfg(feature = "envoy")]
 use crate::send::TransactionFeeResult;
-use crate::send::DraftTransaction;
 use crate::transaction::{BitcoinTransaction, Input, KeyChain, Output};
 use anyhow::Result;
 #[cfg(feature = "envoy")]
 use bdk_core::bitcoin::policy::DEFAULT_INCREMENTAL_RELAY_FEE;
 use bdk_core::bitcoin::{Network, ScriptBuf};
+#[cfg(feature = "envoy")]
+use bdk_wallet::AddressInfo;
 use bdk_wallet::bitcoin::secp256k1::Secp256k1;
 use bdk_wallet::bitcoin::{Address, Amount, FeeRate, OutPoint, Psbt, Txid};
 #[cfg(feature = "envoy")]
@@ -16,8 +18,6 @@ use bdk_wallet::error::CreateTxError::CoinSelection;
 use bdk_wallet::error::{BuildFeeBumpError, CreateTxError};
 use bdk_wallet::miniscript::psbt::PsbtExt;
 use bdk_wallet::psbt::PsbtUtils;
-#[cfg(feature = "envoy")]
-use bdk_wallet::AddressInfo;
 use bdk_wallet::{AddForeignUtxoError, KeychainKind, SignOptions, WalletPersister};
 use log::info;
 use std::str::FromStr;

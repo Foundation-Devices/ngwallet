@@ -3,7 +3,9 @@ use bdk_wallet::bitcoin::Network;
 use bdk_wallet::bitcoin::bip32::Xpriv;
 use bdk_wallet::keys::bip39::{Language, Mnemonic};
 use bdk_wallet::miniscript::descriptor::DescriptorType;
-use bdk_wallet::template::{Bip44, Bip48Member, Bip49, Bip84, Bip86, DescriptorTemplate, DescriptorTemplateOut};
+use bdk_wallet::template::{
+    Bip44, Bip48Member, Bip49, Bip84, Bip86, DescriptorTemplate, DescriptorTemplateOut,
+};
 use std::cmp::min;
 
 #[derive(Debug)]
@@ -108,8 +110,13 @@ pub fn get_descriptors(
     ];
 
     for template in descriptor_templates {
-        let (bip, descriptor, key_map, change_descriptor, change_key_map) =
-            (template.bip, template.receive_template.0, template.receive_template.1, template.change_template.0, template.change_template.1);
+        let (bip, descriptor, key_map, change_descriptor, change_key_map) = (
+            template.bip,
+            template.receive_template.0,
+            template.receive_template.1,
+            template.change_template.0,
+            template.change_template.1,
+        );
 
         descriptors.push(Descriptors {
             bip,

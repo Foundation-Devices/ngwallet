@@ -594,4 +594,18 @@ mod tests {
         let suggestions = bip39::get_seedword_suggestions("xy", 3);
         assert_eq!(suggestions, Vec::<&str>::new());
     }
+
+    #[test]
+    #[cfg(feature = "envoy")]
+    fn get_external_pubkey() {
+        let account = utils::tests_util::get_ng_hot_wallet();
+        let descriptors = account.get_external_public_descriptors();
+        assert_eq!(descriptors[0],
+            (AddressType::P2tr, "tr([20a6ab53/86'/1'/0']tpubDC8wiq86H9ZMiscQMoG1LcvQayTKs9Ef32n4fpVV8JR2FfCDgbTE2yECxi2Bgtkb7UEUheRyeprMtWRFdMXWQq8bx6ugwdTaMp6s2bNYjSV/0/*)#taglzc2a".to_string())
+        );
+
+        assert_eq!(descriptors[1],
+                   (AddressType::P2wpkh, "wpkh([20a6ab53/84'/1'/0']tpubDC4BKZc39XVBnaTSKLw9ks63KuuEFKdRB17PZMx6GfgxaMHhV79e3zSoVT2TDe9yxwyzm1YHMS8JFNQYWoTvkLJNHa5mTyA5Gkx8NwWVkvU/0/*)#m2myh9ws".to_string())
+        );
+    }
 }
