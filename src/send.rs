@@ -20,6 +20,7 @@ use std::sync::MutexGuard;
 
 use crate::account::NgAccount;
 use crate::transaction::{BitcoinTransaction, Input, KeyChain, Output};
+#[cfg(feature = "envoy")]
 use crate::utils;
 #[cfg(feature = "envoy")]
 use bdk_electrum::electrum_client::Error;

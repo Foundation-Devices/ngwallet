@@ -1,18 +1,24 @@
 use crate::account::NgAccount;
 use crate::ngwallet::NgWallet;
 use crate::rbf::BumpFeeError::ComposeTxError;
-use crate::send::{DraftTransaction, TransactionFeeResult};
+#[cfg(feature = "envoy")]
+use crate::send::TransactionFeeResult;
+use crate::send::DraftTransaction;
 use crate::transaction::{BitcoinTransaction, Input, KeyChain, Output};
 use anyhow::Result;
+#[cfg(feature = "envoy")]
 use bdk_core::bitcoin::policy::DEFAULT_INCREMENTAL_RELAY_FEE;
 use bdk_core::bitcoin::{Network, ScriptBuf};
 use bdk_wallet::bitcoin::secp256k1::Secp256k1;
 use bdk_wallet::bitcoin::{Address, Amount, FeeRate, OutPoint, Psbt, Txid};
+#[cfg(feature = "envoy")]
 use bdk_wallet::error::CreateTxError::CoinSelection;
 use bdk_wallet::error::{BuildFeeBumpError, CreateTxError};
 use bdk_wallet::miniscript::psbt::PsbtExt;
 use bdk_wallet::psbt::PsbtUtils;
-use bdk_wallet::{AddForeignUtxoError, AddressInfo, KeychainKind, SignOptions, WalletPersister};
+#[cfg(feature = "envoy")]
+use bdk_wallet::AddressInfo;
+use bdk_wallet::{AddForeignUtxoError, KeychainKind, SignOptions, WalletPersister};
 use log::info;
 use std::str::FromStr;
 
@@ -38,6 +44,7 @@ pub enum BumpFeeError {
 
 // TODO: chore: cleanup duplicate code
 impl<P: WalletPersister> NgAccount<P> {
+    #[cfg(feature = "envoy")]
     fn get_address(&self, key_chain: KeychainKind) -> AddressInfo {
         self.get_coordinator_wallet()
             .bdk_wallet
@@ -506,6 +513,7 @@ impl<P: WalletPersister> NgAccount<P> {
         wallet_index
     }
 
+    #[cfg(feature = "envoy")]
     fn get_minimum_rbf_fee_rate(transaction: &BitcoinTransaction) -> u64 {
         let original_fee = transaction.fee; // fee is sats
         let original_vsize = transaction.vsize as u64;
