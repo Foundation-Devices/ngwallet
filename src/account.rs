@@ -506,6 +506,22 @@ impl<P: WalletPersister> NgAccount<P> {
         Ok(())
     }
 
+    pub fn get_external_public_descriptors(&self) -> Vec<(AddressType, String)> {
+        let mut descriptors = vec![];
+
+        for wallet in self.wallets.iter() {
+            let external_pubkey = wallet
+                .bdk_wallet
+                .lock()
+                .unwrap()
+                .public_descriptor(KeychainKind::External)
+                .to_string();
+            descriptors.push((wallet.address_type, external_pubkey));
+        }
+
+        descriptors
+    }
+
     pub fn read_config_from_file(db_path: Option<String>) -> Option<NgAccountConfig> {
         let meta_storage = RedbMetaStorage::from_file(db_path).ok()?;
         Self::read_config_inner(meta_storage)
