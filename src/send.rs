@@ -679,9 +679,13 @@ impl<P: WalletPersister> NgAccount<P> {
                 None => {}
                 Some((input, weight)) => {
                     builder
-                        .add_foreign_utxo(outpoint, input, weight)
+                        .add_foreign_utxo_with_sequence(
+                            outpoint,
+                            input,
+                            weight,
+                            Sequence::ENABLE_RBF_NO_LOCKTIME,
+                        )
                         .map_err(|_| CreateTxError::NoUtxosSelected)?;
-                    // For Taproot: input.tap_key_origins.insert(x_only_pubkey, (origin, path, leaf_hashes));
                 }
             }
         }
