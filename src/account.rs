@@ -326,13 +326,21 @@ impl<P: WalletPersister> NgAccount<P> {
         Ok(true)
     }
 
+    //if tag is empty, the tag will be removed from the output
+    //else new tag will be assigned and tag name will be added to the list
     pub fn set_tag(&mut self, output_id: &str, tag: &str) -> anyhow::Result<bool> {
-        self.meta_storage
-            .set_tag(output_id, tag)
-            .with_context(|| "Could not set tag")?;
-        self.meta_storage
-            .add_tag(tag.to_string().as_str())
-            .with_context(|| "Could not add tag")?;
+        if tag.is_empty() {
+            self.meta_storage
+                .remove_tag(output_id)
+                .with_context(|| "Could not set tag")?;
+        } else {
+            self.meta_storage
+                .set_tag(output_id, tag)
+                .with_context(|| "Could not set tag")?;
+            self.meta_storage
+                .add_tag(tag.to_string().as_str())
+                .with_context(|| "Could not add tag")?;
+        }
         Ok(true)
     }
 
@@ -496,7 +504,10 @@ impl<P: WalletPersister> NgAccount<P> {
                 None => {}
                 Some(existing_tag) => {
                     let new_tag = rename_to.unwrap_or("");
-                    if existing_tag.eq(target_tag) {
+                    if existing_tag
+                        .to_lowercase()
+                        .eq(target_tag.to_lowercase().as_str())
+                    {
                         self.set_tag(output.get_id().as_str(), new_tag)?;
                     }
                 }

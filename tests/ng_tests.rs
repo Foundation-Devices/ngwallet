@@ -138,7 +138,17 @@ mod tests {
             let utxos = account.utxos().unwrap_or_default();
             let utxo_tag = &utxos[0];
             assert!(utxo_tag.do_not_spend);
-            println!("Utxo After Do not Spend: {utxo_tag:?}");
+            let new_tag = "New Tag".to_string();
+            account
+                .remove_tag(tag.as_str(), Some(new_tag.as_str()))
+                .expect("rename failed");
+            let tags = account.list_tags();
+            assert_eq!(tags.unwrap().first().unwrap(), new_tag.as_str());
+            account
+                .remove_tag(new_tag.as_str(), None)
+                .expect("remove tag should not fail");
+            let tags = account.list_tags();
+            assert!(tags.unwrap().is_empty());
         }
         account.persist().unwrap();
     }
