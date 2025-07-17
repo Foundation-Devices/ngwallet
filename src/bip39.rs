@@ -20,6 +20,10 @@ pub struct Descriptors {
 }
 
 impl Descriptors {
+    pub fn bip(&self) -> &str {
+        &self.bip
+    }
+
     pub fn descriptor_xprv(&self) -> &str {
         &self.descriptor_xprv
     }
