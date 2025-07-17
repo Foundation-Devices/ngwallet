@@ -64,7 +64,7 @@ impl MetaStorage for InMemoryMetaStorage {
 
     fn list_tags(&self) -> Result<Vec<String>> {
         let map = self.tag_list.lock().unwrap();
-        Ok(map.keys().cloned().collect())
+        Ok(map.values().cloned().collect())
     }
 
     fn add_tag(&self, tag: &str) -> Result<()> {
@@ -75,7 +75,7 @@ impl MetaStorage for InMemoryMetaStorage {
 
     fn remove_tag(&self, tag: &str) -> Result<()> {
         let mut map = self.tag_list.lock().unwrap();
-        map.remove(tag);
+        map.remove(tag.to_lowercase().as_str());
         Ok(())
     }
 
