@@ -1,5 +1,7 @@
 use crate::ngwallet::NgWallet;
+use crate::transaction::{BitcoinTransaction, Input, KeyChain, Output};
 use anyhow::{Context, Result};
+use bdk_core::bitcoin::Sequence;
 use bdk_wallet::bitcoin::psbt::ExtractTxError;
 use bdk_wallet::bitcoin::secp256k1::Secp256k1;
 use bdk_wallet::bitcoin::{
@@ -19,7 +21,6 @@ use std::str::FromStr;
 use std::sync::MutexGuard;
 
 use crate::account::NgAccount;
-use crate::transaction::{BitcoinTransaction, Input, KeyChain, Output};
 #[cfg(feature = "envoy")]
 use crate::utils;
 #[cfg(feature = "envoy")]
@@ -679,9 +680,13 @@ impl<P: WalletPersister> NgAccount<P> {
                 None => {}
                 Some((input, weight)) => {
                     builder
-                        .add_foreign_utxo(outpoint, input, weight)
+                        .add_foreign_utxo_with_sequence(
+                            outpoint,
+                            input,
+                            weight,
+                            Sequence::ENABLE_RBF_NO_LOCKTIME,
+                        )
                         .map_err(|_| CreateTxError::NoUtxosSelected)?;
-                    // For Taproot: input.tap_key_origins.insert(x_only_pubkey, (origin, path, leaf_hashes));
                 }
             }
         }
@@ -701,6 +706,7 @@ impl<P: WalletPersister> NgAccount<P> {
         if let Some(fee_rate) = fee_rate {
             builder.fee_rate(fee_rate);
         }
+        builder.set_exact_sequence(Sequence::ENABLE_RBF_NO_LOCKTIME);
 
         builder.finish()
     }

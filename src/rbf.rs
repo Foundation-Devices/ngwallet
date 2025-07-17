@@ -12,7 +12,7 @@ use bdk_core::bitcoin::{Network, ScriptBuf};
 #[cfg(feature = "envoy")]
 use bdk_wallet::AddressInfo;
 use bdk_wallet::bitcoin::secp256k1::Secp256k1;
-use bdk_wallet::bitcoin::{Address, Amount, FeeRate, OutPoint, Psbt, Txid};
+use bdk_wallet::bitcoin::{Address, Amount, FeeRate, OutPoint, Psbt, Sequence, Txid};
 #[cfg(feature = "envoy")]
 use bdk_wallet::error::CreateTxError::CoinSelection;
 use bdk_wallet::error::{BuildFeeBumpError, CreateTxError};
@@ -98,6 +98,22 @@ impl<P: WalletPersister> NgAccount<P> {
 
         let min_sats_per_vb = Self::get_minimum_rbf_fee_rate(&bitcoin_transaction);
 
+        let mut receive_amount = bitcoin_transaction.amount.unsigned_abs();
+
+        //self spend
+        if bitcoin_transaction.fee == (bitcoin_transaction.amount.unsigned_abs()) {
+            for output in bitcoin_transaction.clone().outputs {
+                match output.keychain {
+                    None => {}
+                    Some(keychain) => {
+                        if keychain == KeyChain::External {
+                            receive_amount = output.amount;
+                        }
+                    }
+                }
+            }
+        }
+
         // will keep updating until the maximum fee boundary is found
         let mut max_fee: Option<u64> = None;
 
@@ -131,27 +147,32 @@ impl<P: WalletPersister> NgAccount<P> {
                         }
                     },
                     Err(e) => match e {
-                        ComposeTxError(error) => {
-                            if let CoinSelection(error) = error {
+                        ComposeTxError(error) => match error {
+                            CreateTxError::FeeTooLow { required } => {
+                                max_fee = Some(required.to_sat());
+                            }
+                            CreateTxError::FeeRateTooLow { required } => {
+                                max_fee_rate = required.to_sat_per_vb_ceil() + 1;
+                                max_fee = None;
+                            }
+                            CoinSelection(error) => {
                                 info!(
                                     "Error while composing bump tx {:?} {:?}",
                                     error.clone().available.to_sat(),
                                     error.clone().needed.to_sat()
                                 );
-                                max_fee = Some(
-                                    error.available.to_sat()
-                                        - (bitcoin_transaction.amount.unsigned_abs()),
-                                );
-                            } else {
+                                max_fee = Some(error.available.to_sat() - (receive_amount));
+                            }
+                            _ => {
                                 return Err(ComposeTxError(error));
                             }
-                        }
+                        },
                         _err => {
                             return Err(_err);
                         }
                     },
                 }
-                info!("Max fee calculated: {} ", max_fee.unwrap());
+                info!("Max fee set to: {} ", max_fee.unwrap());
             } else {
                 //use minimum
                 match self.get_rbf_bump_psbt(
@@ -173,19 +194,25 @@ impl<P: WalletPersister> NgAccount<P> {
                         }
                     },
                     Err(e) => match e {
-                        ComposeTxError(error) => {
-                            if let CoinSelection(error) = error {
-                                info!(
-                                    "Error {:?} {:?}",
-                                    error.clone().available.to_sat(),
-                                    error.clone().needed.to_sat()
-                                );
-                                max_fee = Some(error.available.to_sat());
-                                info!("max_fee: {max_fee:?} ");
-                            } else {
-                                return Err(BumpFeeError::ChangeOutputLocked);
+                        ComposeTxError(error) => match error {
+                            CreateTxError::FeeTooLow { required } => {
+                                max_fee = Some(required.to_sat());
                             }
-                        }
+                            CreateTxError::FeeRateTooLow { required } => {
+                                max_fee_rate = required.to_sat_per_vb_ceil() + 1;
+                                max_fee = None;
+                            }
+                            CoinSelection(error) => {
+                                max_fee = Some(
+                                    error.available.to_sat()
+                                        - (receive_amount + bitcoin_transaction.fee),
+                                );
+                                info!("Max fee set to: {} ", max_fee.unwrap());
+                            }
+                            _ => {
+                                return Err(ComposeTxError(error));
+                            }
+                        },
                         _err => {
                             return Err(_err);
                         }
@@ -444,7 +471,12 @@ impl<P: WalletPersister> NgAccount<P> {
                         None => {}
                         Some((input, weight)) => {
                             tx_builder
-                                .add_foreign_utxo(outpoint, input, weight)
+                                .add_foreign_utxo_with_sequence(
+                                    outpoint,
+                                    input,
+                                    weight,
+                                    Sequence::ENABLE_RBF_NO_LOCKTIME,
+                                )
                                 .map_err(BumpFeeError::UnableToAddForeignUtxo)?;
                         }
                     }
@@ -524,14 +556,10 @@ impl<P: WalletPersister> NgAccount<P> {
         let min_replacement_fee = original_fee + min_additional_fee;
         let mut min_sats_per_vb = min_replacement_fee.div_ceil(original_vsize);
 
-        // ensure the fee rate is at least 1 sat/vb higher than the original transaction's fee rate
-        let original_fee_rate = original_fee.div_ceil(original_vsize);
-        min_sats_per_vb = min_sats_per_vb.max(original_fee_rate + 1);
-
         // Sanity check: ensure the fee rate meets or exceeds the network minimum
         // If the transaction paid 1 sat/vb,
-        // the replacement should be at least 2 (relay_fee_per_vb + 1)
-        min_sats_per_vb = min_sats_per_vb.max(relay_fee_per_vb + 1);
+        // the replacement should be at least 2 (relay_fee_per_vb + 2),
+        min_sats_per_vb = min_sats_per_vb.max(relay_fee_per_vb + 2);
 
         // maybe if there is edge cases. the final RBF size can
         // very if the builder includes too many inputs to cover the RBF

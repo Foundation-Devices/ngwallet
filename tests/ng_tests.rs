@@ -1,8 +1,13 @@
-// #[cfg(feature = "envoy")]
-// const EXTERNAL_DESCRIPTOR: &str = "wpkh(tprv8ZgxMBicQKsPeLx4U7UmbcYU5VhS4BRxv86o1gNqNqxEEJL47F9ZZhvBi1EVbKPmmFYnTEZ6uArarK6zZyrZf7mSyWZRAuNKQp4dHfxBdMM/84'/1'/0'/0/*)#gksznsj0";
 #[cfg(feature = "envoy")]
 const INTERNAL_DESCRIPTOR: &str = "wpkh(tprv8ZgxMBicQKsPeLx4U7UmbcYU5VhS4BRxv86o1gNqNqxEEJL47F9ZZhvBi1EVbKPmmFYnTEZ6uArarK6zZyrZf7mSyWZRAuNKQp4dHfxBdMM/84'/1'/0'/0/*)#gksznsj0";
 const INTERNAL_DESCRIPTOR_2: &str = "tr(tprv8ZgxMBicQKsPeLx4U7UmbcYU5VhS4BRxv86o1gNqNqxEEJL47F9ZZhvBi1EVbKPmmFYnTEZ6uArarK6zZyrZf7mSyWZRAuNKQp4dHfxBdMM/86'/1'/0'/0/*)#uw0tj973";
+
+// Descriptors with balance for testing
+const FUNDED_INTERNAL_DESCRIPTOR: &str = "wpkh([b032ef5f/84'/1'/0']tpubDCk2z9cyYbR3FGusMkYB5aSLTHuLNkkZuz9whR7x4JDh34rjD64bMhSXBns5qKf5QArdU5DK1Q6zLLg34SRqSV2EXutfgySyq3gZGsmYDT8/0/*)#csckd05z";
+const FUNDED_EXTERNAL_DESCRIPTOR: &str = "wpkh([b032ef5f/84'/1'/0']tpubDCk2z9cyYbR3FGusMkYB5aSLTHuLNkkZuz9whR7x4JDh34rjD64bMhSXBns5qKf5QArdU5DK1Q6zLLg34SRqSV2EXutfgySyq3gZGsmYDT8/1/*)#fyahs6y6";
+const FUNDED_INTERNAL_DESCRIPTOR_TR: &str = "tr([b032ef5f/86'/1'/0']tpubDCYjw9j1fst87iV3Mep6c3jUWe6JwCqLArZv7uZMEfa4VyXjU5uHZrWAMdokfsvm2HisA8Ym5Zbp4o5iCS3UARP6SxDdR2SvmSsSBAzvZMZ/0/*)#5ujy5gry";
+const FUNDED_EXTERNAL_DESCRIPTOR_TR: &str = "tr([b032ef5f/86'/1'/0']tpubDCYjw9j1fst87iV3Mep6c3jUWe6JwCqLArZv7uZMEfa4VyXjU5uHZrWAMdokfsvm2HisA8Ym5Zbp4o5iCS3UARP6SxDdR2SvmSsSBAzvZMZ/1/*)#9gh9fanu";
+
 #[cfg(feature = "envoy")]
 const ELECTRUM_SERVER: &str = "ssl://mempool.space:60602";
 const ELECTRUM_SERVER_T4: &str = "ssl://testnet4.foundation.xyz:50002";
@@ -35,13 +40,13 @@ mod tests {
     fn new_wallet_test_scan() {
         let descriptors = vec![
             Descriptor {
-                internal: INTERNAL_DESCRIPTOR.to_string(),
-                external: None,
+                internal: FUNDED_INTERNAL_DESCRIPTOR.to_string(),
+                external: Some(FUNDED_EXTERNAL_DESCRIPTOR.to_string()),
                 bdk_persister: Arc::new(Mutex::new(Connection::open_in_memory().unwrap())),
             },
             Descriptor {
-                internal: INTERNAL_DESCRIPTOR_2.to_string(),
-                external: None,
+                internal: FUNDED_INTERNAL_DESCRIPTOR_TR.to_string(),
+                external: Some(FUNDED_EXTERNAL_DESCRIPTOR_TR.to_string()),
                 bdk_persister: Arc::new(Mutex::new(Connection::open_in_memory().unwrap())),
             },
         ];
