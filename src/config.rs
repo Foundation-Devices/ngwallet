@@ -14,7 +14,6 @@ use bdk_wallet::bitcoin::bip32::{self, DerivationPath, Fingerprint, Xpub};
 use redb::StorageBackend;
 use serde::{Deserialize, Serialize};
 
-// TODO: consider using official types from bitcoin-rust like DerivationPath, Fingerprint, Xpub
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq, rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)]
 pub struct MultiSigSigner {
     derivation: String,
@@ -55,7 +54,6 @@ impl MultiSigSigner {
     pub fn get_pubkey_str(&self) -> &str { &self.pubkey }
 }
 
-// TODO: may want to move this into NgAccountConfig so it can be synced with envoy
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq, rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)]
 pub struct MultiSigDetails {
     pub policy_threshold: u32,  // aka M
