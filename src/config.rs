@@ -1,6 +1,7 @@
 use anyhow::bail;
 use std::collections::HashMap;
 use std::sync::Arc;
+use std::str::FromStr;
 
 use crate::account::{Descriptor, NgAccount, RemoteUpdate};
 use crate::db::RedbMetaStorage;
@@ -8,11 +9,62 @@ use crate::store::MetaStorage;
 use crate::utils::get_address_type;
 use bdk_wallet::KeychainKind;
 use bdk_wallet::WalletPersister;
-use bdk_wallet::bitcoin::Network;
+use bdk_wallet::bitcoin::{self, Network};
+use bdk_wallet::bitcoin::bip32::{self, DerivationPath, Fingerprint, Xpub};
 use redb::StorageBackend;
 use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+// TODO: consider using official types from bitcoin-rust like DerivationPath, Fingerprint, Xpub
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)]
+pub struct MultiSigSigner {
+    derivation: String,
+    fingerprint: String,
+    pubkey: String,
+}
+
+impl MultiSigSigner {
+    pub fn new_from_strings(derivation: &str, fingerprint: &str, pubkey: &str) -> Result<Self, bip32::Error> {
+        let d = DerivationPath::from_str(derivation)?;
+        let f = Fingerprint::from_str(fingerprint).map_err(|e| bip32::Error::Hex(e))?;
+        let p = Xpub::from_str(pubkey)?;
+        Ok(Self::new(&d, &f, &p))
+    }
+
+    pub fn new(derivation: &DerivationPath, fingerprint: &Fingerprint, pubkey: &Xpub) -> Self {
+        Self {
+            derivation: derivation.to_string(),
+            fingerprint: fingerprint.to_string().to_uppercase(),
+            pubkey: pubkey.to_string(),
+        }
+    }
+
+    pub fn get_derivation(&self) -> Result<DerivationPath, bip32::Error> {
+        DerivationPath::from_str(&self.derivation)
+    }
+
+    pub fn get_fingerprint(&self) -> Result<Fingerprint, bip32::Error> {
+        Fingerprint::from_str(&self.fingerprint).map_err(|e| bip32::Error::Hex(e))
+    }
+
+    pub fn get_pubkey(&self) -> Result<Xpub, bip32::Error> {
+        Xpub::from_str(&self.pubkey)
+    }
+
+    pub fn get_derivation_str(&self) -> &str { &self.derivation }
+    pub fn get_fingerprint_str(&self) -> &str { &self.fingerprint }
+    pub fn get_pubkey_str(&self) -> &str { &self.pubkey }
+}
+
+// TODO: may want to move this into NgAccountConfig so it can be synced with envoy
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)]
+pub struct MultiSigDetails {
+    pub policy_threshold: u32,  // aka M
+    pub policy_total_keys: u32, // aka N
+    pub address_type: AddressType,
+    pub signers: Vec<MultiSigSigner>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize, rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)]
 #[non_exhaustive]
 pub enum AddressType {
     /// Pay to pubkey hash.
@@ -27,6 +79,35 @@ pub enum AddressType {
     P2tr,
 
     P2ShWpkh,
+}
+
+impl TryFrom<bitcoin::AddressType> for AddressType {
+    type Error = anyhow::Error;
+
+    fn try_from(item: bitcoin::AddressType) -> Result<Self, Self::Error> {
+        let t = match item {
+            bitcoin::AddressType::P2pkh => AddressType::P2pkh,
+            bitcoin::AddressType::P2sh => AddressType::P2sh,
+            bitcoin::AddressType::P2wpkh => AddressType::P2wpkh,
+            bitcoin::AddressType::P2wsh => AddressType::P2wsh,
+            bitcoin::AddressType::P2tr => AddressType::P2tr,
+            other => anyhow::bail!("Unknown bitcoin::AddressType: {}", other),
+        };
+        Ok(t)
+    }
+}
+
+impl From<AddressType> for bitcoin::AddressType {
+   fn from(item: AddressType) -> Self {
+        match item {
+            AddressType::P2pkh => bitcoin::AddressType::P2pkh,
+            AddressType::P2sh  => bitcoin::AddressType::P2sh,
+            AddressType::P2wpkh => bitcoin::AddressType::P2wpkh,
+            AddressType::P2wsh => bitcoin::AddressType::P2wsh,
+            AddressType::P2tr => bitcoin::AddressType::P2tr,
+            AddressType::P2ShWpkh => bitcoin::AddressType::P2sh,
+        }
+    }
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
@@ -50,6 +131,7 @@ pub struct NgAccountConfig {
     pub account_path: Option<String>,
     pub network: Network,
     pub id: String,
+    pub multisig: Option<MultiSigDetails>
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -106,6 +188,7 @@ impl<P: WalletPersister> Default for NgAccountBuilder<P> {
             id: None,
             date_synced: None,
             seed_has_passphrase: None,
+            multisig: None,
         }
     }
 }
@@ -123,6 +206,7 @@ pub struct NgAccountBuilder<P: WalletPersister> {
     id: Option<String>,
     date_synced: Option<String>,
     seed_has_passphrase: Option<bool>,
+    multisig: Option<MultiSigDetails>,
 }
 
 impl<P: WalletPersister> NgAccountBuilder<P> {
@@ -223,11 +307,12 @@ impl<P: WalletPersister> NgAccountBuilder<P> {
                 .preferred_address_type
                 .expect("Preferred address type is required"),
             descriptors: ng_descriptors,
-            index: self.index.expect("Index is required"),
+            index: if self.multisig.is_none() { self.index.expect("Index is required") } else { 0 },
             id: self.id.expect("id is required"),
             date_synced: self.date_synced,
             seed_has_passphrase: self.seed_has_passphrase.unwrap_or(false),
             account_path: self.account_path,
+            multisig: self.multisig,
         };
 
         NgAccount::new_from_descriptors(ng_account_config, Arc::new(meta_storage), descriptors)
