@@ -145,7 +145,6 @@ impl<P: WalletPersister> NgWallet<P> {
             let mut date: Option<u64> = None;
             let block_height = match canonical_tx.chain_position {
                 Confirmed { anchor, .. } => {
-                    //to milliseconds
                     date = Some(anchor.confirmation_time);
                     let block_height = anchor.block_id.height;
                     if block_height > 0 { block_height } else { 0 }
@@ -154,10 +153,6 @@ impl<P: WalletPersister> NgWallet<P> {
                     first_seen,
                     last_seen,
                 } => {
-                    info!(
-                        "UnconfirmedSeens first_seen: {first_seen:?}, last_seen: {last_seen:?}, Txid {tx_id} ",
-                    );
-
                     match first_seen {
                         None => {
                             match last_seen {
@@ -430,7 +425,7 @@ impl<P: WalletPersister> NgWallet<P> {
     }
 
     pub fn utxos(&self) -> Result<Vec<Output>> {
-        let wallet = self.bdk_wallet.lock().unwrap();
+        let wallet = self.bdk_wallet.lock().expect("Failed to lock bdk_wallet");
         let mut unspents: Vec<Output> = vec![];
         let tip_height = wallet.latest_checkpoint().height();
 
@@ -448,9 +443,7 @@ impl<P: WalletPersister> NgWallet<P> {
                 Some(wallet_tx) => {
                     match wallet_tx.chain_position {
                         Confirmed { anchor, .. } => {
-                            //to milliseconds
-
-                            date = Some(anchor.confirmation_time * 1000);
+                            date = Some(anchor.confirmation_time);
                             let block_height = anchor.block_id.height;
                             confirmations = if block_height > 0 {
                                 tip_height - block_height + 1
@@ -485,7 +478,7 @@ impl<P: WalletPersister> NgWallet<P> {
                 vout: local_output.outpoint.vout,
                 amount: local_output.txout.value.to_sat(),
                 address: Address::from_script(&local_output.txout.script_pubkey, wallet.network())
-                    .unwrap()
+                    .expect("Unable to get address for utxo")
                     .to_string(),
                 keychain: wallet
                     .derivation_of_spk(local_output.txout.script_pubkey.clone())
@@ -496,7 +489,9 @@ impl<P: WalletPersister> NgWallet<P> {
                             KeyChain::Internal
                         }
                     }),
-                tag: meta_storage.get_tag(out_put_id.clone().as_str()).unwrap(),
+                tag: meta_storage
+                    .get_tag(out_put_id.clone().as_str())
+                    .unwrap_or(None),
                 do_not_spend,
                 date,
                 is_confirmed: confirmations >= 3,
