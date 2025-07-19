@@ -211,7 +211,13 @@ impl MultiSigDetails {
                     }
 
                     match derivation {
-                        Some(ref d) => signers.push(MultiSigSigner::new(d, &fingerprint, &pubkey)),
+                        Some(ref d) => {
+                            let signer = MultiSigSigner::new(d, &fingerprint, &pubkey);
+                            if signers.contains(&signer) {
+                                anyhow::bail!("Multisig config contains duplicate signers");
+                            }
+                            signers.push(signer);
+                        }
                         None => anyhow::bail!(
                             "Multisig config does not include a derivation path for at least one signer"
                         ),
@@ -615,6 +621,40 @@ AB88DE89: tpubDFUc8ddWCzA8kC195Zn6UitBcBGXbPbtjktU2dk2Deprnf6sR15GAyHLQKUjAPa3gq
                     derivation: String::from("m/48'/1'/0'/2'"),
                     fingerprint: String::from("662A42E4"),
                     pubkey: String::from("tpubDFGqX4Ge633XixPNo4uF5h6sPkv32bwJrknDmmPGMq8Tn3Pu9QgWfk5hUiDe7gvv2eaFeaHXgjiZwKvnP3AhusoaWBK3qTv8cznyHxxGoSF"),
+                }
+            ],
+        };
+        assert_eq!(expected, multisig);
+        assert_eq!(Some(String::from("Multisig 2-of-2 Test")), name);
+    }
+
+    #[test]
+    fn multisig_from_config_2() {
+        let config = String::from("Name: Multisig 2-of-2 Test
+Policy: 2 of 2
+Format: P2WSH
+
+Derivation: m/48'/1'/0'/2'
+AB88DE89: tpubDFUc8ddWCzA8kC195Zn6UitBcBGXbPbtjktU2dk2Deprnf6sR15GAyHLQKUjAPa3gqD74g7Eea3NSqkb9FfYRZzEm2MTbCtTDZAKSHezJwb
+
+Derivation: m/48'/1'/0'/2'
+662A42E4: tpubDFGqX4Ge633XixPNo4uF5h6sPkv32bwJrknDmmPGMq8Tn3Pu9QgWfk5hUiDe7gvv2eaFeaHXgjiZwKvnP3AhusoaWBK3qTv8cznyHxxGoSF");
+        let (multisig, name) = MultiSigDetails::from_config(&config).unwrap();
+        let expected = MultiSigDetails {
+            policy_threshold: 2,
+            policy_total_keys: 2,
+            format: AddressType::P2wsh,
+            network_kind: NetworkKind::Test,
+            signers: vec![
+                MultiSigSigner {
+                    derivation: String::from("m/48'/1'/0'/2'"),
+                    fingerprint: String::from("662A42E4"),
+                    pubkey: String::from("tpubDFGqX4Ge633XixPNo4uF5h6sPkv32bwJrknDmmPGMq8Tn3Pu9QgWfk5hUiDe7gvv2eaFeaHXgjiZwKvnP3AhusoaWBK3qTv8cznyHxxGoSF"),
+                },
+                MultiSigSigner {
+                    derivation: String::from("m/48'/1'/0'/2'"),
+                    fingerprint: String::from("AB88DE89"),
+                    pubkey: String::from("tpubDFUc8ddWCzA8kC195Zn6UitBcBGXbPbtjktU2dk2Deprnf6sR15GAyHLQKUjAPa3gqD74g7Eea3NSqkb9FfYRZzEm2MTbCtTDZAKSHezJwb"),
                 }
             ],
         };
