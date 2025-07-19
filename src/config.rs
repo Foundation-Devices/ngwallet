@@ -2,6 +2,7 @@ use anyhow::{self, Context, bail};
 use std::collections::HashMap;
 use std::str::FromStr;
 use std::sync::Arc;
+use std::cmp::Ordering;
 
 use crate::account::{Descriptor, NgAccount, RemoteUpdate};
 use crate::db::RedbMetaStorage;
@@ -23,6 +24,7 @@ pub const MULTI_SIG_SIGNER_LIMIT: u32 = 20;
     Deserialize,
     Clone,
     PartialEq,
+    Eq,
     rkyv::Archive,
     rkyv::Serialize,
     rkyv::Deserialize,
@@ -31,6 +33,14 @@ pub struct MultiSigSigner {
     derivation: String,
     fingerprint: String,
     pubkey: String,
+}
+
+impl PartialOrd for MultiSigSigner {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> { Some(self.pubkey.cmp(&other.pubkey)) }
+}
+
+impl Ord for MultiSigSigner {
+    fn cmp(&self, other: &Self) -> Ordering { self.pubkey.cmp(&other.pubkey) }
 }
 
 impl MultiSigSigner {
@@ -46,8 +56,13 @@ impl MultiSigSigner {
     }
 
     pub fn new(derivation: &DerivationPath, fingerprint: &Fingerprint, pubkey: &Xpub) -> Self {
+        // This string can be parsed back into a DerivationPath,
+        // and is nicer for config file formatting
+        let mut deriv_str = derivation.to_string();
+        deriv_str.insert_str(0, "m/");
+
         Self {
-            derivation: derivation.to_string(),
+            derivation: deriv_str,
             fingerprint: fingerprint.to_string().to_uppercase(),
             pubkey: pubkey.to_string(),
         }
@@ -81,7 +96,6 @@ impl MultiSigSigner {
     Serialize,
     Deserialize,
     Clone,
-    PartialEq,
     rkyv::Archive,
     rkyv::Serialize,
     rkyv::Deserialize,
@@ -90,7 +104,24 @@ pub struct MultiSigDetails {
     pub policy_threshold: u32,  // aka M
     pub policy_total_keys: u32, // aka N
     pub format: AddressType,
+    pub network_kind: NetworkKind,
+    // Signers are sorted on creation
     pub signers: Vec<MultiSigSigner>,
+}
+
+impl PartialEq for MultiSigDetails {
+    fn eq(&self, other: &Self) -> bool {
+        let mut self_signers = self.signers.clone();
+        let mut other_signers = other.signers.clone();
+        self_signers.sort();
+        other_signers.sort();
+
+        self.policy_threshold == other.policy_threshold
+            && self.policy_total_keys == other.policy_total_keys
+            && self.format == other.format
+            && self.network_kind == other.network_kind
+            && self_signers == other_signers
+    }
 }
 
 impl MultiSigDetails {
@@ -102,6 +133,7 @@ impl MultiSigDetails {
         let mut policy_total_keys: Option<u32> = None;
         let mut derivation: Option<DerivationPath> = None;
         let mut format: Option<AddressType> = None;
+        let mut network_kind: Option<NetworkKind> = None;
         let mut signers: Vec<MultiSigSigner> = Vec::new();
         let pattern = Regex::new(r"(\d+)\D*(\d+)")?;
 
@@ -166,10 +198,18 @@ impl MultiSigDetails {
                 "derivation" => derivation = Some(DerivationPath::from_str(&value)?),
                 "format" => format = Some(AddressType::try_from(value)?),
                 other => {
+                    // Ensure that strings parse correctly to a fingerprint and pubkey
                     let fingerprint = Fingerprint::from_str(other).with_context(
                         || "Unnamed keys in a multisig format should be valid fingerprints",
                     )?;
                     let pubkey = Xpub::from_str(&value)?;
+
+                    // Ensure that all pubkeys indicate the same network kind
+                    let n = network_kind.get_or_insert(pubkey.network.into());
+                    if *n != pubkey.network.into() {
+                        anyhow::bail!("Multisig config has pubkeys from different networks");
+                    }
+
                     match derivation {
                         Some(ref d) => signers.push(MultiSigSigner::new(d, &fingerprint, &pubkey)),
                         None => anyhow::bail!(
@@ -180,6 +220,9 @@ impl MultiSigDetails {
             }
         }
 
+        // Sort by xpubs
+        signers.sort();
+
         let res = Self {
             policy_threshold: policy_threshold.ok_or(anyhow::anyhow!(
                 "Multisig config is missing policy threshold"
@@ -188,12 +231,13 @@ impl MultiSigDetails {
                 "Multisig config is missing policy total keys"
             ))?,
             format: format.ok_or(anyhow::anyhow!("Multisig config is missing address format"))?,
+            network_kind: network_kind.ok_or(anyhow::anyhow!("Multisig config does not indicate a network kind"))?,
             signers: signers.clone(),
         };
 
         if signers.len() != res.policy_total_keys as usize {
             anyhow::bail!(
-                "Multisig config number of signers should specify the total keys (M) specified"
+                "Multisig config number of signers should match the total keys (M) specified"
             );
         }
 
@@ -211,6 +255,10 @@ impl MultiSigDetails {
 
         if res.policy_threshold < 2 {
             anyhow::bail!("Multisig configs should have a threshold of at least 2");
+        }
+
+        if res.policy_threshold > res.policy_total_keys {
+            anyhow::bail!("Multisig configs should have a threshold (M) less than or equal too the total keys (N)");
         }
 
         Ok((res, name))
@@ -295,6 +343,30 @@ impl From<AddressType> for bitcoin::AddressType {
             AddressType::P2tr => bitcoin::AddressType::P2tr,
             AddressType::P2ShWpkh => bitcoin::AddressType::P2sh,
             AddressType::P2ShWsh => bitcoin::AddressType::P2sh,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize, rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)]
+pub enum NetworkKind {
+    Main,
+    Test,
+}
+
+impl From<bitcoin::NetworkKind> for NetworkKind {
+    fn from(item: bitcoin::NetworkKind) -> NetworkKind {
+        match item {
+            bitcoin::NetworkKind::Main => NetworkKind::Main,
+            bitcoin::NetworkKind::Test => NetworkKind::Test,
+        }
+    }
+}
+
+impl From<NetworkKind> for bitcoin::NetworkKind {
+    fn from(item: NetworkKind) -> bitcoin::NetworkKind {
+        match item {
+            NetworkKind::Main => bitcoin::NetworkKind::Main,
+            NetworkKind::Test => bitcoin::NetworkKind::Test,
         }
     }
 }
@@ -509,5 +581,44 @@ impl<P: WalletPersister> NgAccountBuilder<P> {
         };
 
         NgAccount::new_from_descriptors(ng_account_config, Arc::new(meta_storage), descriptors)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn multisig_from_config_1() {
+        let config = String::from("# Passport Multisig setup file (created by Sparrow)
+#
+Name: Multisig 2-of-2 Test
+Policy: 2 of 2
+Derivation: m/48'/1'/0'/2'
+Format: P2WSH
+
+AB88DE89: tpubDFUc8ddWCzA8kC195Zn6UitBcBGXbPbtjktU2dk2Deprnf6sR15GAyHLQKUjAPa3gqD74g7Eea3NSqkb9FfYRZzEm2MTbCtTDZAKSHezJwb
+662A42E4: tpubDFGqX4Ge633XixPNo4uF5h6sPkv32bwJrknDmmPGMq8Tn3Pu9QgWfk5hUiDe7gvv2eaFeaHXgjiZwKvnP3AhusoaWBK3qTv8cznyHxxGoSF");
+        let (multisig, name) = MultiSigDetails::from_config(&config).unwrap();
+        let expected = MultiSigDetails {
+            policy_threshold: 2,
+            policy_total_keys: 2,
+            format: AddressType::P2wsh,
+            network_kind: NetworkKind::Test,
+            signers: vec![
+                MultiSigSigner {
+                    derivation: String::from("m/48'/1'/0'/2'"),
+                    fingerprint: String::from("AB88DE89"),
+                    pubkey: String::from("tpubDFUc8ddWCzA8kC195Zn6UitBcBGXbPbtjktU2dk2Deprnf6sR15GAyHLQKUjAPa3gqD74g7Eea3NSqkb9FfYRZzEm2MTbCtTDZAKSHezJwb"),
+                },
+                MultiSigSigner {
+                    derivation: String::from("m/48'/1'/0'/2'"),
+                    fingerprint: String::from("662A42E4"),
+                    pubkey: String::from("tpubDFGqX4Ge633XixPNo4uF5h6sPkv32bwJrknDmmPGMq8Tn3Pu9QgWfk5hUiDe7gvv2eaFeaHXgjiZwKvnP3AhusoaWBK3qTv8cznyHxxGoSF"),
+                }
+            ],
+        };
+        assert_eq!(expected, multisig);
+        assert_eq!(Some(String::from("Multisig 2-of-2 Test")), name);
     }
 }
