@@ -1,7 +1,7 @@
-use anyhow::{self, bail, Context};
+use anyhow::{self, Context, bail};
 use std::collections::HashMap;
-use std::sync::Arc;
 use std::str::FromStr;
+use std::sync::Arc;
 
 use crate::account::{Descriptor, NgAccount, RemoteUpdate};
 use crate::db::RedbMetaStorage;
@@ -9,15 +9,24 @@ use crate::store::MetaStorage;
 use crate::utils::get_address_type;
 use bdk_wallet::KeychainKind;
 use bdk_wallet::WalletPersister;
-use bdk_wallet::bitcoin::{self, Network};
 use bdk_wallet::bitcoin::bip32::{self, DerivationPath, Fingerprint, Xpub};
+use bdk_wallet::bitcoin::{self, Network};
 use redb::StorageBackend;
-use serde::{Deserialize, Serialize};
 use regex::Regex;
+use serde::{Deserialize, Serialize};
 
 pub const MULTI_SIG_SIGNER_LIMIT: u32 = 20;
 
-#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)]
+#[derive(
+    Debug,
+    Serialize,
+    Deserialize,
+    Clone,
+    PartialEq,
+    rkyv::Archive,
+    rkyv::Serialize,
+    rkyv::Deserialize,
+)]
 pub struct MultiSigSigner {
     derivation: String,
     fingerprint: String,
@@ -25,9 +34,13 @@ pub struct MultiSigSigner {
 }
 
 impl MultiSigSigner {
-    pub fn new_from_strings(derivation: &str, fingerprint: &str, pubkey: &str) -> Result<Self, bip32::Error> {
+    pub fn new_from_strings(
+        derivation: &str,
+        fingerprint: &str,
+        pubkey: &str,
+    ) -> Result<Self, bip32::Error> {
         let d = DerivationPath::from_str(derivation)?;
-        let f = Fingerprint::from_str(fingerprint).map_err(|e| bip32::Error::Hex(e))?;
+        let f = Fingerprint::from_str(fingerprint).map_err(bip32::Error::Hex)?;
         let p = Xpub::from_str(pubkey)?;
         Ok(Self::new(&d, &f, &p))
     }
@@ -45,19 +58,34 @@ impl MultiSigSigner {
     }
 
     pub fn get_fingerprint(&self) -> Result<Fingerprint, bip32::Error> {
-        Fingerprint::from_str(&self.fingerprint).map_err(|e| bip32::Error::Hex(e))
+        Fingerprint::from_str(&self.fingerprint).map_err(bip32::Error::Hex)
     }
 
     pub fn get_pubkey(&self) -> Result<Xpub, bip32::Error> {
         Xpub::from_str(&self.pubkey)
     }
 
-    pub fn get_derivation_str(&self) -> &str { &self.derivation }
-    pub fn get_fingerprint_str(&self) -> &str { &self.fingerprint }
-    pub fn get_pubkey_str(&self) -> &str { &self.pubkey }
+    pub fn get_derivation_str(&self) -> &str {
+        &self.derivation
+    }
+    pub fn get_fingerprint_str(&self) -> &str {
+        &self.fingerprint
+    }
+    pub fn get_pubkey_str(&self) -> &str {
+        &self.pubkey
+    }
 }
 
-#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)]
+#[derive(
+    Debug,
+    Serialize,
+    Deserialize,
+    Clone,
+    PartialEq,
+    rkyv::Archive,
+    rkyv::Serialize,
+    rkyv::Deserialize,
+)]
 pub struct MultiSigDetails {
     pub policy_threshold: u32,  // aka M
     pub policy_total_keys: u32, // aka N
@@ -75,6 +103,7 @@ impl MultiSigDetails {
         let mut derivation: Option<DerivationPath> = None;
         let mut format: Option<AddressType> = None;
         let mut signers: Vec<MultiSigSigner> = Vec::new();
+        let pattern = Regex::new(r"(\d+)\D*(\d+)")?;
 
         for (i, line) in config.lines().enumerate() {
             let s = String::from(line);
@@ -96,29 +125,36 @@ impl MultiSigDetails {
             // Remove commented lines
             if let Some(comment_index) = key.find('#') {
                 match comment_index {
-                    0 => continue,  // TODO: should we uncomment derivation paths here?
-                    _ => anyhow::bail!("Multisig config line {} is malformed, should only include comments after values", i + 1),
+                    0 => continue, // TODO: should we uncomment derivation paths here?
+                    _ => anyhow::bail!(
+                        "Multisig config line {} is malformed, should only include comments after values",
+                        i + 1
+                    ),
                 }
             }
 
             // Allow names to include '#'
-            if key == String::from("name") {
-                name = Some(String::from(value));
+            if key == *"name" {
+                name = Some(value);
                 continue;
             }
 
             // Remove comments after values
             if let Some((v, _comment)) = value.split_once('#') {
-                if v.len() == 0 {
-                    anyhow::bail!("Multisig config line {} is malformed, should not comment out values", i + 1);
+                if v.is_empty() {
+                    anyhow::bail!(
+                        "Multisig config line {} is malformed, should not comment out values",
+                        i + 1
+                    );
                 }
                 value = String::from(v).trim().to_owned()
             }
 
             match key.as_str() {
                 "policy" => {
-                    let pattern = Regex::new(r"(\d+)\D*(\d+)")?;
-                    let captures = pattern.captures(&value).ok_or(anyhow::anyhow!("Invalid policy format"))?;
+                    let captures = pattern
+                        .captures(&value)
+                        .ok_or(anyhow::anyhow!("Invalid policy format"))?;
                     if captures.len() != 3 {
                         anyhow::bail!("Invalid policy format, incorrect regex capture");
                     }
@@ -128,32 +164,45 @@ impl MultiSigDetails {
                 // This handles global and signer-specific derivations by just assigning the
                 // latest parsed derivation to the next signer.
                 "derivation" => derivation = Some(DerivationPath::from_str(&value)?),
-                "format" => format = Some(AddressType::try_from(String::from(value))?),
+                "format" => format = Some(AddressType::try_from(value)?),
                 other => {
-                    let fingerprint = Fingerprint::from_str(&other)
-                        .with_context(|| "Unnamed keys in a multisig format should be valid fingerprints")?;
+                    let fingerprint = Fingerprint::from_str(other).with_context(
+                        || "Unnamed keys in a multisig format should be valid fingerprints",
+                    )?;
                     let pubkey = Xpub::from_str(&value)?;
                     match derivation {
-                        Some(ref d) => signers.push(MultiSigSigner::new(&d, &fingerprint, &pubkey)),
-                        None => anyhow::bail!("Multisig config does not include a derivation path for at least one signer"),
+                        Some(ref d) => signers.push(MultiSigSigner::new(d, &fingerprint, &pubkey)),
+                        None => anyhow::bail!(
+                            "Multisig config does not include a derivation path for at least one signer"
+                        ),
                     }
                 }
             }
         }
 
         let res = Self {
-            policy_threshold: policy_threshold.ok_or(anyhow::anyhow!("Multisig config is missing policy threshold"))?,
-            policy_total_keys: policy_total_keys.ok_or(anyhow::anyhow!("Multisig config is missing policy total keys"))?,
+            policy_threshold: policy_threshold.ok_or(anyhow::anyhow!(
+                "Multisig config is missing policy threshold"
+            ))?,
+            policy_total_keys: policy_total_keys.ok_or(anyhow::anyhow!(
+                "Multisig config is missing policy total keys"
+            ))?,
             format: format.ok_or(anyhow::anyhow!("Multisig config is missing address format"))?,
             signers: signers.clone(),
         };
 
         if signers.len() != res.policy_total_keys as usize {
-            anyhow::bail!("Multisig config number of signers should specify the total keys (M) specified");
+            anyhow::bail!(
+                "Multisig config number of signers should specify the total keys (M) specified"
+            );
         }
 
         if res.policy_total_keys >= MULTI_SIG_SIGNER_LIMIT {
-            anyhow::bail!("Multisig config has {} signers, limit is {}", signers.len(), MULTI_SIG_SIGNER_LIMIT);
+            anyhow::bail!(
+                "Multisig config has {} signers, limit is {}",
+                signers.len(),
+                MULTI_SIG_SIGNER_LIMIT
+            );
         }
 
         if signers.len() < 2 {
@@ -168,7 +217,21 @@ impl MultiSigDetails {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize, rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)]
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    PartialOrd,
+    Ord,
+    Hash,
+    Serialize,
+    Deserialize,
+    rkyv::Archive,
+    rkyv::Serialize,
+    rkyv::Deserialize,
+)]
 #[non_exhaustive]
 pub enum AddressType {
     /// Pay to pubkey hash.
@@ -210,11 +273,11 @@ impl TryFrom<String> for AddressType {
         let cleaned = item.to_lowercase().replace("_", "-");
         let t = match cleaned.as_str() {
             "p2pkh" | "pkh" => AddressType::P2pkh,
-            "p2sh" | "sh"  => AddressType::P2sh,
+            "p2sh" | "sh" => AddressType::P2sh,
             "p2wpkh" | "wpkh" => AddressType::P2wpkh,
             "p2wsh" | "wsh" => AddressType::P2wsh,
             "p2tr" | "tr" => AddressType::P2tr,
-            "p2sh-p2wpkh" | "sh-wpkh" | "p2wpkh-p2sh" | "wpkh-sh"  => AddressType::P2ShWpkh,
+            "p2sh-p2wpkh" | "sh-wpkh" | "p2wpkh-p2sh" | "wpkh-sh" => AddressType::P2ShWpkh,
             "p2sh-p2wsh" | "sh-wsh" | "p2wsh-p2sh" | "wsh-sh" => AddressType::P2ShWsh,
             other => anyhow::bail!("Unknown address type string: {}", other),
         };
@@ -223,10 +286,10 @@ impl TryFrom<String> for AddressType {
 }
 
 impl From<AddressType> for bitcoin::AddressType {
-   fn from(item: AddressType) -> Self {
+    fn from(item: AddressType) -> Self {
         match item {
             AddressType::P2pkh => bitcoin::AddressType::P2pkh,
-            AddressType::P2sh  => bitcoin::AddressType::P2sh,
+            AddressType::P2sh => bitcoin::AddressType::P2sh,
             AddressType::P2wpkh => bitcoin::AddressType::P2wpkh,
             AddressType::P2wsh => bitcoin::AddressType::P2wsh,
             AddressType::P2tr => bitcoin::AddressType::P2tr,
@@ -257,7 +320,7 @@ pub struct NgAccountConfig {
     pub account_path: Option<String>,
     pub network: Network,
     pub id: String,
-    pub multisig: Option<MultiSigDetails>
+    pub multisig: Option<MultiSigDetails>,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -433,7 +496,11 @@ impl<P: WalletPersister> NgAccountBuilder<P> {
                 .preferred_address_type
                 .expect("Preferred address type is required"),
             descriptors: ng_descriptors,
-            index: if self.multisig.is_none() { self.index.expect("Index is required") } else { 0 },
+            index: if self.multisig.is_none() {
+                self.index.expect("Index is required")
+            } else {
+                0
+            },
             id: self.id.expect("id is required"),
             date_synced: self.date_synced,
             seed_has_passphrase: self.seed_has_passphrase.unwrap_or(false),

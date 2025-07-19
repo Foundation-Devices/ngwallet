@@ -11,9 +11,7 @@ use crate::transaction::{BitcoinTransaction, Output};
 use crate::utils::get_address_type;
 use anyhow::{Context, Error, anyhow};
 use bdk_wallet::bitcoin::address::{NetworkChecked, NetworkUnchecked};
-use bdk_wallet::bitcoin::{
-    Address, Amount, Psbt, Transaction, Txid,
-};
+use bdk_wallet::bitcoin::{Address, Amount, Psbt, Transaction, Txid};
 #[cfg(feature = "envoy")]
 use bdk_wallet::chain::spk_client::FullScanRequest;
 #[cfg(feature = "envoy")]
