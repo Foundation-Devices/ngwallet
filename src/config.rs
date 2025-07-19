@@ -1,8 +1,8 @@
 use anyhow::{self, Context, bail};
+use std::cmp::Ordering;
 use std::collections::HashMap;
 use std::str::FromStr;
 use std::sync::Arc;
-use std::cmp::Ordering;
 
 use crate::account::{Descriptor, NgAccount, RemoteUpdate};
 use crate::db::RedbMetaStorage;
@@ -36,11 +36,15 @@ pub struct MultiSigSigner {
 }
 
 impl PartialOrd for MultiSigSigner {
-    fn partial_cmp(&self, other: &Self) -> Option<Ordering> { Some(self.pubkey.cmp(&other.pubkey)) }
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        Some(self.pubkey.cmp(&other.pubkey))
+    }
 }
 
 impl Ord for MultiSigSigner {
-    fn cmp(&self, other: &Self) -> Ordering { self.pubkey.cmp(&other.pubkey) }
+    fn cmp(&self, other: &Self) -> Ordering {
+        self.pubkey.cmp(&other.pubkey)
+    }
 }
 
 impl MultiSigSigner {
@@ -92,13 +96,7 @@ impl MultiSigSigner {
 }
 
 #[derive(
-    Debug,
-    Serialize,
-    Deserialize,
-    Clone,
-    rkyv::Archive,
-    rkyv::Serialize,
-    rkyv::Deserialize,
+    Debug, Serialize, Deserialize, Clone, rkyv::Archive, rkyv::Serialize, rkyv::Deserialize,
 )]
 pub struct MultiSigDetails {
     pub policy_threshold: u32,  // aka M
@@ -237,7 +235,9 @@ impl MultiSigDetails {
                 "Multisig config is missing policy total keys"
             ))?,
             format: format.ok_or(anyhow::anyhow!("Multisig config is missing address format"))?,
-            network_kind: network_kind.ok_or(anyhow::anyhow!("Multisig config does not indicate a network kind"))?,
+            network_kind: network_kind.ok_or(anyhow::anyhow!(
+                "Multisig config does not indicate a network kind"
+            ))?,
             signers: signers.clone(),
         };
 
@@ -264,7 +264,9 @@ impl MultiSigDetails {
         }
 
         if res.policy_threshold > res.policy_total_keys {
-            anyhow::bail!("Multisig configs should have a threshold (M) less than or equal too the total keys (N)");
+            anyhow::bail!(
+                "Multisig configs should have a threshold (M) less than or equal too the total keys (N)"
+            );
         }
 
         Ok((res, name))
@@ -353,7 +355,21 @@ impl From<AddressType> for bitcoin::AddressType {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize, rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)]
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    PartialOrd,
+    Ord,
+    Hash,
+    Serialize,
+    Deserialize,
+    rkyv::Archive,
+    rkyv::Serialize,
+    rkyv::Deserialize,
+)]
 pub enum NetworkKind {
     Main,
     Test,
@@ -615,13 +631,17 @@ AB88DE89: tpubDFUc8ddWCzA8kC195Zn6UitBcBGXbPbtjktU2dk2Deprnf6sR15GAyHLQKUjAPa3gq
                 MultiSigSigner {
                     derivation: String::from("m/48'/1'/0'/2'"),
                     fingerprint: String::from("AB88DE89"),
-                    pubkey: String::from("tpubDFUc8ddWCzA8kC195Zn6UitBcBGXbPbtjktU2dk2Deprnf6sR15GAyHLQKUjAPa3gqD74g7Eea3NSqkb9FfYRZzEm2MTbCtTDZAKSHezJwb"),
+                    pubkey: String::from(
+                        "tpubDFUc8ddWCzA8kC195Zn6UitBcBGXbPbtjktU2dk2Deprnf6sR15GAyHLQKUjAPa3gqD74g7Eea3NSqkb9FfYRZzEm2MTbCtTDZAKSHezJwb",
+                    ),
                 },
                 MultiSigSigner {
                     derivation: String::from("m/48'/1'/0'/2'"),
                     fingerprint: String::from("662A42E4"),
-                    pubkey: String::from("tpubDFGqX4Ge633XixPNo4uF5h6sPkv32bwJrknDmmPGMq8Tn3Pu9QgWfk5hUiDe7gvv2eaFeaHXgjiZwKvnP3AhusoaWBK3qTv8cznyHxxGoSF"),
-                }
+                    pubkey: String::from(
+                        "tpubDFGqX4Ge633XixPNo4uF5h6sPkv32bwJrknDmmPGMq8Tn3Pu9QgWfk5hUiDe7gvv2eaFeaHXgjiZwKvnP3AhusoaWBK3qTv8cznyHxxGoSF",
+                    ),
+                },
             ],
         };
         assert_eq!(expected, multisig);
@@ -649,13 +669,17 @@ Derivation: m/48'/1'/0'/2'
                 MultiSigSigner {
                     derivation: String::from("m/48'/1'/0'/2'"),
                     fingerprint: String::from("662A42E4"),
-                    pubkey: String::from("tpubDFGqX4Ge633XixPNo4uF5h6sPkv32bwJrknDmmPGMq8Tn3Pu9QgWfk5hUiDe7gvv2eaFeaHXgjiZwKvnP3AhusoaWBK3qTv8cznyHxxGoSF"),
+                    pubkey: String::from(
+                        "tpubDFGqX4Ge633XixPNo4uF5h6sPkv32bwJrknDmmPGMq8Tn3Pu9QgWfk5hUiDe7gvv2eaFeaHXgjiZwKvnP3AhusoaWBK3qTv8cznyHxxGoSF",
+                    ),
                 },
                 MultiSigSigner {
                     derivation: String::from("m/48'/1'/0'/2'"),
                     fingerprint: String::from("AB88DE89"),
-                    pubkey: String::from("tpubDFUc8ddWCzA8kC195Zn6UitBcBGXbPbtjktU2dk2Deprnf6sR15GAyHLQKUjAPa3gqD74g7Eea3NSqkb9FfYRZzEm2MTbCtTDZAKSHezJwb"),
-                }
+                    pubkey: String::from(
+                        "tpubDFUc8ddWCzA8kC195Zn6UitBcBGXbPbtjktU2dk2Deprnf6sR15GAyHLQKUjAPa3gqD74g7Eea3NSqkb9FfYRZzEm2MTbCtTDZAKSHezJwb",
+                    ),
+                },
             ],
         };
         assert_eq!(expected, multisig);
