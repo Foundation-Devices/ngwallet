@@ -605,6 +605,7 @@ dependencies = [
  "log",
  "minicbor-serde",
  "redb",
+ "regex",
  "rkyv",
  "serde",
  "serde_json",
