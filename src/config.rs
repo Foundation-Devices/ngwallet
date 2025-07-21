@@ -17,6 +17,8 @@ use regex::Regex;
 use serde::{Deserialize, Serialize};
 
 pub const MULTI_SIG_SIGNER_LIMIT: u32 = 20;
+pub const ACCEPTED_FORMATS: &[AddressType] =
+    &[AddressType::P2sh, AddressType::P2wsh, AddressType::P2ShWsh];
 
 #[derive(
     Debug,
@@ -104,7 +106,7 @@ pub struct MultiSigDetails {
     pub format: AddressType,
     pub network_kind: NetworkKind,
     // Signers are sorted on creation
-    pub signers: Vec<MultiSigSigner>,
+    signers: Vec<MultiSigSigner>,
 }
 
 impl PartialEq for MultiSigDetails {
@@ -123,6 +125,74 @@ impl PartialEq for MultiSigDetails {
 }
 
 impl MultiSigDetails {
+    pub fn new(
+        policy_threshold: u32,
+        policy_total_keys: u32,
+        format: AddressType,
+        network_kind: NetworkKind,
+        mut signers: Vec<MultiSigSigner>,
+    ) -> Result<Self, anyhow::Error> {
+        // Sort by xpubs
+        signers.sort();
+
+        if signers.len() != policy_total_keys as usize {
+            anyhow::bail!("Multisig number of signers should match the total keys (M) specified");
+        }
+
+        if policy_total_keys >= MULTI_SIG_SIGNER_LIMIT {
+            anyhow::bail!(
+                "Multisig has {} signers, limit is {}",
+                signers.len(),
+                MULTI_SIG_SIGNER_LIMIT
+            );
+        }
+
+        if signers.len() < 2 {
+            anyhow::bail!("Multisigs require at least 2 total signers (N)");
+        }
+
+        if policy_threshold < 2 {
+            anyhow::bail!("Multisigs should have a threshold (M) of at least 2");
+        }
+
+        if policy_threshold > policy_total_keys {
+            anyhow::bail!(
+                "Multisigs should have a threshold (M) less than or equal too the total keys (N)"
+            );
+        }
+
+        for signer in &signers {
+            let signer_network: NetworkKind = signer.get_pubkey()?.network.into();
+            if signer_network != network_kind {
+                anyhow::bail!(
+                    "Multisig signer with fingerprint {} has a mismatched network type: {:?}",
+                    signer.fingerprint,
+                    signer_network,
+                );
+            }
+        }
+
+        if !ACCEPTED_FORMATS.contains(&format) {
+            anyhow::bail!(
+                "Multisig has address format {:?}, while only {:?} are currently accepted",
+                format,
+                ACCEPTED_FORMATS
+            );
+        }
+
+        Ok(Self {
+            policy_threshold,
+            policy_total_keys,
+            format,
+            network_kind,
+            signers,
+        })
+    }
+
+    pub fn get_signers(&self) -> &Vec<MultiSigSigner> {
+        &self.signers
+    }
+
     // TODO: replace anyhows with thiserrors
     // TODO: infer and return network type, create network enum compatible with rkyv serialization
     pub fn from_config(config: &str) -> Result<(Self, Option<String>), anyhow::Error> {
@@ -224,50 +294,19 @@ impl MultiSigDetails {
             }
         }
 
-        // Sort by xpubs
-        signers.sort();
-
-        let res = Self {
-            policy_threshold: policy_threshold.ok_or(anyhow::anyhow!(
+        let res = Self::new(
+            policy_threshold.ok_or(anyhow::anyhow!(
                 "Multisig config is missing policy threshold"
             ))?,
-            policy_total_keys: policy_total_keys.ok_or(anyhow::anyhow!(
+            policy_total_keys.ok_or(anyhow::anyhow!(
                 "Multisig config is missing policy total keys"
             ))?,
-            format: format.ok_or(anyhow::anyhow!("Multisig config is missing address format"))?,
-            network_kind: network_kind.ok_or(anyhow::anyhow!(
+            format.ok_or(anyhow::anyhow!("Multisig config is missing address format"))?,
+            network_kind.ok_or(anyhow::anyhow!(
                 "Multisig config does not indicate a network kind"
             ))?,
-            signers: signers.clone(),
-        };
-
-        if signers.len() != res.policy_total_keys as usize {
-            anyhow::bail!(
-                "Multisig config number of signers should match the total keys (M) specified"
-            );
-        }
-
-        if res.policy_total_keys >= MULTI_SIG_SIGNER_LIMIT {
-            anyhow::bail!(
-                "Multisig config has {} signers, limit is {}",
-                signers.len(),
-                MULTI_SIG_SIGNER_LIMIT
-            );
-        }
-
-        if signers.len() < 2 {
-            anyhow::bail!("Multisig configs require at least 2 signers");
-        }
-
-        if res.policy_threshold < 2 {
-            anyhow::bail!("Multisig configs should have a threshold of at least 2");
-        }
-
-        if res.policy_threshold > res.policy_total_keys {
-            anyhow::bail!(
-                "Multisig configs should have a threshold (M) less than or equal too the total keys (N)"
-            );
-        }
+            signers.clone(),
+        )?;
 
         Ok((res, name))
     }
