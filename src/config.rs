@@ -382,8 +382,8 @@ impl MultiSigDetails {
         Self::new(sorted_multi.k(), sorted_multi.n(), format, None, signers)
     }
 
-    pub fn from_descriptor(descriptor: String) -> Result<Self, anyhow::Error> {
-        let descriptor = BdkDescriptor::<DescriptorPublicKey>::from_str(&descriptor)?;
+    pub fn from_descriptor(descriptor: &str) -> Result<Self, anyhow::Error> {
+        let descriptor = BdkDescriptor::<DescriptorPublicKey>::from_str(descriptor)?;
         match descriptor {
             BdkDescriptor::Sh(desc) => match desc.into_inner() {
                 ShInner::Wsh(d) => match d.into_inner() {
@@ -1012,7 +1012,7 @@ Derivation: m/48'/1'/0'/2'
             "wsh(sortedmulti(2,[71C8BD85/48h/0h/0h/2h]xpub6ESpvmZa75rCQWKik2KoCZrjTi6xhSubZKJ25rbtgZRk2g9tZTJqubhaGD3dJeqruw9KMCaanoEfJ1PVtBXiwTuuqLVwk9ucqkRv1sKWiEC/<0;1>/*,[AB88DE89/48h/0h/0h/2h]xpub6EPJuK8Ejz82nKc7PsRgcYqdcQH9G1ZikCTasr9i79CbXxMMiPfxEyA14S6HPTHufmcQR7x8t5L3BP9tRfm9EBRBPic2xV892j9z4ePESae/<0;1>/*,[A9F9964A/48h/0h/0h/2h]xpub6FQY5W8WygMVYY2nTP188jFHNdZfH2t9qtcS8SPpFatUGiciqUsGZpNvEa1oABEyeAsrUL2XSnvuRUdrhf5LcMXcjhrUFBcneBYYZzky3Mc/<0;1>/*))",
         );
         println!("I am here!");
-        let multisig = MultiSigDetails::from_descriptor(descriptor).unwrap();
+        let multisig = MultiSigDetails::from_descriptor(&descriptor).unwrap();
         let expected = MultiSigDetails::new(
             2,
             3,
@@ -1045,7 +1045,7 @@ Derivation: m/48'/1'/0'/2'
             "sh(wsh(sortedmulti(2,[71C8BD85/48h/0h/0h/1h]xpub6ESpvmZa75rCQWKik2KoCZrjTi6xhSubZKJ25rbtgZRk2g9tZTJqubhaGD3dJeqruw9KMCaanoEfJ1PVtBXiwTuuqLVwk9ucqkRv1sKWiEC/<0;1>/*,[AB88DE89/48h/0h/0h/1h]xpub6EPJuK8Ejz82nKc7PsRgcYqdcQH9G1ZikCTasr9i79CbXxMMiPfxEyA14S6HPTHufmcQR7x8t5L3BP9tRfm9EBRBPic2xV892j9z4ePESae/<0;1>/*,[A9F9964A/48h/0h/0h/1h]xpub6FQY5W8WygMVYY2nTP188jFHNdZfH2t9qtcS8SPpFatUGiciqUsGZpNvEa1oABEyeAsrUL2XSnvuRUdrhf5LcMXcjhrUFBcneBYYZzky3Mc/<0;1>/*)))",
         );
         println!("I am here!");
-        let multisig = MultiSigDetails::from_descriptor(descriptor).unwrap();
+        let multisig = MultiSigDetails::from_descriptor(&descriptor).unwrap();
         let expected = MultiSigDetails::new(
             2,
             3,
@@ -1078,7 +1078,7 @@ Derivation: m/48'/1'/0'/2'
             "sh(sortedmulti(2,[71C8BD85/48h/0h/0h/3h]xpub6ESpvmZa75rCQWKik2KoCZrjTi6xhSubZKJ25rbtgZRk2g9tZTJqubhaGD3dJeqruw9KMCaanoEfJ1PVtBXiwTuuqLVwk9ucqkRv1sKWiEC/<0;1>/*,[AB88DE89/48h/0h/0h/3h]xpub6EPJuK8Ejz82nKc7PsRgcYqdcQH9G1ZikCTasr9i79CbXxMMiPfxEyA14S6HPTHufmcQR7x8t5L3BP9tRfm9EBRBPic2xV892j9z4ePESae/<0;1>/*,[A9F9964A/48h/0h/0h/3h]xpub6FQY5W8WygMVYY2nTP188jFHNdZfH2t9qtcS8SPpFatUGiciqUsGZpNvEa1oABEyeAsrUL2XSnvuRUdrhf5LcMXcjhrUFBcneBYYZzky3Mc/<0;1>/*))",
         );
         println!("I am here!");
-        let multisig = MultiSigDetails::from_descriptor(descriptor).unwrap();
+        let multisig = MultiSigDetails::from_descriptor(&descriptor).unwrap();
         let expected = MultiSigDetails::new(
             2,
             3,
