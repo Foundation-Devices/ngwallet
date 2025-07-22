@@ -3,6 +3,7 @@ use std::cmp::Ordering;
 use std::collections::HashMap;
 use std::str::FromStr;
 use std::sync::Arc;
+use std::fmt;
 
 use crate::account::{Descriptor, NgAccount, RemoteUpdate};
 use crate::bip39::Descriptors;
@@ -127,6 +128,26 @@ impl PartialEq for MultiSigDetails {
             && self.format == other.format
             && self.network_kind == other.network_kind
             && self_signers == other_signers
+    }
+}
+
+impl fmt::Display for MultiSigDetails {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        writeln!(f, "Policy: {} of {}",
+            self.policy_threshold,
+            self.policy_total_keys)?;
+
+        writeln!(f, "Format: {}\n", self.format.to_string().to_uppercase())?;
+
+        for (i, signer) in self.signers.iter().enumerate() {
+            writeln!(f, "Derivation: {}", signer.derivation)?;
+            write!(f, "{}: {}", signer.fingerprint, signer.pubkey)?;
+            if i + 1 != self.policy_total_keys {
+                write!(f, "\n\n")?;
+            }
+        }
+
+        Ok(())
     }
 }
 
@@ -432,7 +453,7 @@ impl MultiSigDetails {
         Some(DescriptorPublicKey::XPub(descriptor_x_key))
     }
 
-    // TODO: write multisigs out to descriptors and config files
+    // TODO: write multisigs out to config files
     pub fn to_descriptor(
         &self,
         keychain: Option<KeychainKind>,
@@ -492,6 +513,13 @@ impl MultiSigDetails {
         }];
 
         Ok(descriptors)
+    }
+
+    pub fn to_config(&self, mut name: String) -> String {
+        name.insert_str(0, "Name: ");
+        name.push('\n');
+        name.push_str(&self.to_string());
+        name
     }
 }
 
@@ -560,6 +588,12 @@ impl TryFrom<String> for AddressType {
             other => anyhow::bail!("Unknown address type string: {}", other),
         };
         Ok(t)
+    }
+}
+
+impl fmt::Display for AddressType {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{:?}", self)
     }
 }
 
@@ -915,6 +949,18 @@ AB88DE89: tpubDFUc8ddWCzA8kC195Zn6UitBcBGXbPbtjktU2dk2Deprnf6sR15GAyHLQKUjAPa3gq
                 descriptor_type: DescriptorType::WshSortedMulti,
             }]
         );
+
+        let expected_config = String::from("Name: Multisig 2-of-2 Test
+Policy: 2 of 2
+Format: P2WSH
+
+Derivation: m/48'/1'/0'/2'
+662A42E4: tpubDFGqX4Ge633XixPNo4uF5h6sPkv32bwJrknDmmPGMq8Tn3Pu9QgWfk5hUiDe7gvv2eaFeaHXgjiZwKvnP3AhusoaWBK3qTv8cznyHxxGoSF
+
+Derivation: m/48'/1'/0'/2'
+AB88DE89: tpubDFUc8ddWCzA8kC195Zn6UitBcBGXbPbtjktU2dk2Deprnf6sR15GAyHLQKUjAPa3gqD74g7Eea3NSqkb9FfYRZzEm2MTbCtTDZAKSHezJwb");
+
+        assert_eq!(multisig.to_config(String::from("Multisig 2-of-2 Test")), expected_config);
     }
 
     #[test]
