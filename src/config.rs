@@ -1,9 +1,9 @@
 use anyhow::{self, Context, bail};
 use std::cmp::Ordering;
 use std::collections::HashMap;
+use std::fmt;
 use std::str::FromStr;
 use std::sync::Arc;
-use std::fmt;
 
 use crate::account::{Descriptor, NgAccount, RemoteUpdate};
 use crate::bip39::Descriptors;
@@ -133,9 +133,11 @@ impl PartialEq for MultiSigDetails {
 
 impl fmt::Display for MultiSigDetails {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        writeln!(f, "Policy: {} of {}",
-            self.policy_threshold,
-            self.policy_total_keys)?;
+        writeln!(
+            f,
+            "Policy: {} of {}",
+            self.policy_threshold, self.policy_total_keys
+        )?;
 
         writeln!(f, "Format: {}\n", self.format.to_string().to_uppercase())?;
 
@@ -960,7 +962,10 @@ Derivation: m/48'/1'/0'/2'
 Derivation: m/48'/1'/0'/2'
 AB88DE89: tpubDFUc8ddWCzA8kC195Zn6UitBcBGXbPbtjktU2dk2Deprnf6sR15GAyHLQKUjAPa3gqD74g7Eea3NSqkb9FfYRZzEm2MTbCtTDZAKSHezJwb");
 
-        assert_eq!(multisig.to_config(String::from("Multisig 2-of-2 Test")), expected_config);
+        assert_eq!(
+            multisig.to_config(String::from("Multisig 2-of-2 Test")),
+            expected_config
+        );
     }
 
     #[test]
