@@ -851,9 +851,12 @@ impl<P: WalletPersister> NgAccountBuilder<P> {
             device_serial: self.device_serial,
             date_added: self.date_added,
             network: self.network.ok_or(anyhow::anyhow!("Network is required"))?,
-            preferred_address_type: self
-                .preferred_address_type
-                .ok_or(anyhow::anyhow!("Preferred address type is required"))?,
+            preferred_address_type: match self.multisig {
+                Some(ref m) => m.format,
+                None => self
+                    .preferred_address_type
+                    .ok_or(anyhow::anyhow!("Preferred address type is required"))?,
+            },
             descriptors: ng_descriptors,
             index: if self.multisig.is_none() {
                 self.index.ok_or(anyhow::anyhow!("Index is required"))?
