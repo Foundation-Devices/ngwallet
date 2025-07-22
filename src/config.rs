@@ -10,13 +10,15 @@ use crate::store::MetaStorage;
 use crate::utils::get_address_type;
 use bdk_wallet::KeychainKind;
 use bdk_wallet::WalletPersister;
-use bdk_wallet::bitcoin::bip32::{self, DerivationPath, Fingerprint, Xpub};
+use bdk_wallet::bitcoin::bip32::{self, DerivationPath, Fingerprint, Xpub, ChildNumber};
 use bdk_wallet::bitcoin::{self, Network};
+use bdk_wallet::descriptor::{Descriptor as BdkDescriptor};
+use bdk_wallet::miniscript::descriptor::{DescriptorPublicKey, SortedMultiVec, ShInner, WshInner, Wildcard, DerivPaths, DescriptorMultiXKey};
 use redb::StorageBackend;
 use regex::Regex;
 use serde::{Deserialize, Serialize};
 
-pub const MULTI_SIG_SIGNER_LIMIT: u32 = 20;
+pub const MULTI_SIG_SIGNER_LIMIT: usize = 20;
 pub const ACCEPTED_FORMATS: &[AddressType] =
     &[AddressType::P2sh, AddressType::P2wsh, AddressType::P2ShWsh];
 
@@ -101,8 +103,8 @@ impl MultiSigSigner {
     Debug, Serialize, Deserialize, Clone, rkyv::Archive, rkyv::Serialize, rkyv::Deserialize,
 )]
 pub struct MultiSigDetails {
-    pub policy_threshold: u32,  // aka M
-    pub policy_total_keys: u32, // aka N
+    pub policy_threshold: usize,  // aka M
+    pub policy_total_keys: usize, // aka N
     pub format: AddressType,
     pub network_kind: NetworkKind,
     // Signers are sorted on creation
@@ -126,17 +128,17 @@ impl PartialEq for MultiSigDetails {
 
 impl MultiSigDetails {
     pub fn new(
-        policy_threshold: u32,
-        policy_total_keys: u32,
+        policy_threshold: usize,
+        policy_total_keys: usize,
         format: AddressType,
-        network_kind: NetworkKind,
+        mut network_kind: Option<NetworkKind>,
         mut signers: Vec<MultiSigSigner>,
     ) -> Result<Self, anyhow::Error> {
         // Sort by xpubs
         signers.sort();
 
         if signers.len() != policy_total_keys as usize {
-            anyhow::bail!("Multisig number of signers should match the total keys (M) specified");
+            anyhow::bail!("Multisig number of signers should match the total keys (M) specified, expected {} found {}", policy_total_keys, signers.len());
         }
 
         if policy_total_keys >= MULTI_SIG_SIGNER_LIMIT {
@@ -163,12 +165,11 @@ impl MultiSigDetails {
 
         for signer in &signers {
             let signer_network: NetworkKind = signer.get_pubkey()?.network.into();
-            if signer_network != network_kind {
-                anyhow::bail!(
-                    "Multisig signer with fingerprint {} has a mismatched network type: {:?}",
-                    signer.fingerprint,
-                    signer_network,
-                );
+
+            // Ensure that all pubkeys indicate the same network kind, also checks against the specified network_kind
+            let n = network_kind.get_or_insert(signer_network);
+            if *n != signer_network {
+                anyhow::bail!("Multisig config has pubkeys from mismatched network types");
             }
         }
 
@@ -184,7 +185,7 @@ impl MultiSigDetails {
             policy_threshold,
             policy_total_keys,
             format,
-            network_kind,
+            network_kind: network_kind.ok_or(anyhow::anyhow!("Network kind was neither specified nor infered from xpubs"))?,
             signers,
         })
     }
@@ -194,14 +195,12 @@ impl MultiSigDetails {
     }
 
     // TODO: replace anyhows with thiserrors
-    // TODO: infer and return network type, create network enum compatible with rkyv serialization
     pub fn from_config(config: &str) -> Result<(Self, Option<String>), anyhow::Error> {
         let mut name: Option<String> = None;
-        let mut policy_threshold: Option<u32> = None;
-        let mut policy_total_keys: Option<u32> = None;
+        let mut policy_threshold: Option<usize> = None;
+        let mut policy_total_keys: Option<usize> = None;
         let mut derivation: Option<DerivationPath> = None;
         let mut format: Option<AddressType> = None;
-        let mut network_kind: Option<NetworkKind> = None;
         let mut signers: Vec<MultiSigSigner> = Vec::new();
         let pattern = Regex::new(r"(\d+)\D*(\d+)")?;
 
@@ -258,8 +257,8 @@ impl MultiSigDetails {
                     if captures.len() != 3 {
                         anyhow::bail!("Invalid policy format, incorrect regex capture");
                     }
-                    policy_threshold = Some(captures[1].parse::<u32>()?);
-                    policy_total_keys = Some(captures[2].parse::<u32>()?);
+                    policy_threshold = Some(captures[1].parse::<usize>()?);
+                    policy_total_keys = Some(captures[2].parse::<usize>()?);
                 }
                 // This handles global and signer-specific derivations by just assigning the
                 // latest parsed derivation to the next signer.
@@ -271,12 +270,6 @@ impl MultiSigDetails {
                         || "Unnamed keys in a multisig format should be valid fingerprints",
                     )?;
                     let pubkey = Xpub::from_str(&value)?;
-
-                    // Ensure that all pubkeys indicate the same network kind
-                    let n = network_kind.get_or_insert(pubkey.network.into());
-                    if *n != pubkey.network.into() {
-                        anyhow::bail!("Multisig config has pubkeys from different networks");
-                    }
 
                     match derivation {
                         Some(ref d) => {
@@ -302,13 +295,116 @@ impl MultiSigDetails {
                 "Multisig config is missing policy total keys"
             ))?,
             format.ok_or(anyhow::anyhow!("Multisig config is missing address format"))?,
-            network_kind.ok_or(anyhow::anyhow!(
-                "Multisig config does not indicate a network kind"
-            ))?,
+            None,
             signers.clone(),
         )?;
 
         Ok((res, name))
+    }
+
+    fn from_sorted_multi<T: bdk_wallet::descriptor::ScriptContext>(format: AddressType, sorted_multi: SortedMultiVec<DescriptorPublicKey, T>) -> Result<Self, anyhow::Error> {
+        sorted_multi.sanity_check()?;
+        let signers = sorted_multi
+            .pks()
+            .iter()
+            .filter_map(|pk| {
+                match pk {
+                    DescriptorPublicKey::XPub(desc_xpub) => {
+                        let (fingerprint, derivation_path) = match &desc_xpub.origin {
+                            Some((f, d)) => (f.clone(), d.clone()),
+                            None => {
+                                println!("Descriptor xpub {} doesn't contain origin info", desc_xpub.xkey);
+                                return None;
+                            }
+                        };
+                        let xpub = desc_xpub.xkey.clone();
+                        Some(MultiSigSigner::new(&derivation_path, &fingerprint, &xpub))
+                    }
+                    DescriptorPublicKey::MultiXPub(desc_xpub) => {
+                        let (fingerprint, derivation_path) = match &desc_xpub.origin {
+                            Some((f, d)) => (f.clone(), d.clone()),
+                            None => {
+                                println!("Descriptor xpub {} doesn't contain origin info", desc_xpub.xkey);
+                                return None;
+                            }
+                        };
+                        let xpub = desc_xpub.xkey.clone();
+                        Some(MultiSigSigner::new(&derivation_path, &fingerprint, &xpub))
+                    }
+                    other => {
+                        println!("Descriptor has {:?} rather than xpub", other);
+                        return None;
+                    }
+                }
+             })
+            .collect::<Vec<MultiSigSigner>>();
+
+        Self::new(
+            sorted_multi.k(),
+            sorted_multi.n(),
+            format,
+            None,
+            signers,
+        )
+    }
+
+    pub fn from_descriptor(descriptor: String) -> Result<Self, anyhow::Error> {
+        let descriptor = BdkDescriptor::<DescriptorPublicKey>::from_str(&descriptor)?;
+        match descriptor {
+            BdkDescriptor::Sh(desc) => {
+                match desc.into_inner() {
+                    ShInner::Wsh(d) => {
+                        match d.into_inner() {
+                            WshInner::SortedMulti(ms) => Self::from_sorted_multi(AddressType::P2ShWsh, ms),
+                            _ => anyhow::bail!("Multisig descriptors should be wrapped by Sh(Wsh()) at most, other scripts are not currently accepted."),
+                        }
+                    }
+                    ShInner::SortedMulti(ms) => Self::from_sorted_multi(AddressType::P2sh, ms),
+                    _ => anyhow::bail!("Multisig descriptors starting with Sh() should contain either a SortedMulti() or Wsh(SortedMulti()), other scripts are not currently accepted"),
+                }
+            }
+            BdkDescriptor::Wsh(desc) => {
+                match desc.into_inner() {
+                    WshInner::SortedMulti(ms) => Self::from_sorted_multi(AddressType::P2wsh, ms),
+                    _ => anyhow::bail!("Multisig descriptors starting with Wsh() shoud only contain a SortedMulti(), other scripts are not currently accepted."),
+                }
+            }
+            _ => anyhow::bail!("Multisig descriptors should start with Sh() or Wsh()."),
+        }
+    }
+
+    // TODO: write multisigs out to descriptors and config files
+    fn to_descriptor(&self) -> Result<String, anyhow::Error> {
+        let signers = self
+            .signers
+            .iter()
+            .filter_map(|s| {
+                let (fingerprint, derivation_path, pubkey) = match (s.get_fingerprint(), s.get_derivation(), s.get_pubkey()) {
+                    (Ok(f), Ok(d), Ok(p)) => (f, d, p),
+                    _ => return None,
+                };
+                let master_path = DerivationPath::master();
+                let derivation_paths = match DerivPaths::new(vec![master_path.child(ChildNumber::Normal{ index: 0 }), master_path.child(ChildNumber::Normal{ index: 1 })]) {
+                    Some(d) => d,
+                    None => return None,
+                };
+                let descriptor_x_key: DescriptorMultiXKey<Xpub> = DescriptorMultiXKey {
+                    origin: Some((fingerprint, derivation_path)),
+                    xkey: pubkey,
+                    derivation_paths,
+                    wildcard: Wildcard::Unhardened,
+                };
+                Some(DescriptorPublicKey::MultiXPub(descriptor_x_key))
+            })
+            .collect::<Vec<DescriptorPublicKey>>();
+        let descriptor = match self.format {
+            AddressType::P2ShWsh => BdkDescriptor::<DescriptorPublicKey>::new_sh_wsh_sortedmulti(self.policy_threshold, signers),
+            AddressType::P2wsh => BdkDescriptor::<DescriptorPublicKey>::new_wsh_sortedmulti(self.policy_threshold, signers),
+            AddressType::P2sh => BdkDescriptor::<DescriptorPublicKey>::new_sh_sortedmulti(self.policy_threshold, signers),
+            other => anyhow::bail!("Tried to make a descriptor from an unsupported multisig format: {:?}", other),
+        };
+
+        Ok(descriptor.map(|d| d.to_string())?)
     }
 }
 
@@ -685,6 +781,11 @@ AB88DE89: tpubDFUc8ddWCzA8kC195Zn6UitBcBGXbPbtjktU2dk2Deprnf6sR15GAyHLQKUjAPa3gq
         };
         assert_eq!(expected, multisig);
         assert_eq!(Some(String::from("Multisig 2-of-2 Test")), name);
+
+        let descriptor = multisig.to_descriptor().unwrap();
+        let expected_descriptor = String::from("wsh(sortedmulti(2,[662a42e4/48'/1'/0'/2']tpubDFGqX4Ge633XixPNo4uF5h6sPkv32bwJrknDmmPGMq8Tn3Pu9QgWfk5hUiDe7gvv2eaFeaHXgjiZwKvnP3AhusoaWBK3qTv8cznyHxxGoSF/<0;1>/*,[ab88de89/48'/1'/0'/2']tpubDFUc8ddWCzA8kC195Zn6UitBcBGXbPbtjktU2dk2Deprnf6sR15GAyHLQKUjAPa3gqD74g7Eea3NSqkb9FfYRZzEm2MTbCtTDZAKSHezJwb/<0;1>/*))#x8077u0d");
+
+        assert_eq!(descriptor, expected_descriptor);
     }
 
     #[test]
@@ -723,5 +824,98 @@ Derivation: m/48'/1'/0'/2'
         };
         assert_eq!(expected, multisig);
         assert_eq!(Some(String::from("Multisig 2-of-2 Test")), name);
+    }
+
+    #[test]
+    fn multisig_from_descriptor_1() {
+        let descriptor = String::from("wsh(sortedmulti(2,[71C8BD85/48h/0h/0h/2h]xpub6ESpvmZa75rCQWKik2KoCZrjTi6xhSubZKJ25rbtgZRk2g9tZTJqubhaGD3dJeqruw9KMCaanoEfJ1PVtBXiwTuuqLVwk9ucqkRv1sKWiEC/<0;1>/*,[AB88DE89/48h/0h/0h/2h]xpub6EPJuK8Ejz82nKc7PsRgcYqdcQH9G1ZikCTasr9i79CbXxMMiPfxEyA14S6HPTHufmcQR7x8t5L3BP9tRfm9EBRBPic2xV892j9z4ePESae/<0;1>/*,[A9F9964A/48h/0h/0h/2h]xpub6FQY5W8WygMVYY2nTP188jFHNdZfH2t9qtcS8SPpFatUGiciqUsGZpNvEa1oABEyeAsrUL2XSnvuRUdrhf5LcMXcjhrUFBcneBYYZzky3Mc/<0;1>/*))");
+        println!("I am here!");
+        let multisig = MultiSigDetails::from_descriptor(descriptor).unwrap();
+        let expected = MultiSigDetails::new(
+            2,
+            3,
+            AddressType::P2wsh,
+            Some(NetworkKind::Main),
+            vec![
+                MultiSigSigner {
+                    derivation: String::from("m/48'/0'/0'/2'"),
+                    fingerprint: String::from("71C8BD85"),
+                    pubkey: String::from("xpub6ESpvmZa75rCQWKik2KoCZrjTi6xhSubZKJ25rbtgZRk2g9tZTJqubhaGD3dJeqruw9KMCaanoEfJ1PVtBXiwTuuqLVwk9ucqkRv1sKWiEC"),
+                },
+                MultiSigSigner {
+                    derivation: String::from("m/48'/0'/0'/2'"),
+                    fingerprint: String::from("AB88DE89"),
+                    pubkey: String::from("xpub6EPJuK8Ejz82nKc7PsRgcYqdcQH9G1ZikCTasr9i79CbXxMMiPfxEyA14S6HPTHufmcQR7x8t5L3BP9tRfm9EBRBPic2xV892j9z4ePESae"),
+                },
+                MultiSigSigner {
+                    derivation: String::from("m/48'/0'/0'/2'"),
+                    fingerprint: String::from("A9F9964A"),
+                    pubkey: String::from("xpub6FQY5W8WygMVYY2nTP188jFHNdZfH2t9qtcS8SPpFatUGiciqUsGZpNvEa1oABEyeAsrUL2XSnvuRUdrhf5LcMXcjhrUFBcneBYYZzky3Mc"),
+                }
+            ],
+        ).unwrap();
+        assert_eq!(multisig, expected);
+    }
+
+    #[test]
+    fn multisig_from_descriptor_2() {
+        let descriptor = String::from("sh(wsh(sortedmulti(2,[71C8BD85/48h/0h/0h/1h]xpub6ESpvmZa75rCQWKik2KoCZrjTi6xhSubZKJ25rbtgZRk2g9tZTJqubhaGD3dJeqruw9KMCaanoEfJ1PVtBXiwTuuqLVwk9ucqkRv1sKWiEC/<0;1>/*,[AB88DE89/48h/0h/0h/1h]xpub6EPJuK8Ejz82nKc7PsRgcYqdcQH9G1ZikCTasr9i79CbXxMMiPfxEyA14S6HPTHufmcQR7x8t5L3BP9tRfm9EBRBPic2xV892j9z4ePESae/<0;1>/*,[A9F9964A/48h/0h/0h/1h]xpub6FQY5W8WygMVYY2nTP188jFHNdZfH2t9qtcS8SPpFatUGiciqUsGZpNvEa1oABEyeAsrUL2XSnvuRUdrhf5LcMXcjhrUFBcneBYYZzky3Mc/<0;1>/*)))");
+        println!("I am here!");
+        let multisig = MultiSigDetails::from_descriptor(descriptor).unwrap();
+        let expected = MultiSigDetails::new(
+            2,
+            3,
+            AddressType::P2ShWsh,
+            Some(NetworkKind::Main),
+            vec![
+                MultiSigSigner {
+                    derivation: String::from("m/48'/0'/0'/1'"),
+                    fingerprint: String::from("71C8BD85"),
+                    pubkey: String::from("xpub6ESpvmZa75rCQWKik2KoCZrjTi6xhSubZKJ25rbtgZRk2g9tZTJqubhaGD3dJeqruw9KMCaanoEfJ1PVtBXiwTuuqLVwk9ucqkRv1sKWiEC"),
+                },
+                MultiSigSigner {
+                    derivation: String::from("m/48'/0'/0'/1'"),
+                    fingerprint: String::from("AB88DE89"),
+                    pubkey: String::from("xpub6EPJuK8Ejz82nKc7PsRgcYqdcQH9G1ZikCTasr9i79CbXxMMiPfxEyA14S6HPTHufmcQR7x8t5L3BP9tRfm9EBRBPic2xV892j9z4ePESae"),
+                },
+                MultiSigSigner {
+                    derivation: String::from("m/48'/0'/0'/1'"),
+                    fingerprint: String::from("A9F9964A"),
+                    pubkey: String::from("xpub6FQY5W8WygMVYY2nTP188jFHNdZfH2t9qtcS8SPpFatUGiciqUsGZpNvEa1oABEyeAsrUL2XSnvuRUdrhf5LcMXcjhrUFBcneBYYZzky3Mc"),
+                }
+            ],
+        ).unwrap();
+        assert_eq!(multisig, expected);
+    }
+
+    #[test]
+    fn multisig_from_descriptor_3() {
+        let descriptor = String::from("sh(sortedmulti(2,[71C8BD85/48h/0h/0h/3h]xpub6ESpvmZa75rCQWKik2KoCZrjTi6xhSubZKJ25rbtgZRk2g9tZTJqubhaGD3dJeqruw9KMCaanoEfJ1PVtBXiwTuuqLVwk9ucqkRv1sKWiEC/<0;1>/*,[AB88DE89/48h/0h/0h/3h]xpub6EPJuK8Ejz82nKc7PsRgcYqdcQH9G1ZikCTasr9i79CbXxMMiPfxEyA14S6HPTHufmcQR7x8t5L3BP9tRfm9EBRBPic2xV892j9z4ePESae/<0;1>/*,[A9F9964A/48h/0h/0h/3h]xpub6FQY5W8WygMVYY2nTP188jFHNdZfH2t9qtcS8SPpFatUGiciqUsGZpNvEa1oABEyeAsrUL2XSnvuRUdrhf5LcMXcjhrUFBcneBYYZzky3Mc/<0;1>/*))");
+        println!("I am here!");
+        let multisig = MultiSigDetails::from_descriptor(descriptor).unwrap();
+        let expected = MultiSigDetails::new(
+            2,
+            3,
+            AddressType::P2sh,
+            Some(NetworkKind::Main),
+            vec![
+                MultiSigSigner {
+                    derivation: String::from("m/48'/0'/0'/3'"),
+                    fingerprint: String::from("71C8BD85"),
+                    pubkey: String::from("xpub6ESpvmZa75rCQWKik2KoCZrjTi6xhSubZKJ25rbtgZRk2g9tZTJqubhaGD3dJeqruw9KMCaanoEfJ1PVtBXiwTuuqLVwk9ucqkRv1sKWiEC"),
+                },
+                MultiSigSigner {
+                    derivation: String::from("m/48'/0'/0'/3'"),
+                    fingerprint: String::from("AB88DE89"),
+                    pubkey: String::from("xpub6EPJuK8Ejz82nKc7PsRgcYqdcQH9G1ZikCTasr9i79CbXxMMiPfxEyA14S6HPTHufmcQR7x8t5L3BP9tRfm9EBRBPic2xV892j9z4ePESae"),
+                },
+                MultiSigSigner {
+                    derivation: String::from("m/48'/0'/0'/3'"),
+                    fingerprint: String::from("A9F9964A"),
+                    pubkey: String::from("xpub6FQY5W8WygMVYY2nTP188jFHNdZfH2t9qtcS8SPpFatUGiciqUsGZpNvEa1oABEyeAsrUL2XSnvuRUdrhf5LcMXcjhrUFBcneBYYZzky3Mc"),
+                }
+            ],
+        ).unwrap();
+        assert_eq!(multisig, expected);
     }
 }
