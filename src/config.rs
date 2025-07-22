@@ -373,7 +373,7 @@ impl MultiSigDetails {
                     Some(MultiSigSigner::new(&derivation_path, &fingerprint, &xpub))
                 }
                 other => {
-                    println!("Descriptor has {:?} rather than xpub", other);
+                    println!("Descriptor has {other:?} rather than xpub");
                     None
                 }
             })
@@ -595,7 +595,7 @@ impl TryFrom<String> for AddressType {
 
 impl fmt::Display for AddressType {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{:?}", self)
+        write!(f, "{self:?}")
     }
 }
 
