@@ -8,12 +8,13 @@ use crate::account::{Descriptor, NgAccount, RemoteUpdate};
 use crate::db::RedbMetaStorage;
 use crate::store::MetaStorage;
 use crate::utils::get_address_type;
+use crate::bip39::Descriptors;
 use bdk_wallet::KeychainKind;
 use bdk_wallet::WalletPersister;
 use bdk_wallet::bitcoin::bip32::{self, DerivationPath, Fingerprint, Xpub, ChildNumber};
 use bdk_wallet::bitcoin::{self, Network};
 use bdk_wallet::descriptor::{Descriptor as BdkDescriptor};
-use bdk_wallet::miniscript::descriptor::{DescriptorPublicKey, SortedMultiVec, ShInner, WshInner, Wildcard, DerivPaths, DescriptorMultiXKey};
+use bdk_wallet::miniscript::descriptor::{DescriptorPublicKey, SortedMultiVec, ShInner, WshInner, Wildcard, DerivPaths, DescriptorMultiXKey, DescriptorXKey};
 use redb::StorageBackend;
 use regex::Regex;
 use serde::{Deserialize, Serialize};
@@ -373,38 +374,86 @@ impl MultiSigDetails {
         }
     }
 
+    fn signer_to_multi_xpub(&self, signer: &MultiSigSigner) -> Option<DescriptorPublicKey> {
+        let (fingerprint, derivation_path, pubkey) = match (signer.get_fingerprint(), signer.get_derivation(), signer.get_pubkey()) {
+            (Ok(f), Ok(d), Ok(p)) => (f, d, p),
+            _ => return None,
+        };
+        let master_path = DerivationPath::master();
+        let derivation_paths = match DerivPaths::new(vec![master_path.child(ChildNumber::Normal{ index: 0 }), master_path.child(ChildNumber::Normal{ index: 1 })]) {
+            Some(d) => d,
+            None => return None,
+        };
+        let descriptor_x_key: DescriptorMultiXKey<Xpub> = DescriptorMultiXKey {
+            origin: Some((fingerprint, derivation_path)),
+            xkey: pubkey,
+            derivation_paths,
+            wildcard: Wildcard::Unhardened,
+        };
+        Some(DescriptorPublicKey::MultiXPub(descriptor_x_key))
+    }
+
+    fn signer_to_xpub(&self, signer: &MultiSigSigner, keychain: KeychainKind) -> Option<DescriptorPublicKey> {
+        let (fingerprint, derivation_path, pubkey) = match (signer.get_fingerprint(), signer.get_derivation(), signer.get_pubkey()) {
+            (Ok(f), Ok(d), Ok(p)) => (f, d, p),
+            _ => return None,
+        };
+        let path = DerivationPath::master().child(ChildNumber::Normal{ index: keychain as u32 });
+        let descriptor_x_key: DescriptorXKey<Xpub> = DescriptorXKey {
+            origin: Some((fingerprint, derivation_path)),
+            xkey: pubkey,
+            derivation_path: path,
+            wildcard: Wildcard::Unhardened,
+        };
+        Some(DescriptorPublicKey::XPub(descriptor_x_key))
+    }
+
     // TODO: write multisigs out to descriptors and config files
-    fn to_descriptor(&self) -> Result<String, anyhow::Error> {
+    pub fn to_descriptor(&self, keychain: Option<KeychainKind>) -> Result<BdkDescriptor<DescriptorPublicKey>, anyhow::Error> {
         let signers = self
             .signers
             .iter()
             .filter_map(|s| {
-                let (fingerprint, derivation_path, pubkey) = match (s.get_fingerprint(), s.get_derivation(), s.get_pubkey()) {
-                    (Ok(f), Ok(d), Ok(p)) => (f, d, p),
-                    _ => return None,
-                };
-                let master_path = DerivationPath::master();
-                let derivation_paths = match DerivPaths::new(vec![master_path.child(ChildNumber::Normal{ index: 0 }), master_path.child(ChildNumber::Normal{ index: 1 })]) {
-                    Some(d) => d,
-                    None => return None,
-                };
-                let descriptor_x_key: DescriptorMultiXKey<Xpub> = DescriptorMultiXKey {
-                    origin: Some((fingerprint, derivation_path)),
-                    xkey: pubkey,
-                    derivation_paths,
-                    wildcard: Wildcard::Unhardened,
-                };
-                Some(DescriptorPublicKey::MultiXPub(descriptor_x_key))
+                match keychain {
+                    Some(k) => self.signer_to_xpub(s, k),
+                    None => self.signer_to_multi_xpub(s),
+                }
             })
             .collect::<Vec<DescriptorPublicKey>>();
-        let descriptor = match self.format {
-            AddressType::P2ShWsh => BdkDescriptor::<DescriptorPublicKey>::new_sh_wsh_sortedmulti(self.policy_threshold, signers),
-            AddressType::P2wsh => BdkDescriptor::<DescriptorPublicKey>::new_wsh_sortedmulti(self.policy_threshold, signers),
-            AddressType::P2sh => BdkDescriptor::<DescriptorPublicKey>::new_sh_sortedmulti(self.policy_threshold, signers),
-            other => anyhow::bail!("Tried to make a descriptor from an unsupported multisig format: {:?}", other),
-        };
 
-        Ok(descriptor.map(|d| d.to_string())?)
+        Ok(match self.format {
+            AddressType::P2ShWsh => BdkDescriptor::<DescriptorPublicKey>::new_sh_wsh_sortedmulti(self.policy_threshold, signers)?,
+            AddressType::P2wsh => BdkDescriptor::<DescriptorPublicKey>::new_wsh_sortedmulti(self.policy_threshold, signers)?,
+            AddressType::P2sh => BdkDescriptor::<DescriptorPublicKey>::new_sh_sortedmulti(self.policy_threshold, signers)?,
+            other => anyhow::bail!("Tried to make a descriptor from an unsupported multisig format: {:?}", other),
+        })
+    }
+
+    pub fn get_bip(&self) -> Result<String, anyhow::Error> {
+        Ok(match self.format {
+            AddressType::P2ShWsh => String::from("48_1"),
+            AddressType::P2wsh => String::from("48_2"),
+            AddressType::P2sh => String::from("48_3"),
+            other => anyhow::bail!("Tried to get bip of a descriptor from an unsupported multisig format: {:?}", other),
+        })
+    }
+
+    pub fn get_descriptors(&self) -> anyhow::Result<Vec<Descriptors>> {
+        let descriptor_xpub = self.to_descriptor(Some(KeychainKind::External))?;
+        let change_descriptor_xpub =self.to_descriptor(Some(KeychainKind::Internal))?;
+        let descriptor_type = descriptor_xpub.desc_type();
+        let descriptors = vec![
+            Descriptors {
+                bip: self.get_bip()?,
+                descriptor_xprv: String::new(),
+                change_descriptor_xprv: String::new(),
+                descriptor_xpub: descriptor_xpub.to_string(),
+                change_descriptor_xpub: change_descriptor_xpub.to_string(),
+                descriptor_type,
+            },
+        ];
+
+        Ok(descriptors)
     }
 }
 
@@ -703,8 +752,13 @@ impl<P: WalletPersister> NgAccountBuilder<P> {
         self.build_inner(meta_storage)
     }
 
+    pub fn multisig(mut self, multisig: MultiSigDetails) -> Self {
+        self.multisig = Some(multisig);
+        self
+    }
+
     fn build_inner(self, meta_storage: impl MetaStorage + 'static) -> anyhow::Result<NgAccount<P>> {
-        let descriptors = self.descriptors.expect("Descriptors are required");
+        let descriptors = self.descriptors.ok_or(anyhow::anyhow!("Descriptors are required"))?;
 
         let ng_descriptors = descriptors
             .iter()
@@ -716,21 +770,21 @@ impl<P: WalletPersister> NgAccountBuilder<P> {
             .collect();
 
         let ng_account_config = NgAccountConfig {
-            name: self.name.expect("Name is required"),
-            color: self.color.expect("Color is required"),
+            name: self.name.ok_or(anyhow::anyhow!("Name is required"))?,
+            color: self.color.ok_or(anyhow::anyhow!("Color is required"))?,
             device_serial: self.device_serial,
             date_added: self.date_added,
-            network: self.network.expect("Network is required"),
+            network: self.network.ok_or(anyhow::anyhow!("Network is required"))?,
             preferred_address_type: self
                 .preferred_address_type
-                .expect("Preferred address type is required"),
+                .ok_or(anyhow::anyhow!("Preferred address type is required"))?,
             descriptors: ng_descriptors,
             index: if self.multisig.is_none() {
-                self.index.expect("Index is required")
+                self.index.ok_or(anyhow::anyhow!("Index is required"))?
             } else {
                 0
             },
-            id: self.id.expect("id is required"),
+            id: self.id.ok_or(anyhow::anyhow!("id is required"))?,
             date_synced: self.date_synced,
             seed_has_passphrase: self.seed_has_passphrase.unwrap_or(false),
             account_path: self.account_path,
@@ -744,6 +798,7 @@ impl<P: WalletPersister> NgAccountBuilder<P> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use bdk_wallet::miniscript::descriptor::DescriptorType;
 
     #[test]
     fn multisig_from_config_1() {
@@ -782,10 +837,35 @@ AB88DE89: tpubDFUc8ddWCzA8kC195Zn6UitBcBGXbPbtjktU2dk2Deprnf6sR15GAyHLQKUjAPa3gq
         assert_eq!(expected, multisig);
         assert_eq!(Some(String::from("Multisig 2-of-2 Test")), name);
 
-        let descriptor = multisig.to_descriptor().unwrap();
+        let descriptor = multisig.to_descriptor(None).unwrap();
         let expected_descriptor = String::from("wsh(sortedmulti(2,[662a42e4/48'/1'/0'/2']tpubDFGqX4Ge633XixPNo4uF5h6sPkv32bwJrknDmmPGMq8Tn3Pu9QgWfk5hUiDe7gvv2eaFeaHXgjiZwKvnP3AhusoaWBK3qTv8cznyHxxGoSF/<0;1>/*,[ab88de89/48'/1'/0'/2']tpubDFUc8ddWCzA8kC195Zn6UitBcBGXbPbtjktU2dk2Deprnf6sR15GAyHLQKUjAPa3gqD74g7Eea3NSqkb9FfYRZzEm2MTbCtTDZAKSHezJwb/<0;1>/*))#x8077u0d");
 
-        assert_eq!(descriptor, expected_descriptor);
+        assert_eq!(descriptor.to_string(), expected_descriptor);
+
+        let receive_descriptor = multisig.to_descriptor(Some(KeychainKind::External)).unwrap();
+        let expected_receive_descriptor = String::from("wsh(sortedmulti(2,[662a42e4/48'/1'/0'/2']tpubDFGqX4Ge633XixPNo4uF5h6sPkv32bwJrknDmmPGMq8Tn3Pu9QgWfk5hUiDe7gvv2eaFeaHXgjiZwKvnP3AhusoaWBK3qTv8cznyHxxGoSF/0/*,[ab88de89/48'/1'/0'/2']tpubDFUc8ddWCzA8kC195Zn6UitBcBGXbPbtjktU2dk2Deprnf6sR15GAyHLQKUjAPa3gqD74g7Eea3NSqkb9FfYRZzEm2MTbCtTDZAKSHezJwb/0/*))#s2fk4w38");
+
+        assert_eq!(receive_descriptor.to_string(), expected_receive_descriptor);
+
+        let change_descriptor = multisig.to_descriptor(Some(KeychainKind::Internal)).unwrap();
+        let expected_change_descriptor = String::from("wsh(sortedmulti(2,[662a42e4/48'/1'/0'/2']tpubDFGqX4Ge633XixPNo4uF5h6sPkv32bwJrknDmmPGMq8Tn3Pu9QgWfk5hUiDe7gvv2eaFeaHXgjiZwKvnP3AhusoaWBK3qTv8cznyHxxGoSF/1/*,[ab88de89/48'/1'/0'/2']tpubDFUc8ddWCzA8kC195Zn6UitBcBGXbPbtjktU2dk2Deprnf6sR15GAyHLQKUjAPa3gqD74g7Eea3NSqkb9FfYRZzEm2MTbCtTDZAKSHezJwb/1/*))#fe6jmayj");
+
+        assert_eq!(change_descriptor.to_string(), expected_change_descriptor);
+
+        let descriptors = multisig.get_descriptors().unwrap();
+
+        assert_eq!(descriptors,
+            vec![
+                Descriptors {
+                    bip: String::from("48_2"),
+                    descriptor_xprv: String::new(),
+                    change_descriptor_xprv: String::new(),
+                    descriptor_xpub: expected_receive_descriptor.to_string(),
+                    change_descriptor_xpub: expected_change_descriptor.to_string(),
+                    descriptor_type: DescriptorType::WshSortedMulti,
+                }
+            ]
+        );
     }
 
     #[test]
