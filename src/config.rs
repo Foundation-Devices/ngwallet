@@ -223,8 +223,12 @@ impl MultiSigDetails {
         &self.signers
     }
 
+    pub fn default_name(&self) -> String {
+        format!("Multisig-{}-of-{}-{:?}", self.policy_threshold, self.policy_total_keys, self.network_kind)
+    }
+
     // TODO: replace anyhows with thiserrors
-    pub fn from_config(config: &str) -> Result<(Self, Option<String>), anyhow::Error> {
+    pub fn from_config(config: &str) -> Result<(Self, String), anyhow::Error> {
         let mut name: Option<String> = None;
         let mut policy_threshold: Option<usize> = None;
         let mut policy_total_keys: Option<usize> = None;
@@ -328,13 +332,12 @@ impl MultiSigDetails {
             signers.clone(),
         )?;
 
+        let name = name.unwrap_or(res.default_name());
+
         Ok((res, name))
     }
 
-    fn from_sorted_multi<T: bdk_wallet::descriptor::ScriptContext>(
-        format: AddressType,
-        sorted_multi: SortedMultiVec<DescriptorPublicKey, T>,
-    ) -> Result<Self, anyhow::Error> {
+    fn from_sorted_multi<T: bdk_wallet::descriptor::ScriptContext>(format: AddressType, sorted_multi: SortedMultiVec<DescriptorPublicKey, T>) -> Result<(Self, String), anyhow::Error> {
         sorted_multi.sanity_check()?;
         let signers = sorted_multi
             .pks()
@@ -375,11 +378,22 @@ impl MultiSigDetails {
             })
             .collect::<Vec<MultiSigSigner>>();
 
-        Self::new(sorted_multi.k(), sorted_multi.n(), format, None, signers)
+        let res = Self::new(
+            sorted_multi.k(),
+            sorted_multi.n(),
+            format,
+            None,
+            signers,
+        )?;
+
+        let name = res.default_name();
+
+        Ok((res, name))
     }
 
-    pub fn from_descriptor(descriptor: &str) -> Result<Self, anyhow::Error> {
+    pub fn from_descriptor(descriptor: &str) -> Result<(Self, String), anyhow::Error> {
         let descriptor = BdkDescriptor::<DescriptorPublicKey>::from_str(descriptor)?;
+
         match descriptor {
             BdkDescriptor::Sh(desc) => match desc.into_inner() {
                 ShInner::Wsh(d) => match d.into_inner() {
@@ -451,7 +465,6 @@ impl MultiSigDetails {
         Some(DescriptorPublicKey::XPub(descriptor_x_key))
     }
 
-    // TODO: write multisigs out to config files
     pub fn to_descriptor(
         &self,
         keychain: Option<KeychainKind>,
@@ -890,7 +903,7 @@ AB88DE89: tpubDFUc8ddWCzA8kC195Zn6UitBcBGXbPbtjktU2dk2Deprnf6sR15GAyHLQKUjAPa3gq
             ],
         };
         assert_eq!(expected, multisig);
-        assert_eq!(Some(String::from("Multisig 2-of-2 Test")), name);
+        assert_eq!(String::from("Multisig 2-of-2 Test"), name);
 
         let descriptor = multisig.to_descriptor(None).unwrap();
         let expected_descriptor = String::from(
@@ -982,7 +995,7 @@ Derivation: m/48'/1'/0'/2'
             ],
         };
         assert_eq!(expected, multisig);
-        assert_eq!(Some(String::from("Multisig 2-of-2 Test")), name);
+        assert_eq!(String::from("Multisig 2-of-2 Test"), name);
     }
 
     #[test]
@@ -991,7 +1004,7 @@ Derivation: m/48'/1'/0'/2'
             "wsh(sortedmulti(2,[71C8BD85/48h/0h/0h/2h]xpub6ESpvmZa75rCQWKik2KoCZrjTi6xhSubZKJ25rbtgZRk2g9tZTJqubhaGD3dJeqruw9KMCaanoEfJ1PVtBXiwTuuqLVwk9ucqkRv1sKWiEC/<0;1>/*,[AB88DE89/48h/0h/0h/2h]xpub6EPJuK8Ejz82nKc7PsRgcYqdcQH9G1ZikCTasr9i79CbXxMMiPfxEyA14S6HPTHufmcQR7x8t5L3BP9tRfm9EBRBPic2xV892j9z4ePESae/<0;1>/*,[A9F9964A/48h/0h/0h/2h]xpub6FQY5W8WygMVYY2nTP188jFHNdZfH2t9qtcS8SPpFatUGiciqUsGZpNvEa1oABEyeAsrUL2XSnvuRUdrhf5LcMXcjhrUFBcneBYYZzky3Mc/<0;1>/*))",
         );
         println!("I am here!");
-        let multisig = MultiSigDetails::from_descriptor(&descriptor).unwrap();
+        let (multisig, name) = MultiSigDetails::from_descriptor(&descriptor).unwrap();
         let expected = MultiSigDetails::new(
             2,
             3,
@@ -1016,6 +1029,7 @@ Derivation: m/48'/1'/0'/2'
             ],
         ).unwrap();
         assert_eq!(multisig, expected);
+        assert_eq!(String::from("Multisig-2-of-3-Main"), name);
     }
 
     #[test]
@@ -1024,7 +1038,7 @@ Derivation: m/48'/1'/0'/2'
             "sh(wsh(sortedmulti(2,[71C8BD85/48h/0h/0h/1h]xpub6ESpvmZa75rCQWKik2KoCZrjTi6xhSubZKJ25rbtgZRk2g9tZTJqubhaGD3dJeqruw9KMCaanoEfJ1PVtBXiwTuuqLVwk9ucqkRv1sKWiEC/<0;1>/*,[AB88DE89/48h/0h/0h/1h]xpub6EPJuK8Ejz82nKc7PsRgcYqdcQH9G1ZikCTasr9i79CbXxMMiPfxEyA14S6HPTHufmcQR7x8t5L3BP9tRfm9EBRBPic2xV892j9z4ePESae/<0;1>/*,[A9F9964A/48h/0h/0h/1h]xpub6FQY5W8WygMVYY2nTP188jFHNdZfH2t9qtcS8SPpFatUGiciqUsGZpNvEa1oABEyeAsrUL2XSnvuRUdrhf5LcMXcjhrUFBcneBYYZzky3Mc/<0;1>/*)))",
         );
         println!("I am here!");
-        let multisig = MultiSigDetails::from_descriptor(&descriptor).unwrap();
+        let (multisig, name) = MultiSigDetails::from_descriptor(&descriptor).unwrap();
         let expected = MultiSigDetails::new(
             2,
             3,
@@ -1049,6 +1063,7 @@ Derivation: m/48'/1'/0'/2'
             ],
         ).unwrap();
         assert_eq!(multisig, expected);
+        assert_eq!(String::from("Multisig-2-of-3-Main"), name);
     }
 
     #[test]
@@ -1057,7 +1072,7 @@ Derivation: m/48'/1'/0'/2'
             "sh(sortedmulti(2,[71C8BD85/48h/0h/0h/3h]xpub6ESpvmZa75rCQWKik2KoCZrjTi6xhSubZKJ25rbtgZRk2g9tZTJqubhaGD3dJeqruw9KMCaanoEfJ1PVtBXiwTuuqLVwk9ucqkRv1sKWiEC/<0;1>/*,[AB88DE89/48h/0h/0h/3h]xpub6EPJuK8Ejz82nKc7PsRgcYqdcQH9G1ZikCTasr9i79CbXxMMiPfxEyA14S6HPTHufmcQR7x8t5L3BP9tRfm9EBRBPic2xV892j9z4ePESae/<0;1>/*,[A9F9964A/48h/0h/0h/3h]xpub6FQY5W8WygMVYY2nTP188jFHNdZfH2t9qtcS8SPpFatUGiciqUsGZpNvEa1oABEyeAsrUL2XSnvuRUdrhf5LcMXcjhrUFBcneBYYZzky3Mc/<0;1>/*))",
         );
         println!("I am here!");
-        let multisig = MultiSigDetails::from_descriptor(&descriptor).unwrap();
+        let (multisig, name) = MultiSigDetails::from_descriptor(&descriptor).unwrap();
         let expected = MultiSigDetails::new(
             2,
             3,
@@ -1082,5 +1097,6 @@ Derivation: m/48'/1'/0'/2'
             ],
         ).unwrap();
         assert_eq!(multisig, expected);
+        assert_eq!(String::from("Multisig-2-of-3-Main"), name);
     }
 }
