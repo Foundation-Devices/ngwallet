@@ -224,7 +224,10 @@ impl MultiSigDetails {
     }
 
     pub fn default_name(&self) -> String {
-        format!("Multisig-{}-of-{}-{:?}", self.policy_threshold, self.policy_total_keys, self.network_kind)
+        format!(
+            "Multisig-{}-of-{}-{:?}",
+            self.policy_threshold, self.policy_total_keys, self.network_kind
+        )
     }
 
     // TODO: replace anyhows with thiserrors
@@ -337,7 +340,10 @@ impl MultiSigDetails {
         Ok((res, name))
     }
 
-    fn from_sorted_multi<T: bdk_wallet::descriptor::ScriptContext>(format: AddressType, sorted_multi: SortedMultiVec<DescriptorPublicKey, T>) -> Result<(Self, String), anyhow::Error> {
+    fn from_sorted_multi<T: bdk_wallet::descriptor::ScriptContext>(
+        format: AddressType,
+        sorted_multi: SortedMultiVec<DescriptorPublicKey, T>,
+    ) -> Result<(Self, String), anyhow::Error> {
         sorted_multi.sanity_check()?;
         let signers = sorted_multi
             .pks()
@@ -378,13 +384,7 @@ impl MultiSigDetails {
             })
             .collect::<Vec<MultiSigSigner>>();
 
-        let res = Self::new(
-            sorted_multi.k(),
-            sorted_multi.n(),
-            format,
-            None,
-            signers,
-        )?;
+        let res = Self::new(sorted_multi.k(), sorted_multi.n(), format, None, signers)?;
 
         let name = res.default_name();
 
