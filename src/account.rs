@@ -11,9 +11,7 @@ use crate::transaction::{BitcoinTransaction, Output};
 use crate::utils::get_address_type;
 use anyhow::{Context, Error, anyhow};
 use bdk_wallet::bitcoin::address::{NetworkChecked, NetworkUnchecked};
-use bdk_wallet::bitcoin::{
-    Address, AddressType as BdkAddressType, Amount, Psbt, Transaction, Txid,
-};
+use bdk_wallet::bitcoin::{Address, Amount, Psbt, Transaction, Txid};
 #[cfg(feature = "envoy")]
 use bdk_wallet::chain::spk_client::FullScanRequest;
 #[cfg(feature = "envoy")]
@@ -584,18 +582,7 @@ impl<P: WalletPersister> NgAccount<P> {
                 )
             })?;
         match address.address_type() {
-            Some(t) => {
-                // TODO: could we switch to just using BDK's address type?
-                let res = match t {
-                    BdkAddressType::P2pkh => AddressType::P2pkh,
-                    BdkAddressType::P2sh => AddressType::P2sh,
-                    BdkAddressType::P2wpkh => AddressType::P2wpkh,
-                    BdkAddressType::P2wsh => AddressType::P2wsh,
-                    BdkAddressType::P2tr => AddressType::P2tr,
-                    _ => return Err(anyhow::anyhow!("New unsupported address type")),
-                };
-                Ok(res)
-            }
+            Some(t) => t.try_into(),
             None => Err(anyhow::anyhow!("Unknown address type")),
         }
     }

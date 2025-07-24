@@ -4,3 +4,6 @@ clippy:
 
 fmt:
     cargo fmt
+
+test:
+    cargo test --all-targets --all-features

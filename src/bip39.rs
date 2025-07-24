@@ -8,7 +8,7 @@ use bdk_wallet::template::{
 };
 use std::cmp::min;
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq)]
 pub struct Descriptors {
     pub bip: String,
     pub descriptor_xprv: String,
@@ -106,6 +106,11 @@ pub fn get_descriptors(
             bip: String::from("48_2"),
             receive_template: Bip48Member(xprv, KeychainKind::External, 2).build(network)?,
             change_template: Bip48Member(xprv, KeychainKind::Internal, 2).build(network)?,
+        },
+        NgDescriptorTemplate {
+            bip: String::from("48_3"),
+            receive_template: Bip48Member(xprv, KeychainKind::External, 3).build(network)?,
+            change_template: Bip48Member(xprv, KeychainKind::Internal, 3).build(network)?,
         },
     ];
 

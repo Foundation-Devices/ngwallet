@@ -41,6 +41,10 @@ pub fn get_address_type(descriptor: &str) -> AddressType {
         AddressType::P2tr
     } else if descriptor.starts_with("wsh(") {
         AddressType::P2wsh
+    } else if descriptor.starts_with("sh(wsh(") {
+        AddressType::P2ShWsh
+    } else if descriptor.starts_with("sh(wpkh(") {
+        AddressType::P2ShWpkh
     } else {
         AddressType::P2pkh
     }
