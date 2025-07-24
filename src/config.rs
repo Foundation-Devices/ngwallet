@@ -1,4 +1,6 @@
 use anyhow::{self, Context, bail};
+#[cfg(feature = "sha2")]
+use sha2::{Digest, Sha256};
 use std::cmp::Ordering;
 use std::collections::HashMap;
 use std::fmt;
@@ -531,6 +533,26 @@ impl MultiSigDetails {
         name.push('\n');
         name.push_str(&self.to_string());
         name
+    }
+
+    #[cfg(feature = "sha2")]
+    pub fn sha256(&self) -> [u8; 32] {
+        let mut hasher = Sha256::new();
+        hasher.update(self.policy_threshold.to_le_bytes());
+        hasher.update(self.policy_total_keys.to_le_bytes());
+        hasher.update(format!("{:?}", self.format).as_bytes());
+        hasher.update(format!("{:?}", self.network_kind).as_bytes());
+
+        let mut signers = self.signers.clone();
+        signers.sort();
+
+        for s in signers {
+            hasher.update(s.derivation.as_bytes());
+            hasher.update(s.fingerprint.as_bytes());
+            hasher.update(s.pubkey.as_bytes());
+        }
+
+        hasher.finalize().into()
     }
 }
 
@@ -1098,5 +1120,21 @@ Derivation: m/48'/1'/0'/2'
         ).unwrap();
         assert_eq!(multisig, expected);
         assert_eq!(String::from("Multisig-2-of-3-Main"), name);
+    }
+
+    #[cfg(feature = "sha2")]
+    #[test]
+    fn deterministic_equation_and_hashes() {
+        let descriptor_a = String::from(
+            "sh(sortedmulti(2,[71C8BD85/48h/0h/0h/3h]xpub6ESpvmZa75rCQWKik2KoCZrjTi6xhSubZKJ25rbtgZRk2g9tZTJqubhaGD3dJeqruw9KMCaanoEfJ1PVtBXiwTuuqLVwk9ucqkRv1sKWiEC/<0;1>/*,[AB88DE89/48h/0h/0h/3h]xpub6EPJuK8Ejz82nKc7PsRgcYqdcQH9G1ZikCTasr9i79CbXxMMiPfxEyA14S6HPTHufmcQR7x8t5L3BP9tRfm9EBRBPic2xV892j9z4ePESae/<0;1>/*,[A9F9964A/48h/0h/0h/3h]xpub6FQY5W8WygMVYY2nTP188jFHNdZfH2t9qtcS8SPpFatUGiciqUsGZpNvEa1oABEyeAsrUL2XSnvuRUdrhf5LcMXcjhrUFBcneBYYZzky3Mc/<0;1>/*))",
+        );
+        let descriptor_b = String::from(
+            "sh(sortedmulti(2,[AB88DE89/48h/0h/0h/3h]xpub6EPJuK8Ejz82nKc7PsRgcYqdcQH9G1ZikCTasr9i79CbXxMMiPfxEyA14S6HPTHufmcQR7x8t5L3BP9tRfm9EBRBPic2xV892j9z4ePESae/<0;1>/*,[71C8BD85/48h/0h/0h/3h]xpub6ESpvmZa75rCQWKik2KoCZrjTi6xhSubZKJ25rbtgZRk2g9tZTJqubhaGD3dJeqruw9KMCaanoEfJ1PVtBXiwTuuqLVwk9ucqkRv1sKWiEC/<0;1>/*,[A9F9964A/48h/0h/0h/3h]xpub6FQY5W8WygMVYY2nTP188jFHNdZfH2t9qtcS8SPpFatUGiciqUsGZpNvEa1oABEyeAsrUL2XSnvuRUdrhf5LcMXcjhrUFBcneBYYZzky3Mc/<0;1>/*))",
+        );
+        let (multisig_a, _) = MultiSigDetails::from_descriptor(&descriptor_a).unwrap();
+        let (multisig_b, _) = MultiSigDetails::from_descriptor(&descriptor_b).unwrap();
+
+        assert_eq!(multisig_a, multisig_b);
+        assert_eq!(multisig_a.sha256(), multisig_b.sha256())
     }
 }
