@@ -17,7 +17,7 @@ pub mod utils;
 #[cfg(feature = "envoy")]
 pub use bdk_electrum;
 #[cfg(feature = "envoy")]
-const STOP_GAP: usize = 100;
+const STOP_GAP: usize = 250;
 
 #[cfg(feature = "envoy")]
 const BATCH_SIZE: usize = 5;
