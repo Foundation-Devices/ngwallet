@@ -133,6 +133,11 @@ impl<P: WalletPersister> NgAccount<P> {
         self.persist()
     }
 
+    pub fn set_account_path(&mut self, account_path: String) -> Result<(), Error> {
+        self.config.account_path = Some(account_path);
+        self.persist()
+    }
+
     pub fn persist(&mut self) -> Result<(), Error> {
         for wallet in &mut self.wallets {
             wallet.persist()?;
