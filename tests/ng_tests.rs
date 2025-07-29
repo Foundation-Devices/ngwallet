@@ -656,7 +656,7 @@ mod tests {
                 "tx" => {
                     assert!(json.get("origin").is_some());
                 }
-                other => panic!("Unexpected BIP329 type: {}", other),
+                other => panic!("Unexpected BIP329 type: {other}"),
             }
         }
     }
