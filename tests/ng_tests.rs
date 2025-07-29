@@ -680,4 +680,37 @@ mod tests {
             "Expected hardcoded xpub not found in BIP-329 export"
         );
     }
+    #[test]
+    #[cfg(feature = "envoy")]
+    fn test_bip329_export_contains_tx_and_output_notes() {
+        let mut account = utils::tests_util::get_ng_hot_wallet();
+        utils::tests_util::add_funds_to_wallet(&mut account);
+
+        let txid = account.transactions().unwrap()[0].tx_id.clone();
+
+        // Simulate adding notes
+        account.set_note(&txid, "Funding tx").unwrap();
+
+        let output_id = format!("{}:{}", txid, 0); // assuming vout = 0
+
+        // Set a tag for the output
+        account.set_tag(&output_id, "important").unwrap();
+
+        let bip329_data = account.get_bip329_data().unwrap();
+
+        let has_tx_note = bip329_data.iter().any(|entry| {
+            let json: serde_json::Value = serde_json::from_str(entry).unwrap();
+            json.get("type") == Some(&"tx".into())
+                && json.get("label") == Some(&"Funding tx".into())
+        });
+
+        let has_output_note = bip329_data.iter().any(|entry| {
+            let json: serde_json::Value = serde_json::from_str(entry).unwrap();
+            json.get("type") == Some(&"output".into())
+                && json.get("label") == Some(&"important".into())
+        });
+
+        assert!(has_tx_note, "Missing tx note in BIP-329 export");
+        assert!(has_output_note, "Missing output note in BIP-329 export");
+    }
 }
