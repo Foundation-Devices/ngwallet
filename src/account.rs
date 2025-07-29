@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::fmt::Debug;
 use std::str::FromStr;
 use std::sync::{Arc, Mutex};
@@ -8,6 +8,7 @@ use crate::db::RedbMetaStorage;
 use crate::ngwallet::NgWallet;
 use crate::store::MetaStorage;
 use crate::transaction::{BitcoinTransaction, Output};
+use crate::utils;
 use crate::utils::get_address_type;
 use anyhow::{Context, Error, anyhow};
 use bdk_wallet::bitcoin::address::{NetworkChecked, NetworkUnchecked};
@@ -701,6 +702,58 @@ impl<P: WalletPersister> NgAccount<P> {
             receive_lower,
             receive_upper,
         ))
+    }
+
+    pub fn get_bip329_data(&self) -> anyhow::Result<Vec<String>> {
+        let mut result = vec![];
+        let mut seen_tx_refs = HashSet::new();
+
+        for wallet in &self.wallets {
+            let descriptor = wallet
+                .bdk_wallet
+                .lock()
+                .unwrap()
+                .public_descriptor(KeychainKind::External)
+                .to_string();
+
+            // Add xpub entry
+            let xpub = utils::extract_xpub_from_descriptor(&descriptor);
+            let label_opt = (!self.config.name.is_empty()).then_some(self.config.name.as_str());
+            result.push(utils::build_key_json("xpub", &xpub, label_opt, None, None));
+
+            // Add UTXO entries
+            let utxos = wallet.utxos()?;
+            for utxo in utxos {
+                let label_opt = utxo.tag.as_deref().filter(|s| !s.is_empty());
+                let reference = format!("{}:{}", utxo.tx_id, utxo.vout);
+                result.push(utils::build_key_json(
+                    "output",
+                    &reference,
+                    label_opt,
+                    None,
+                    Some(!utxo.do_not_spend),
+                ));
+            }
+
+            // Add TX entries, linked to correct descriptor origin
+            let origin = utils::extract_descriptor_origin(&descriptor);
+            let txs = wallet.transactions()?;
+            for tx in txs {
+                let key = format!("{}:{}", tx.tx_id, origin);
+                if seen_tx_refs.insert(key) {
+                    let label_opt = tx.note.as_deref().filter(|s| !s.is_empty());
+                    result.push(utils::build_key_json(
+                        "tx",
+                        &tx.tx_id,
+                        label_opt,
+                        Some(&origin),
+                        None,
+                    ));
+                }
+            }
+        }
+
+        Ok(result)
     }
 }
 
