@@ -137,7 +137,7 @@ impl<P: WalletPersister> NgWallet<P> {
             let tx = canonical_tx.tx_node.tx;
             let tx_id = canonical_tx.tx_node.txid.to_string();
             let (sent, received) = wallet.sent_and_received(tx.as_ref());
-            let fee = wallet
+            let mut fee = wallet
                 .calculate_fee(tx.as_ref())
                 .unwrap_or(Amount::from_sat(0))
                 .to_sat();
@@ -309,6 +309,14 @@ impl<P: WalletPersister> NgWallet<P> {
                 ret
             };
             let vsize = tx.vsize() as f32;
+
+            if fee == 0 && !tx.is_coinbase() {
+                let input_amount: u64 = inputs.iter().map(|input| input.amount).sum();
+                let output_amount: u64 = outputs.iter().map(|output| output.amount).sum();
+
+                fee = input_amount.saturating_sub(output_amount);
+            }
+
             let fee_rate = if vsize > 0.0 {
                 (fee as f32 / vsize) as u64
             } else {
