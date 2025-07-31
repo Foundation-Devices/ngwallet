@@ -331,6 +331,11 @@ impl<P: WalletPersister> NgAccount<P> {
         Ok(true)
     }
 
+    //TODO: handle error
+    pub fn get_xfp(&mut self) -> String {
+        self.get_coordinator_wallet().get_xfp()
+    }
+
     //if tag is empty, the tag will be removed from the output
     //else new tag will be assigned and tag name will be added to the list
     pub fn set_tag(&mut self, output_id: &str, tag: &str) -> anyhow::Result<bool> {
