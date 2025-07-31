@@ -623,4 +623,94 @@ mod tests {
                    (AddressType::P2wpkh, "wpkh([20a6ab53/84'/1'/0']tpubDC4BKZc39XVBnaTSKLw9ks63KuuEFKdRB17PZMx6GfgxaMHhV79e3zSoVT2TDe9yxwyzm1YHMS8JFNQYWoTvkLJNHa5mTyA5Gkx8NwWVkvU/0/*)#m2myh9ws".to_string())
         );
     }
+    #[test]
+    #[cfg(feature = "envoy")]
+    fn test_bip329_entries_have_valid_structure() {
+        let account = utils::tests_util::get_ng_hot_wallet();
+
+        let result = account.get_bip329_data().unwrap();
+        assert!(!result.is_empty());
+
+        for entry in &result {
+            let json: serde_json::Value = serde_json::from_str(entry).unwrap();
+
+            // All types should have "type" and "ref"
+            assert!(json.get("type").is_some());
+            assert!(json.get("ref").is_some());
+
+            match json.get("type").unwrap().as_str().unwrap() {
+                "xpub" => {
+                    assert!(
+                        json.get("ref")
+                            .unwrap()
+                            .as_str()
+                            .unwrap()
+                            .starts_with("tpub")
+                    );
+                    assert!(json.get("label").is_some() || json.get("label").is_none());
+                }
+                "output" => {
+                    assert!(json.get("ref").unwrap().as_str().unwrap().contains(':'));
+                    assert!(json.get("spendable").is_some());
+                }
+                "tx" => {
+                    assert!(json.get("origin").is_some());
+                }
+                other => panic!("Unexpected BIP329 type: {other}"),
+            }
+        }
+    }
+
+    #[test]
+    #[cfg(feature = "envoy")]
+    fn test_bip329_contains_expected_testnet_xpub() {
+        let account = utils::tests_util::get_ng_hot_wallet();
+        let data = account.get_bip329_data().expect("should export BIP-329");
+
+        let expected_xpub = "tpubDC8wiq86H9ZMiscQMoG1LcvQayTKs9Ef32n4fpVV8JR2FfCDgbTE2yECxi2Bgtkb7UEUheRyeprMtWRFdMXWQq8bx6ugwdTaMp6s2bNYjSV";
+
+        let maybe_entry = data.iter().find(|entry| {
+            let json: serde_json::Value = serde_json::from_str(entry).unwrap();
+            json.get("type") == Some(&serde_json::Value::String("xpub".to_string()))
+                && json.get("ref") == Some(&serde_json::Value::String(expected_xpub.to_string()))
+        });
+
+        assert!(
+            maybe_entry.is_some(),
+            "Expected hardcoded xpub not found in BIP-329 export"
+        );
+    }
+    #[test]
+    #[cfg(feature = "envoy")]
+    fn test_bip329_export_contains_tx_and_output_notes() {
+        let mut account = utils::tests_util::get_ng_hot_wallet();
+        utils::tests_util::add_funds_to_wallet(&mut account);
+
+        let txid = account.transactions().unwrap()[0].tx_id.clone();
+
+        // Simulate adding notes
+        account.set_note(&txid, "Funding tx").unwrap();
+
+        let output_id = format!("{}:{}", txid, 0); // assuming vout = 0
+
+        // Set a tag for the output
+        account.set_tag(&output_id, "important").unwrap();
+
+        let bip329_data = account.get_bip329_data().unwrap();
+
+        let has_tx_note = bip329_data.iter().any(|entry| {
+            let json: serde_json::Value = serde_json::from_str(entry).unwrap();
+            json.get("type") == Some(&"tx".into())
+                && json.get("label") == Some(&"Funding tx".into())
+        });
+
+        let has_output_note = bip329_data.iter().any(|entry| {
+            let json: serde_json::Value = serde_json::from_str(entry).unwrap();
+            json.get("type") == Some(&"output".into())
+                && json.get("label") == Some(&"important".into())
+        });
+
+        assert!(has_tx_note, "Missing tx note in BIP-329 export");
+        assert!(has_output_note, "Missing output note in BIP-329 export");
+    }
 }

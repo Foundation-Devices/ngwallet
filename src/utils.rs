@@ -6,6 +6,25 @@ use {
 };
 
 use crate::config::AddressType;
+use serde::Serialize;
+
+#[derive(Serialize)]
+struct Bip329Item {
+    #[serde(rename = "type")]
+    item_type: String,
+
+    #[serde(rename = "ref")]
+    reference: String,
+
+    #[serde(skip_serializing_if = "String::is_empty")]
+    label: String,
+
+    #[serde(skip_serializing_if = "Option::is_none")]
+    origin: Option<String>,
+
+    #[serde(skip_serializing_if = "Option::is_none")]
+    spendable: Option<bool>,
+}
 
 #[cfg(feature = "envoy")]
 pub(crate) fn build_electrum_client(
@@ -57,4 +76,38 @@ pub fn get_address_as_string(script: &ScriptBuf, network: Network) -> String {
             } // Handle the error as needed
         }
     }
+}
+
+pub fn extract_xpub_from_descriptor(descriptor: &str) -> String {
+    descriptor
+        .split(']')
+        .nth(1)
+        .and_then(|s| s.split('/').next())
+        .unwrap_or("")
+        .to_string()
+}
+
+pub fn extract_descriptor_origin(desc: &str) -> String {
+    desc.find(']')
+        .map(|idx| &desc[..=idx])
+        .map(|s| format!("{s})"))
+        .unwrap_or_default()
+}
+
+pub fn build_key_json(
+    item_type: &str,
+    reference: &str,
+    label: Option<&str>,
+    origin: Option<&str>,
+    spendable: Option<bool>,
+) -> String {
+    let item = Bip329Item {
+        item_type: item_type.to_string(),
+        reference: reference.to_string(),
+        label: label.unwrap_or("").to_string(),
+        origin: origin.map(str::to_string),
+        spendable,
+    };
+
+    serde_json::to_string(&item).unwrap()
 }
