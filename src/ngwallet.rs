@@ -314,7 +314,7 @@ impl<P: WalletPersister> NgWallet<P> {
                 let input_amount: u64 = inputs.iter().map(|input| input.amount).sum();
                 let output_amount: u64 = outputs.iter().map(|output| output.amount).sum();
 
-                fee = input_amount.saturating_sub(output_amount);
+                fee = input_amount - output_amount;
             }
 
             let fee_rate = if vsize > 0.0 {
