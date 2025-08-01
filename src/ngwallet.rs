@@ -18,12 +18,7 @@ use log::info;
 
 use crate::config::AddressType;
 #[cfg(feature = "envoy")]
-use {
-    crate::{BATCH_SIZE, STOP_GAP},
-    bdk_electrum::BdkElectrumClient,
-    bdk_electrum::electrum_client::Client,
-    bdk_electrum::electrum_client::{Config, Socks5Config},
-};
+use crate::{BATCH_SIZE, STOP_GAP};
 
 use crate::store::MetaStorage;
 use crate::transaction::{BitcoinTransaction, Input, KeyChain, Output};
@@ -369,20 +364,7 @@ impl<P: WalletPersister> NgWallet<P> {
         electrum_server: &str,
         socks_proxy: Option<&str>,
     ) -> Result<FullScanResponse<KeychainKind>> {
-        let socks5_config = match socks_proxy {
-            Some(socks_proxy) => {
-                let socks5_config = Socks5Config::new(socks_proxy);
-                Some(socks5_config)
-            }
-            None => None,
-        };
-        let electrum_config = Config::builder()
-            .socks5(socks5_config)
-            .timeout(Some(30))
-            .retry(3)
-            .build();
-        let client = Client::from_config(electrum_server, electrum_config)?;
-        let client: BdkElectrumClient<Client> = BdkElectrumClient::new(client);
+        let client = utils::build_electrum_client(electrum_server, socks_proxy);
         let update = client.full_scan(request, STOP_GAP, BATCH_SIZE, true)?;
         Ok(update)
     }
