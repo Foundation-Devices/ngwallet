@@ -17,12 +17,7 @@ use log::info;
 
 use crate::config::AddressType;
 #[cfg(feature = "envoy")]
-use {
-    crate::{BATCH_SIZE, STOP_GAP},
-    bdk_electrum::BdkElectrumClient,
-    bdk_electrum::electrum_client::Client,
-    bdk_electrum::electrum_client::{Config, Socks5Config},
-};
+use crate::{BATCH_SIZE, STOP_GAP};
 
 use crate::store::MetaStorage;
 use crate::transaction::{BitcoinTransaction, Input, KeyChain, Output};
