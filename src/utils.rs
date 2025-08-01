@@ -38,11 +38,13 @@ pub(crate) fn build_electrum_client(
         }
         None => None,
     };
+
+    let validate_domain = socks5_config.is_none();
     let electrum_config = Config::builder()
         .timeout(Some(30))
         .retry(3)
         .socks5(socks5_config.clone())
-        .validate_domain(false)
+        .validate_domain(validate_domain)
         .build();
     let client = Client::from_config(electrum_server, electrum_config).unwrap();
     let bdk_client: BdkElectrumClient<Client> = BdkElectrumClient::new(client);
