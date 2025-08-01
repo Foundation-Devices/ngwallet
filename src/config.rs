@@ -55,6 +55,12 @@ pub struct NgAccountConfig {
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct NgAccountBackup {
     pub ng_account_config: NgAccountConfig,
+    //envoy 2.1 doesnt include xfp in backup
+    #[serde(default)]
+    pub xfp: String,
+    //envoy 2.1 doesnt include public_descriptors in backup
+    #[serde(default)]
+    pub public_descriptors: Vec<(AddressType, String)>,
     pub last_used_index: Vec<(AddressType, KeychainKind, u32)>,
     pub notes: HashMap<String, String>,
     pub tags: HashMap<String, String>,

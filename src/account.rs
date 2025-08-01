@@ -206,7 +206,9 @@ impl<P: WalletPersister> NgAccount<P> {
             NgAccountBackup {
                 ng_account_config: config,
                 last_used_index,
+                public_descriptors: self.get_external_public_descriptors(),
                 notes,
+                xfp: self.get_coordinator_wallet().get_xfp(),
                 tags,
                 do_not_spend,
             }
