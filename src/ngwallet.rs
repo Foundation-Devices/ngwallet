@@ -377,6 +377,7 @@ impl<P: WalletPersister> NgWallet<P> {
         };
         let electrum_config = Config::builder()
             .socks5(socks5_config)
+            .validate_domain(false)
             .timeout(Some(30))
             .retry(3)
             .build();
