@@ -10,6 +10,7 @@ use bdk_wallet::chain::ChainPosition::{Confirmed, Unconfirmed};
 use bdk_wallet::chain::local_chain::CannotConnectError;
 #[cfg(feature = "envoy")]
 use bdk_wallet::chain::spk_client::{FullScanRequest, FullScanResponse, SyncRequest, SyncResponse};
+use bdk_wallet::miniscript::ForEachKey;
 use bdk_wallet::{CreateWithPersistError, LoadWithPersistError, PersistedWallet, SignOptions};
 use bdk_wallet::{KeychainKind, WalletPersister};
 use bdk_wallet::{Update, Wallet};
@@ -537,6 +538,24 @@ impl<P: WalletPersister> NgWallet<P> {
         }
 
         Ok(PsbtInfo { outputs, fee })
+    }
+
+    pub fn get_all_xfps(&self) -> Vec<String> {
+        let mut xfps: Vec<String> = Vec::new();
+        self.bdk_wallet
+            .lock()
+            .unwrap()
+            .public_descriptor(KeychainKind::Internal)
+            .for_each_key(|key| {
+                xfps.push(key.master_fingerprint().to_string().to_uppercase());
+                true
+            });
+        xfps
+    }
+
+    pub fn get_xfp(&self) -> String {
+        // TODO: improve error handling
+        self.get_all_xfps()[0].clone()
     }
 
     //Reveal addresses up to and including the target index and return an iterator of newly revealed addresses.

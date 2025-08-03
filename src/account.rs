@@ -204,7 +204,9 @@ impl<P: WalletPersister> NgAccount<P> {
             NgAccountBackup {
                 ng_account_config: config,
                 last_used_index,
+                public_descriptors: self.get_external_public_descriptors(),
                 notes,
+                xfp: self.get_coordinator_wallet().get_xfp(),
                 tags,
                 do_not_spend,
             }
@@ -328,6 +330,11 @@ impl<P: WalletPersister> NgAccount<P> {
             .set_note(tx_id, note)
             .with_context(|| "Could not set note")?;
         Ok(true)
+    }
+
+    //TODO: handle error
+    pub fn get_xfp(&mut self) -> String {
+        self.get_coordinator_wallet().get_xfp()
     }
 
     //if tag is empty, the tag will be removed from the output
