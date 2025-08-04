@@ -82,9 +82,14 @@ impl<P: WalletPersister> NgAccount<P> {
             wallets.push(wallet);
         }
 
+        log::info!("num wallets: {}", wallets.len());
+
         let coordinator_wallet = wallets
             .iter()
-            .find(|w| w.address_type == preferred_address_type);
+            .find(|w| {
+                log::info!("address type: {}, preferred_address_type: {}", w.address_type, preferred_address_type);
+                w.address_type == preferred_address_type
+            });
 
         if coordinator_wallet.is_none() {
             anyhow::bail!("No wallet found with the preferred address type");
