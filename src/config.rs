@@ -634,6 +634,20 @@ impl From<AddressType> for bitcoin::AddressType {
     }
 }
 
+impl AddressType {
+    pub fn flatten(&self) -> Self {
+        match self {
+            AddressType::P2pkh => AddressType::P2pkh,
+            AddressType::P2sh => AddressType::P2sh,
+            AddressType::P2wpkh => AddressType::P2wpkh,
+            AddressType::P2wsh => AddressType::P2wsh,
+            AddressType::P2tr => AddressType::P2tr,
+            AddressType::P2ShWpkh => AddressType::P2sh,
+            AddressType::P2ShWsh => AddressType::P2sh,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 #[cfg_attr(
     feature = "rkyv",
@@ -869,7 +883,7 @@ impl<P: WalletPersister> NgAccountBuilder<P> {
             date_added: self.date_added,
             network: self.network.ok_or(anyhow::anyhow!("Network is required"))?,
             preferred_address_type: match self.multisig {
-                Some(ref m) => m.format,
+                Some(ref m) => m.format.flatten(),
                 None => self
                     .preferred_address_type
                     .ok_or(anyhow::anyhow!("Preferred address type is required"))?,
