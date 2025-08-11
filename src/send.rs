@@ -465,7 +465,12 @@ impl<P: WalletPersister> NgAccount<P> {
 
         let mut amount = 0;
         for outputs in outputs.clone() {
-            if outputs.address == address {
+            let spend_address = Address::from_str(&address)
+                .expect("Unable to parse address in transform_psbt_to_bitcointx");
+            let output_address = Address::from_str(&outputs.address)
+                .expect("Unable to parse output_address in transform_psbt_to_bitcointx");
+            println!("spend_address: {spend_address:?}, output_address: {output_address:?}");
+            if spend_address.eq(&output_address) {
                 amount = -(outputs.amount as i64);
             }
         }
