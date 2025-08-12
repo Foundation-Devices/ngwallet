@@ -5,7 +5,7 @@ use bdk_core::bitcoin::Sequence;
 use bdk_wallet::bitcoin::psbt::ExtractTxError;
 use bdk_wallet::bitcoin::secp256k1::Secp256k1;
 use bdk_wallet::bitcoin::{
-    Address, Amount, FeeRate, Psbt, ScriptBuf, Transaction, TxIn, Txid, Weight, psbt,
+    Address, Amount, FeeRate, Psbt, ScriptBuf, Transaction, TxIn, TxOut, Txid, Weight, psbt,
 };
 use bdk_wallet::coin_selection::InsufficientFunds;
 use bdk_wallet::error::CreateTxError;

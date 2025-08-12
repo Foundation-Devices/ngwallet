@@ -30,7 +30,7 @@ impl RedbMetaStorage {
                 .unwrap_or("account.meta".to_string());
             Builder::new()
                 .create(file_path)
-                .with_context(|| "Failed to create database")?
+                .with_context(|| "Failed to create redb database")?
         };
 
         Ok(RedbMetaStorage { db: Arc::new(db) })
@@ -184,7 +184,7 @@ impl MetaStorage for RedbMetaStorage {
                 }
                 Err(e) => Err(anyhow::anyhow!(e.to_string())),
             },
-            Err(_) => Ok(None),
+            Err(e) => Err(anyhow::anyhow!(e.to_string())),
         }
     }
 
