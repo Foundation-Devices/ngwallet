@@ -694,7 +694,6 @@ pub struct NgAccountConfig {
     pub index: u32,
     pub descriptors: Vec<NgDescriptor>,
     pub date_synced: Option<String>,
-    pub account_path: Option<String>,
     pub network: Network,
     pub id: String,
     pub multisig: Option<MultiSigDetails>,
@@ -897,7 +896,6 @@ impl<P: WalletPersister> NgAccountBuilder<P> {
             id: self.id.ok_or(anyhow::anyhow!("id is required"))?,
             date_synced: self.date_synced,
             seed_has_passphrase: self.seed_has_passphrase.unwrap_or(false),
-            account_path: self.account_path,
             multisig: self.multisig,
         };
 
