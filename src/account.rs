@@ -22,6 +22,151 @@ use log::info;
 use redb::StorageBackend;
 use serde::{Deserialize, Serialize};
 
+#[derive(Debug, Clone)]
+pub struct AddressVerificationResult {
+    pub found_index: Option<u32>,
+    pub keychain: Option<KeychainKind>,
+    pub address_type: crate::config::AddressType,
+    pub change_lower: u32,
+    pub change_upper: u32,
+    pub receive_lower: u32,
+    pub receive_upper: u32,
+}
+
+#[derive(Debug, Clone)]
+pub struct AddressVerificationInfo {
+    pub address: String,
+    pub internal_descriptor: String,
+    pub external_descriptor: Option<String>,
+    pub network: bdk_wallet::bitcoin::Network,
+    pub address_type: crate::config::AddressType,
+    pub receive_start: u32,
+    pub change_start: u32,
+}
+
+pub fn search_for_address(
+    wallet: &bdk_wallet::Wallet,
+    address: &str,
+    attempt_number: u32,
+    chunk_size: u32,
+    receive_start: u32,
+    change_start: u32,
+    address_type: AddressType,
+) -> AddressVerificationResult {
+    // Optimization to always check address 0, which is often used during pairing
+    if address == wallet.peek_address(KeychainKind::External, 0).to_string() {
+        return AddressVerificationResult {
+            found_index: Some(0),
+            keychain: Some(KeychainKind::External),
+            address_type,
+            change_lower: 0,
+            change_upper: 0,
+            receive_lower: 0,
+            receive_upper: 0,
+        };
+    }
+
+    let attempt_offset = attempt_number * (chunk_size / 2);
+
+    let mut change_lower = change_start.saturating_sub(attempt_offset);
+    let mut change_upper = change_start.saturating_add(attempt_offset);
+    let mut receive_lower = receive_start.saturating_sub(attempt_offset);
+    let mut receive_upper = receive_start.saturating_add(attempt_offset);
+
+    for step in 0..(chunk_size / 2) {
+        for (keychain, start) in [
+            (KeychainKind::External, receive_start),
+            (KeychainKind::Internal, change_start),
+        ] {
+            // Start higher index at 1, and the lower index at 0,
+            // to search a total of chunk_size addresses
+            if let Some(low_index) = start.checked_sub(attempt_offset + step) {
+                match keychain {
+                    KeychainKind::Internal => change_lower = low_index,
+                    KeychainKind::External => receive_lower = low_index,
+                }
+                if address == wallet.peek_address(keychain, low_index).to_string() {
+                    return AddressVerificationResult {
+                        found_index: Some(low_index),
+                        keychain: Some(keychain),
+                        address_type,
+                        change_lower,
+                        change_upper,
+                        receive_lower,
+                        receive_upper,
+                    };
+                }
+            }
+
+            if let Some(high_index) = start.checked_add(attempt_offset + step + 1) {
+                match keychain {
+                    KeychainKind::Internal => change_upper = high_index,
+                    KeychainKind::External => receive_upper = high_index,
+                }
+                if address == wallet.peek_address(keychain, high_index).to_string() {
+                    return AddressVerificationResult {
+                        found_index: Some(high_index),
+                        keychain: Some(keychain),
+                        address_type,
+                        change_lower,
+                        change_upper,
+                        receive_lower,
+                        receive_upper,
+                    };
+                }
+            }
+
+            // TODO: could add an error for if the whole address space is explored, although
+            // this is more than 2x all IPv4 addresses, so it's unlikely
+        }
+    }
+
+    AddressVerificationResult {
+        found_index: None,
+        keychain: None,
+        address_type,
+        change_lower,
+        change_upper,
+        receive_lower,
+        receive_upper,
+    }
+}
+
+// This can be used in a worker thread, since its inputs and outputs are owned and implement send and sync.
+pub fn verify_address_stateless(
+    verification_info: AddressVerificationInfo,
+    attempt_number: u32,
+    chunk_size: u32,
+) -> anyhow::Result<AddressVerificationResult> {
+    // Build a temporary wallet
+    let wallet = {
+        let builder = match verification_info.external_descriptor {
+            None => bdk_wallet::Wallet::create_single(verification_info.internal_descriptor),
+            Some(external_descriptor) => bdk_wallet::Wallet::create(
+                external_descriptor,
+                verification_info.internal_descriptor,
+            ),
+        };
+
+        builder
+            .network(verification_info.network)
+            .create_wallet_no_persist()
+            .map_err(|e| anyhow::anyhow!("Failed to create temporary wallet: {:?}", e))?
+    };
+
+    let result = search_for_address(
+        &wallet,
+        &verification_info.address,
+        attempt_number,
+        chunk_size,
+        verification_info.receive_start,
+        verification_info.change_start,
+        verification_info.address_type,
+    );
+
+    Ok(result)
+}
+
 #[derive(Debug)]
 pub struct NgAccount<P: WalletPersister> {
     pub config: NgAccountConfig,
@@ -595,12 +740,70 @@ impl<P: WalletPersister> NgAccount<P> {
         }
     }
 
+    pub fn get_address_verification_info(
+        &self,
+        address: String,
+    ) -> anyhow::Result<AddressVerificationInfo> {
+        let address_type = self.get_address_script_type(&address)?;
+
+        let wallet = self.wallets.iter().find(|w| w.address_type == address_type);
+        let wallet = match wallet {
+            Some(w) => w,
+            None => anyhow::bail!(
+                "No wallet found with the corresponding address type: {:?}",
+                address_type
+            ),
+        };
+
+        let bdk_wallet = wallet.bdk_wallet.lock().unwrap();
+        let external_descriptor = bdk_wallet
+            .public_descriptor(KeychainKind::External)
+            .to_string();
+        let internal_descriptor = bdk_wallet
+            .public_descriptor(KeychainKind::Internal)
+            .to_string();
+
+        let receive_start = self
+            .meta_storage
+            .get_last_verified_address(address_type, KeychainKind::External)?;
+        let change_start = self
+            .meta_storage
+            .get_last_verified_address(address_type, KeychainKind::Internal)?;
+
+        Ok(AddressVerificationInfo {
+            address,
+            internal_descriptor,
+            external_descriptor: Some(external_descriptor),
+            network: self.config.network,
+            address_type,
+            receive_start,
+            change_start,
+        })
+    }
+
+    pub fn update_verification_state(
+        &self,
+        verification_result: &AddressVerificationResult,
+    ) -> anyhow::Result<()> {
+        if let (Some(found_index), Some(keychain)) = (
+            verification_result.found_index,
+            verification_result.keychain,
+        ) {
+            self.meta_storage.set_last_verified_address(
+                verification_result.address_type,
+                keychain,
+                found_index,
+            )?;
+        }
+        Ok(())
+    }
+
     pub fn verify_address(
         &self,
         address: String,
         attempt_number: u32,
         chunk_size: u32,
-    ) -> anyhow::Result<(Option<u32>, u32, u32, u32, u32)> {
+    ) -> anyhow::Result<AddressVerificationResult> {
         let address_type = self.get_address_script_type(&address)?;
 
         let wallet = self.wallets.iter().find(|w| w.address_type == address_type);
@@ -610,87 +813,29 @@ impl<P: WalletPersister> NgAccount<P> {
             None => anyhow::bail!("No wallet found with the corresponding address type"),
         };
 
-        // Optimization to always check address 0, which is often used during pairing
-        if address == wallet.peek_address(KeychainKind::External, 0).to_string() {
-            self.meta_storage
-                .set_last_verified_address(address_type, KeychainKind::External, 0)?;
-            return Ok((Some(0), 0, 0, 0, 0));
-        }
-
         let receive_start = self
             .meta_storage
             .get_last_verified_address(address_type, KeychainKind::External)?;
         let change_start = self
             .meta_storage
             .get_last_verified_address(address_type, KeychainKind::Internal)?;
-        let attempt_offset = attempt_number * (chunk_size / 2);
 
-        let mut change_lower = change_start.saturating_sub(attempt_offset);
-        let mut change_upper = change_start.saturating_add(attempt_offset);
-        let mut receive_lower = receive_start.saturating_sub(attempt_offset);
-        let mut receive_upper = receive_start.saturating_add(attempt_offset);
+        let result = search_for_address(
+            &wallet,
+            &address,
+            attempt_number,
+            chunk_size,
+            receive_start,
+            change_start,
+            address_type,
+        );
 
-        for step in 0..(chunk_size / 2) {
-            for (keychain, start) in [
-                (KeychainKind::External, receive_start),
-                (KeychainKind::Internal, change_start),
-            ] {
-                // Start higher index at 1, and the lower index at 0,
-                // to search a total of chunk_size addresses
-                if let Some(low_index) = start.checked_sub(attempt_offset + step) {
-                    match keychain {
-                        KeychainKind::Internal => change_lower = low_index,
-                        KeychainKind::External => receive_lower = low_index,
-                    }
-                    if address == wallet.peek_address(keychain, low_index).to_string() {
-                        self.meta_storage.set_last_verified_address(
-                            address_type,
-                            keychain,
-                            low_index,
-                        )?;
-                        return Ok((
-                            Some(low_index),
-                            change_lower,
-                            change_upper,
-                            receive_lower,
-                            receive_upper,
-                        ));
-                    }
-                }
-
-                if let Some(high_index) = start.checked_add(attempt_offset + step + 1) {
-                    match keychain {
-                        KeychainKind::Internal => change_upper = high_index,
-                        KeychainKind::External => receive_upper = high_index,
-                    }
-                    if address == wallet.peek_address(keychain, high_index).to_string() {
-                        self.meta_storage.set_last_verified_address(
-                            address_type,
-                            keychain,
-                            high_index,
-                        )?;
-                        return Ok((
-                            Some(high_index),
-                            change_lower,
-                            change_upper,
-                            receive_lower,
-                            receive_upper,
-                        ));
-                    }
-                }
-
-                // TODO: could add an error for if the whole address space is explored, although
-                // this is more than 2x all IPv4 addresses, so it's unlikely
-            }
+        if let (Some(index), Some(keychain)) = (result.found_index, result.keychain) {
+            self.meta_storage
+                .set_last_verified_address(address_type, keychain, index)?;
         }
 
-        Ok((
-            None,
-            change_lower,
-            change_upper,
-            receive_lower,
-            receive_upper,
-        ))
+        Ok(result)
     }
 
     pub fn get_bip329_data(&self) -> anyhow::Result<Vec<String>> {

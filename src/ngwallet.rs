@@ -14,6 +14,7 @@ use bdk_wallet::miniscript::ForEachKey;
 use bdk_wallet::{CreateWithPersistError, LoadWithPersistError, PersistedWallet, SignOptions};
 use bdk_wallet::{KeychainKind, WalletPersister};
 use bdk_wallet::{Update, Wallet};
+#[cfg(feature = "envoy")]
 use log::info;
 
 use crate::config::AddressType;
