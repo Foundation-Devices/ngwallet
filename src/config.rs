@@ -42,7 +42,7 @@ pub struct MultiSigSigner {
 
 impl PartialOrd for MultiSigSigner {
     fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
-        Some(self.pubkey.cmp(&other.pubkey))
+        Some(self.cmp(other))
     }
 }
 

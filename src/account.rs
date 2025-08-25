@@ -420,20 +420,18 @@ impl<P: WalletPersister> NgAccount<P> {
                 //since there can be multiple wallets with the same tx_id (self spend between wallets),
                 //we will keep outgoing transactions
                 let exist = transactions.iter().find(|x| x.tx_id == tx.tx_id);
-                if exist.is_none() {
-                    transactions.push(tx)
-                } else {
-                    let existing_tx = exist.unwrap();
+                if let Some(existing_tx) = exist {
                     //if the tx amount is negative, it means it's an outgoing transaction
-                    if existing_tx.amount.is_negative() {
-                        if let Some(pos) = transactions
+                    if existing_tx.amount.is_negative()
+                        && let Some(pos) = transactions
                             .iter()
                             .position(|x| x.tx_id == existing_tx.tx_id)
-                        {
-                            transactions.remove(pos);
-                            transactions.push(tx.clone());
-                        }
+                    {
+                        transactions.remove(pos);
+                        transactions.push(tx.clone());
                     }
+                } else {
+                    transactions.push(tx)
                 }
             }
         }
