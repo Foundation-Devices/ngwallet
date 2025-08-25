@@ -14,6 +14,7 @@ use bdk_wallet::miniscript::ForEachKey;
 use bdk_wallet::{CreateWithPersistError, LoadWithPersistError, PersistedWallet, SignOptions};
 use bdk_wallet::{KeychainKind, WalletPersister};
 use bdk_wallet::{Update, Wallet};
+#[cfg(feature = "envoy")]
 use log::info;
 
 use crate::config::AddressType;
@@ -526,11 +527,10 @@ impl<P: WalletPersister> NgWallet<P> {
         let mut fee = 0;
 
         for output in tx.clone().output {
-            if let Ok(address) = Address::from_script(&output.script_pubkey, wallet.network()) {
-                if !wallet.is_mine(output.script_pubkey) {
+            if let Ok(address) = Address::from_script(&output.script_pubkey, wallet.network())
+                && !wallet.is_mine(output.script_pubkey) {
                     outputs.insert(output.value.to_sat(), address.to_string());
                 }
-            }
         }
 
         if let Ok(fee_amount) = wallet.calculate_fee(&tx) {

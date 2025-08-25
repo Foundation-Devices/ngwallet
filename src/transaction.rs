@@ -97,11 +97,10 @@ impl BitcoinTransaction {
 
     pub fn get_change_tag(&self) -> Option<String> {
         for output in &self.outputs {
-            if output.keychain == Some(KeyChain::Internal) {
-                if let Some(tag) = &output.tag {
+            if output.keychain == Some(KeyChain::Internal)
+                && let Some(tag) = &output.tag {
                     return Some(tag.clone());
                 }
-            }
         }
         None
     }

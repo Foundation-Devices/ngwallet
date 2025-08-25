@@ -553,13 +553,12 @@ impl<P: WalletPersister> NgAccount<P> {
                 for wallet in non_coordinator_wallets.iter() {
                     if let Ok(wallet_lock) = wallet.bdk_wallet.lock() {
                         derivation = wallet_lock.derivation_of_spk(script.clone());
-                        if let Some(path) = derivation {
-                            if path.0 == KeychainKind::Internal {
+                        if let Some(path) = derivation
+                            && path.0 == KeychainKind::Internal {
                                 out_put_tag = change_tag.clone();
                                 out_put_do_not_spend_change = do_not_spend_change;
                                 break; // Found the wallet, no need to continue
                             }
-                        }
                     }
                 }
             }
@@ -650,8 +649,8 @@ impl<P: WalletPersister> NgAccount<P> {
         } else {
             let wallet_tx = wallet.get_tx(Txid::from_str(tx_id).unwrap());
             let mut amount = 0;
-            if wallet_tx.is_some() {
-                let tx_node = wallet_tx.unwrap().tx_node;
+            if let Some(tx) = wallet_tx {
+                let tx_node = tx.tx_node;
                 for (index, out) in tx_node.output.iter().enumerate() {
                     if index as u32 == v_index {
                         amount = out.value.to_sat();

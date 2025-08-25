@@ -296,8 +296,7 @@ impl<P: WalletPersister> NgAccount<P> {
                             .to_string();
                         let mut out_put_tag: Option<String> = change_out_put_tag.clone();
                         let mut out_put_do_not_spend_change = false;
-                        if derivation.is_some() {
-                            let path = derivation.unwrap();
+                        if let Some(path) = derivation {
                             //if the output belongs to change keychain,
                             if path.0 == KeychainKind::Internal {
                                 out_put_tag = current_transaction.get_change_tag();
@@ -345,8 +344,7 @@ impl<P: WalletPersister> NgAccount<P> {
                         let script = input.script_sig.clone();
                         let derivation = self.derivation_of_spk(script.clone());
                         let mut input_tag: Option<String> = None;
-                        if derivation.is_some() {
-                            let path = derivation.unwrap();
+                        if let Some(path) = derivation {
                             //if the output belongs to change keychain,
                             if path.0 == KeychainKind::Internal {
                                 input_tag = current_transaction.get_change_tag();
