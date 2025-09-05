@@ -5,6 +5,8 @@ use bdk_wallet::KeychainKind;
 use redb::{Builder, Database, ReadableTable, StorageBackend, TableDefinition};
 use std::sync::Arc;
 
+const FEE_TABLE: TableDefinition<&str, u64> = TableDefinition::new("fees");
+
 const NOTE_TABLE: TableDefinition<&str, &str> = TableDefinition::new("notes");
 const TAG_TABLE: TableDefinition<&str, &str> = TableDefinition::new("tags");
 const TAGS_LIST: TableDefinition<&str, &str> = TableDefinition::new("tags_list");
@@ -51,6 +53,29 @@ impl RedbMetaStorage {
 }
 
 impl MetaStorage for RedbMetaStorage {
+    fn set_fee(&self, txid: &str, fee: u64) -> Result<()> {
+        let write_txn = self.db.begin_write()?;
+        {
+            let mut table = write_txn.open_table(FEE_TABLE)?;
+            table.insert(txid, fee)?;
+        }
+        write_txn
+            .commit()
+            .map_err(|e| anyhow::anyhow!(e.to_string()))
+    }
+
+    fn get_fee(&self, txid: &str) -> Result<Option<u64>> {
+        let read_txn = self.db.begin_read()?;
+        match read_txn.open_table(FEE_TABLE) {
+            Ok(table) => match table.get(txid) {
+                Ok(Some(value)) => Ok(Some(value.value())),
+                Ok(None) => Ok(None),
+                Err(e) => Err(anyhow::anyhow!(e.to_string())),
+            },
+            Err(_) => Ok(None),
+        }
+    }
+
     fn set_note(&self, key: &str, value: &str) -> Result<()> {
         let write_txn = self.db.begin_write()?;
         {

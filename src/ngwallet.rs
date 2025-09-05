@@ -127,16 +127,14 @@ impl<P: WalletPersister> NgWallet<P> {
         let mut transactions: Vec<BitcoinTransaction> = vec![];
         let tip_height = wallet.latest_checkpoint().height();
         let storage = &self.meta_storage;
+        pub const FEE_UNKNOWN: u64 = i64::MAX as u64; // flutter max intiger for fee
 
         //add date to transaction
         for (index, canonical_tx) in wallet.transactions().enumerate() {
             let tx = canonical_tx.tx_node.tx;
             let tx_id = canonical_tx.tx_node.txid.to_string();
             let (sent, received) = wallet.sent_and_received(tx.as_ref());
-            let fee = wallet
-                .calculate_fee(tx.as_ref())
-                .unwrap_or(Amount::from_sat(0))
-                .to_sat();
+
             #[allow(unused_assignments)]
             let mut date: Option<u64> = None;
             let block_height = match canonical_tx.chain_position {
@@ -305,11 +303,47 @@ impl<P: WalletPersister> NgWallet<P> {
                 ret
             };
             let vsize = tx.vsize() as f32;
-            let fee_rate = if vsize > 0.0 {
+
+            let mut fee: u64 = storage.get_fee(&tx_id).unwrap_or(None).unwrap_or(0);
+
+            // calculate fee if it does not exist
+            if (fee == 0 || fee == FEE_UNKNOWN) && !tx.is_coinbase() {
+                // try to calculate fee via graphs
+                fee = wallet
+                    .calculate_fee(tx.as_ref())
+                    .unwrap_or(Amount::from_sat(0))
+                    .to_sat();
+
+                // fallback if the fee was not calculated
+                if fee == 0 || fee == FEE_UNKNOWN {
+                    let input_amount: u64 = inputs.iter().map(|input| input.amount).sum();
+                    let output_amount: u64 = outputs.iter().map(|output| output.amount).sum();
+
+                    match input_amount.checked_sub(output_amount) {
+                        Some(val) => {
+                            fee = val; // this is for self send tx's
+                        }
+                        None => {
+                            #[cfg(feature = "envoy")]
+                            if let Some(electrum_fee) = Self::fetch_fee_from_electrum(&tx_id) {
+                                fee = electrum_fee; // get the fee from electrum
+                            } else {
+                                fee = FEE_UNKNOWN;
+                            }
+                        }
+                    }
+                }
+
+                // save the final fee to storage
+                let _ = storage.set_fee(&tx_id, fee).ok();
+            }
+
+            let fee_rate = if vsize > 0.0 && fee != FEE_UNKNOWN {
                 (fee as f32 / vsize) as u64
             } else {
                 0
             };
+
             storage.get_note(&tx_id).unwrap_or(None);
             transactions.push(BitcoinTransaction {
                 tx_id: tx_id.clone(),
@@ -331,6 +365,38 @@ impl<P: WalletPersister> NgWallet<P> {
         }
 
         Ok(transactions)
+    }
+
+    #[cfg(feature = "envoy")]
+    fn fetch_fee_from_electrum(txid: &str) -> Option<u64> {
+        use bdk_wallet::bitcoin::Txid;
+        use std::str::FromStr;
+
+        // somehow implement servers from flutter instead of hardcoding ˇˇˇˇˇ
+        let client = utils::build_electrum_client("ssl://signet.foundation.xyz:50002", None);
+
+        let txid = Txid::from_str(txid).ok()?;
+        let tx = client.fetch_tx(txid).ok()?;
+
+        let input_sum: u64 = tx
+            .input
+            .iter()
+            .filter_map(|input| {
+                let prev_txid = input.previous_output.txid;
+                let vout = input.previous_output.vout;
+
+                let prev_tx = client.fetch_tx(prev_txid).ok()?;
+                let prev_out = prev_tx.output.get(vout as usize)?;
+
+                Some(prev_out.value.to_sat())
+            })
+            .sum();
+
+        let output_sum: u64 = tx.output.iter().map(|o| o.value.to_sat()).sum();
+
+        let fee = input_sum.saturating_sub(output_sum);
+
+        Some(fee)
     }
 
     #[cfg(feature = "envoy")]

@@ -7,6 +7,9 @@ use std::{
 };
 
 pub trait MetaStorage: Debug + Send + Sync {
+    fn set_fee(&self, txid: &str, fee: u64) -> Result<()>;
+    fn get_fee(&self, txid: &str) -> Result<Option<u64>>;
+
     fn set_note(&self, key: &str, value: &str) -> Result<()>;
     fn get_note(&self, key: &str) -> Result<Option<String>>;
 
@@ -45,11 +48,23 @@ pub struct InMemoryMetaStorage {
     tag_list: Map<String, String>,
     do_not_spend_store: Map<String, bool>,
     last_verified_address_store: Map<(AddressType, KeychainKind), u32>,
+    fee_store: Map<String, u64>,
 }
 
 type Map<K, V> = Arc<Mutex<std::collections::HashMap<K, V>>>;
 
 impl MetaStorage for InMemoryMetaStorage {
+    fn set_fee(&self, txid: &str, fee: u64) -> Result<()> {
+        let mut map = self.fee_store.lock().unwrap();
+        map.insert(txid.to_string(), fee);
+        Ok(())
+    }
+
+    fn get_fee(&self, txid: &str) -> Result<Option<u64>> {
+        let map = self.fee_store.lock().unwrap();
+        Ok(map.get(txid).cloned())
+    }
+
     fn set_note(&self, key: &str, value: &str) -> Result<()> {
         self.notes_store
             .lock()
