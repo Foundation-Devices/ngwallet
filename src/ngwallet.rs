@@ -1,7 +1,7 @@
 use std::fmt::Debug;
 use std::result::Result::Ok;
 use std::str::FromStr;
-use std::sync::{Arc, Mutex, OnceLock};
+use std::sync::{Arc, Mutex};
 
 use anyhow::Result;
 use bdk_core::TxUpdate;
