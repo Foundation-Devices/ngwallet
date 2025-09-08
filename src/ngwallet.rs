@@ -1,7 +1,7 @@
 use std::fmt::Debug;
 use std::result::Result::Ok;
 use std::str::FromStr;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, OnceLock};
 
 use anyhow::Result;
 use bdk_core::TxUpdate;
@@ -23,6 +23,30 @@ use crate::{BATCH_SIZE, STOP_GAP};
 use crate::store::MetaStorage;
 use crate::transaction::{BitcoinTransaction, Input, KeyChain, Output};
 use crate::utils;
+
+// Store the last used Electrum server and SOCKS proxy
+#[cfg(feature = "envoy")]
+static LAST_USED_CONNECTION: OnceLock<Mutex<Option<(String, Option<String>)>>> = OnceLock::new();
+
+#[cfg(feature = "envoy")]
+fn last_used_connection() -> &'static Mutex<Option<(String, Option<String>)>> {
+    LAST_USED_CONNECTION.get_or_init(|| Mutex::new(None))
+}
+
+#[cfg(feature = "envoy")]
+fn set_last_used_connection(electrum_server: &str, socks_proxy: Option<&str>) {
+    let mut conn = last_used_connection().lock().unwrap();
+    *conn = Some((
+        electrum_server.to_string(),
+        socks_proxy.map(|s| s.to_string()),
+    ));
+}
+
+#[cfg(feature = "envoy")]
+pub fn get_last_used_connection() -> Option<(String, Option<String>)> {
+    let conn = last_used_connection().lock().unwrap();
+    conn.clone()
+}
 
 #[derive(Debug)]
 pub struct PsbtInfo {
@@ -127,6 +151,7 @@ impl<P: WalletPersister> NgWallet<P> {
         let mut transactions: Vec<BitcoinTransaction> = vec![];
         let tip_height = wallet.latest_checkpoint().height();
         let storage = &self.meta_storage;
+
         pub const FEE_UNKNOWN: u64 = i64::MAX as u64; // flutter max intiger for fee
 
         //add date to transaction
@@ -372,8 +397,8 @@ impl<P: WalletPersister> NgWallet<P> {
         use bdk_wallet::bitcoin::Txid;
         use std::str::FromStr;
 
-        // somehow implement servers from flutter instead of hardcoding ˇˇˇˇˇ
-        let client = utils::build_electrum_client("ssl://signet.foundation.xyz:50002", None);
+        let (server, socks) = get_last_used_connection()?;
+        let client = utils::build_electrum_client(&server, None);
 
         let txid = Txid::from_str(txid).ok()?;
         let tx = client.fetch_tx(txid).ok()?;
@@ -414,7 +439,9 @@ impl<P: WalletPersister> NgWallet<P> {
         electrum_server: &str,
         socks_proxy: Option<&str>,
     ) -> Result<SyncResponse> {
+        set_last_used_connection(electrum_server, socks_proxy);
         let bdk_client = utils::build_electrum_client(electrum_server, socks_proxy);
+
         info!(
             "Syncing wallet with request: {:?}, {:?}",
             std::thread::current().name(),
@@ -430,6 +457,7 @@ impl<P: WalletPersister> NgWallet<P> {
         electrum_server: &str,
         socks_proxy: Option<&str>,
     ) -> Result<FullScanResponse<KeychainKind>> {
+        set_last_used_connection(electrum_server, socks_proxy);
         let client = utils::build_electrum_client(electrum_server, socks_proxy);
         let update = client.full_scan(request, STOP_GAP, BATCH_SIZE, true)?;
         Ok(update)

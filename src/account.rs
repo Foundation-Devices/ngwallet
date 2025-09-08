@@ -726,6 +726,7 @@ impl<P: WalletPersister> NgAccount<P> {
 
             // Add TX entries, linked to correct descriptor origin
             let origin = utils::extract_descriptor_origin(&descriptor);
+
             let txs = wallet.transactions()?;
             for tx in txs {
                 let key = format!("{}:{}", tx.tx_id, origin);
