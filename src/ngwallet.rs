@@ -1,7 +1,7 @@
 use std::fmt::Debug;
 use std::result::Result::Ok;
 use std::str::FromStr;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, OnceLock};
 
 use anyhow::Result;
 use bdk_core::TxUpdate;
@@ -25,10 +25,9 @@ use crate::transaction::{BitcoinTransaction, Input, KeyChain, Output};
 use crate::utils;
 
 // Store the last used Electrum server and SOCKS proxy
-#[cfg(feature = "envoy")]
+
 static LAST_USED_CONNECTION: OnceLock<Mutex<Option<(String, Option<String>)>>> = OnceLock::new();
 
-#[cfg(feature = "envoy")]
 fn last_used_connection() -> &'static Mutex<Option<(String, Option<String>)>> {
     LAST_USED_CONNECTION.get_or_init(|| Mutex::new(None))
 }
@@ -42,7 +41,6 @@ fn set_last_used_connection(electrum_server: &str, socks_proxy: Option<&str>) {
     ));
 }
 
-#[cfg(feature = "envoy")]
 pub fn get_last_used_connection() -> Option<(String, Option<String>)> {
     let conn = last_used_connection().lock().unwrap();
     conn.clone()
