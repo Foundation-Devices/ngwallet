@@ -25,8 +25,10 @@ use crate::transaction::{BitcoinTransaction, Input, KeyChain, Output};
 use crate::utils;
 
 // Store the last used Electrum server and SOCKS proxy
+type ConnectionInfo = Option<(String, Option<String>)>;
+type SharedConnection = Mutex<ConnectionInfo>;
 
-static LAST_USED_CONNECTION: OnceLock<Mutex<Option<(String, Option<String>)>>> = OnceLock::new();
+static LAST_USED_CONNECTION: OnceLock<SharedConnection> = OnceLock::new();
 
 fn last_used_connection() -> &'static Mutex<Option<(String, Option<String>)>> {
     LAST_USED_CONNECTION.get_or_init(|| Mutex::new(None))
@@ -396,7 +398,7 @@ impl<P: WalletPersister> NgWallet<P> {
         use std::str::FromStr;
 
         let (server, socks) = get_last_used_connection()?;
-        let client = utils::build_electrum_client(&server, None);
+        let client = utils::build_electrum_client(&server, socks.as_deref());
 
         let txid = Txid::from_str(txid).ok()?;
         let tx = client.fetch_tx(txid).ok()?;
