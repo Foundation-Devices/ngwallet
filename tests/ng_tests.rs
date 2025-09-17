@@ -17,7 +17,6 @@ mod utils;
 
 #[cfg(test)]
 mod tests {
-    use anyhow::Context;
     use bdk_wallet::bitcoin::Psbt;
     use bdk_wallet::bitcoin::key::Secp256k1;
     use bdk_wallet::miniscript::psbt::PsbtExt;
