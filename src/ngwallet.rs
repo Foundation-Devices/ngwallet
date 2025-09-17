@@ -17,6 +17,8 @@ use bdk_wallet::{Update, Wallet};
 #[cfg(feature = "envoy")]
 use log::info;
 
+pub const FEE_UNKNOWN: u64 = i64::MAX as u64; // flutter max intiger for fee
+
 use crate::config::AddressType;
 #[cfg(feature = "envoy")]
 use crate::{BATCH_SIZE, STOP_GAP};
@@ -134,10 +136,7 @@ impl<P: WalletPersister> NgWallet<P> {
             let tx = canonical_tx.tx_node.tx;
             let tx_id = canonical_tx.tx_node.txid.to_string();
             let (sent, received) = wallet.sent_and_received(tx.as_ref());
-            let fee = wallet
-                .calculate_fee(tx.as_ref())
-                .unwrap_or(Amount::from_sat(0))
-                .to_sat();
+
             #[allow(unused_assignments)]
             let mut date: Option<u64> = None;
             let block_height = match canonical_tx.chain_position {
@@ -306,11 +305,45 @@ impl<P: WalletPersister> NgWallet<P> {
                 ret
             };
             let vsize = tx.vsize() as f32;
-            let fee_rate = if vsize > 0.0 {
+
+            let mut fee: u64 = storage
+                .get_fee(&tx_id)
+                .unwrap_or(None)
+                .unwrap_or(FEE_UNKNOWN);
+
+            // calculate fee if it does not exist
+            if fee == FEE_UNKNOWN && !tx.is_coinbase() {
+                // try to calculate fee via graphs
+                fee = wallet
+                    .calculate_fee(tx.as_ref())
+                    .unwrap_or(Amount::from_sat(FEE_UNKNOWN))
+                    .to_sat();
+
+                // fallback if the fee was not calculated
+                if fee == FEE_UNKNOWN {
+                    let input_amount: u64 = inputs.iter().map(|input| input.amount).sum();
+                    let output_amount: u64 = outputs.iter().map(|output| output.amount).sum();
+
+                    match input_amount.checked_sub(output_amount) {
+                        Some(val) => {
+                            fee = val; // this is for self send tx's
+                        }
+                        None => {
+                            fee = FEE_UNKNOWN;
+                        }
+                    }
+                }
+
+                // save the final fee to storage
+                let _ = storage.set_fee(&tx_id, fee).ok();
+            }
+
+            let fee_rate = if vsize > 0.0 && fee != FEE_UNKNOWN {
                 (fee as f32 / vsize) as u64
             } else {
                 0
             };
+
             storage.get_note(&tx_id).unwrap_or(None);
             transactions.push(BitcoinTransaction {
                 tx_id: tx_id.clone(),
@@ -350,6 +383,7 @@ impl<P: WalletPersister> NgWallet<P> {
         socks_proxy: Option<&str>,
     ) -> Result<SyncResponse> {
         let bdk_client = utils::build_electrum_client(electrum_server, socks_proxy);
+
         info!(
             "Syncing wallet with request: {:?}, {:?}",
             std::thread::current().name(),
