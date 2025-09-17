@@ -17,17 +17,17 @@ mod utils;
 
 #[cfg(test)]
 mod tests {
+    use anyhow::Context;
     use bdk_wallet::bitcoin::Psbt;
     use bdk_wallet::bitcoin::key::Secp256k1;
     use bdk_wallet::miniscript::psbt::PsbtExt;
     use bdk_wallet::{KeychainKind, SignOptions};
-    use std::sync::{Arc, Mutex};
-
     use ngwallet::account::NgAccount;
     use ngwallet::bip39;
     use ngwallet::bip39::get_descriptors;
     use ngwallet::config::{AddressType, NgAccountBackup, NgAccountBuilder};
     use ngwallet::send::TransactionParams;
+    use std::sync::{Arc, Mutex};
     #[cfg(feature = "envoy")]
     use {
         crate::*, bdk_wallet::Update, bdk_wallet::bitcoin::Network,
@@ -151,6 +151,23 @@ mod tests {
             assert!(tags.unwrap().is_empty());
         }
         account.persist().unwrap();
+
+        //test fee electrum fee fetching
+        let first_tx = account.transactions().unwrap()[0].clone();
+        let fee = NgAccount::<Connection>::fetch_fee_from_electrum(
+            &first_tx.tx_id,
+            ELECTRUM_SERVER,
+            None,
+        );
+        assert!(fee.is_some());
+        assert!(fee.unwrap() > 0);
+        account
+            .update_fee(&first_tx.tx_id, fee.expect("Failed to fetch fee"))
+            .expect("Failed to update fee");
+        account.persist().unwrap();
+        let transactions = account.transactions().unwrap();
+        let tx_fee = transactions[0].fee;
+        assert_eq!(tx_fee, fee.unwrap());
     }
 
     #[test]
