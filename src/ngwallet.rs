@@ -1,7 +1,7 @@
 use std::fmt::Debug;
 use std::result::Result::Ok;
 use std::str::FromStr;
-use std::sync::{Arc, Mutex, OnceLock};
+use std::sync::{Arc, Mutex};
 
 use anyhow::Result;
 use bdk_core::TxUpdate;
@@ -16,6 +16,8 @@ use bdk_wallet::{KeychainKind, WalletPersister};
 use bdk_wallet::{Update, Wallet};
 use log::info;
 
+pub const FEE_UNKNOWN: u64 = i64::MAX as u64; // flutter max intiger for fee
+
 use crate::config::AddressType;
 #[cfg(feature = "envoy")]
 use crate::{BATCH_SIZE, STOP_GAP};
@@ -23,30 +25,6 @@ use crate::{BATCH_SIZE, STOP_GAP};
 use crate::store::MetaStorage;
 use crate::transaction::{BitcoinTransaction, Input, KeyChain, Output};
 use crate::utils;
-
-// Store the last used Electrum server and SOCKS proxy
-type ConnectionInfo = Option<(String, Option<String>)>;
-type SharedConnection = Mutex<ConnectionInfo>;
-
-static LAST_USED_CONNECTION: OnceLock<SharedConnection> = OnceLock::new();
-
-fn last_used_connection() -> &'static Mutex<Option<(String, Option<String>)>> {
-    LAST_USED_CONNECTION.get_or_init(|| Mutex::new(None))
-}
-
-#[cfg(feature = "envoy")]
-fn set_last_used_connection(electrum_server: &str, socks_proxy: Option<&str>) {
-    let mut conn = last_used_connection().lock().unwrap();
-    *conn = Some((
-        electrum_server.to_string(),
-        socks_proxy.map(|s| s.to_string()),
-    ));
-}
-
-pub fn get_last_used_connection() -> Option<(String, Option<String>)> {
-    let conn = last_used_connection().lock().unwrap();
-    conn.clone()
-}
 
 #[derive(Debug)]
 pub struct PsbtInfo {
@@ -151,8 +129,6 @@ impl<P: WalletPersister> NgWallet<P> {
         let mut transactions: Vec<BitcoinTransaction> = vec![];
         let tip_height = wallet.latest_checkpoint().height();
         let storage = &self.meta_storage;
-
-        pub const FEE_UNKNOWN: u64 = i64::MAX as u64; // flutter max intiger for fee
 
         //add date to transaction
         for (index, canonical_tx) in wallet.transactions().enumerate() {
@@ -329,18 +305,21 @@ impl<P: WalletPersister> NgWallet<P> {
             };
             let vsize = tx.vsize() as f32;
 
-            let mut fee: u64 = storage.get_fee(&tx_id).unwrap_or(None).unwrap_or(0);
+            let mut fee: u64 = storage
+                .get_fee(&tx_id)
+                .unwrap_or(None)
+                .unwrap_or(FEE_UNKNOWN);
 
             // calculate fee if it does not exist
-            if (fee == 0 || fee == FEE_UNKNOWN) && !tx.is_coinbase() {
+            if fee == FEE_UNKNOWN && !tx.is_coinbase() {
                 // try to calculate fee via graphs
                 fee = wallet
                     .calculate_fee(tx.as_ref())
-                    .unwrap_or(Amount::from_sat(0))
+                    .unwrap_or(Amount::from_sat(FEE_UNKNOWN))
                     .to_sat();
 
                 // fallback if the fee was not calculated
-                if fee == 0 || fee == FEE_UNKNOWN {
+                if fee == FEE_UNKNOWN {
                     let input_amount: u64 = inputs.iter().map(|input| input.amount).sum();
                     let output_amount: u64 = outputs.iter().map(|output| output.amount).sum();
 
@@ -349,12 +328,7 @@ impl<P: WalletPersister> NgWallet<P> {
                             fee = val; // this is for self send tx's
                         }
                         None => {
-                            #[cfg(feature = "envoy")]
-                            if let Some(electrum_fee) = Self::fetch_fee_from_electrum(&tx_id) {
-                                fee = electrum_fee; // get the fee from electrum
-                            } else {
-                                fee = FEE_UNKNOWN;
-                            }
+                            fee = FEE_UNKNOWN;
                         }
                     }
                 }
@@ -393,38 +367,6 @@ impl<P: WalletPersister> NgWallet<P> {
     }
 
     #[cfg(feature = "envoy")]
-    fn fetch_fee_from_electrum(txid: &str) -> Option<u64> {
-        use bdk_wallet::bitcoin::Txid;
-        use std::str::FromStr;
-
-        let (server, socks) = get_last_used_connection()?;
-        let client = utils::build_electrum_client(&server, socks.as_deref());
-
-        let txid = Txid::from_str(txid).ok()?;
-        let tx = client.fetch_tx(txid).ok()?;
-
-        let input_sum: u64 = tx
-            .input
-            .iter()
-            .filter_map(|input| {
-                let prev_txid = input.previous_output.txid;
-                let vout = input.previous_output.vout;
-
-                let prev_tx = client.fetch_tx(prev_txid).ok()?;
-                let prev_out = prev_tx.output.get(vout as usize)?;
-
-                Some(prev_out.value.to_sat())
-            })
-            .sum();
-
-        let output_sum: u64 = tx.output.iter().map(|o| o.value.to_sat()).sum();
-
-        let fee = input_sum.saturating_sub(output_sum);
-
-        Some(fee)
-    }
-
-    #[cfg(feature = "envoy")]
     pub fn sync_request(&self) -> SyncRequest<(KeychainKind, u32)> {
         self.bdk_wallet
             .lock()
@@ -439,7 +381,6 @@ impl<P: WalletPersister> NgWallet<P> {
         electrum_server: &str,
         socks_proxy: Option<&str>,
     ) -> Result<SyncResponse> {
-        set_last_used_connection(electrum_server, socks_proxy);
         let bdk_client = utils::build_electrum_client(electrum_server, socks_proxy);
 
         info!(
@@ -457,7 +398,6 @@ impl<P: WalletPersister> NgWallet<P> {
         electrum_server: &str,
         socks_proxy: Option<&str>,
     ) -> Result<FullScanResponse<KeychainKind>> {
-        set_last_used_connection(electrum_server, socks_proxy);
         let client = utils::build_electrum_client(electrum_server, socks_proxy);
         let update = client.full_scan(request, STOP_GAP, BATCH_SIZE, true)?;
         Ok(update)
