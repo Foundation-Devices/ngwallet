@@ -6,7 +6,6 @@ use std::sync::{Arc, Mutex};
 use crate::config::{AddressType, NgAccountBackup, NgAccountConfig, NgDescriptor};
 use crate::db::RedbMetaStorage;
 #[cfg(feature = "envoy")]
-use crate::ngwallet::FEE_UNKNOWN;
 use crate::ngwallet::NgWallet;
 use crate::store::MetaStorage;
 use crate::transaction::{BitcoinTransaction, Output};
@@ -401,49 +400,6 @@ impl<P: WalletPersister> NgAccount<P> {
         Ok(balances)
     }
 
-    #[cfg(feature = "envoy")]
-    pub fn fetch_fee_from_electrum(
-        &self,
-        txid: &str,
-        electrum_server: &str,
-        socks_proxy: Option<&str>,
-    ) -> Option<u64> {
-        use bdk_wallet::bitcoin::Txid;
-        use std::str::FromStr;
-        let storage = &self.meta_storage;
-        let mut fee: u64 = storage.get_fee(txid).unwrap_or(None).unwrap_or(FEE_UNKNOWN);
-
-        if fee == FEE_UNKNOWN {
-            let client = utils::build_electrum_client(electrum_server, socks_proxy);
-
-            let tx_id = Txid::from_str(txid).ok()?;
-            let tx = client.fetch_tx(tx_id).ok()?;
-
-            let input_sum: u64 = tx
-                .input
-                .iter()
-                .filter_map(|input| {
-                    let prev_txid = input.previous_output.txid;
-                    let vout = input.previous_output.vout;
-
-                    let prev_tx = client.fetch_tx(prev_txid).ok()?;
-                    let prev_out = prev_tx.output.get(vout as usize)?;
-
-                    Some(prev_out.value.to_sat())
-                })
-                .sum();
-
-            let output_sum: u64 = tx.output.iter().map(|o| o.value.to_sat()).sum();
-
-            fee = input_sum.saturating_sub(output_sum);
-
-            // save the final fee to storage
-            let _ = storage.set_fee(txid, fee).ok();
-        }
-
-        Some(fee)
-    }
-
     pub fn transactions(&self) -> anyhow::Result<Vec<BitcoinTransaction>> {
         let mut transactions: Vec<BitcoinTransaction> = vec![];
 
@@ -736,6 +692,45 @@ impl<P: WalletPersister> NgAccount<P> {
     pub fn read_config_from_backend(backend: impl StorageBackend) -> Option<NgAccountConfig> {
         let meta_storage = RedbMetaStorage::from_backend(backend).ok()?;
         Self::read_config_inner(meta_storage)
+    }
+
+    #[cfg(feature = "envoy")]
+    pub fn fetch_fee_from_electrum(
+        txid: &str,
+        electrum_server: &str,
+        socks_proxy: Option<&str>,
+    ) -> Option<u64> {
+        use bdk_wallet::bitcoin::Txid;
+        use std::str::FromStr;
+        let client = utils::build_electrum_client(electrum_server, socks_proxy);
+
+        let tx_id = Txid::from_str(txid).ok()?;
+        let tx = client.fetch_tx(tx_id).ok()?;
+
+        let input_sum: u64 = tx
+            .input
+            .iter()
+            .filter_map(|input| {
+                let prev_txid = input.previous_output.txid;
+                let vout = input.previous_output.vout;
+
+                let prev_tx = client.fetch_tx(prev_txid).ok()?;
+                let prev_out = prev_tx.output.get(vout as usize)?;
+
+                Some(prev_out.value.to_sat())
+            })
+            .sum();
+
+        let output_sum: u64 = tx.output.iter().map(|o| o.value.to_sat()).sum();
+
+        let fee = input_sum.saturating_sub(output_sum);
+        Some(fee)
+    }
+
+    pub fn update_fee(&self, txid: &str, fee: u64) -> anyhow::Result<()> {
+        self.meta_storage
+            .set_fee(txid, fee)
+            .with_context(|| "Failed to set fee")
     }
 
     pub fn serialize_updates(
