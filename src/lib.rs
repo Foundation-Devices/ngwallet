@@ -3,7 +3,7 @@ pub mod config;
 pub mod ngwallet;
 pub mod rbf;
 pub mod send;
-mod store;
+pub mod store;
 pub mod transaction;
 pub mod utxo;
 
@@ -11,7 +11,7 @@ pub use bdk_wallet;
 pub use redb;
 
 pub mod bip39;
-mod db;
+pub mod db;
 pub mod utils;
 
 #[cfg(feature = "envoy")]

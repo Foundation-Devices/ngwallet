@@ -5,7 +5,6 @@ use std::sync::{Arc, Mutex};
 
 use crate::config::{AddressType, NgAccountBackup, NgAccountConfig, NgDescriptor};
 use crate::db::RedbMetaStorage;
-#[cfg(feature = "envoy")]
 use crate::ngwallet::NgWallet;
 use crate::store::MetaStorage;
 use crate::transaction::{BitcoinTransaction, Output};
@@ -19,8 +18,6 @@ use bdk_wallet::chain::spk_client::FullScanRequest;
 #[cfg(feature = "envoy")]
 use bdk_wallet::chain::spk_client::SyncRequest;
 use bdk_wallet::{AddressInfo, Balance, KeychainKind, Update, WalletPersister};
-use log::info;
-use redb::StorageBackend;
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone)]
@@ -172,7 +169,7 @@ pub fn verify_address_stateless(
 pub struct NgAccount<P: WalletPersister> {
     pub config: NgAccountConfig,
     pub wallets: Vec<NgWallet<P>>,
-    meta_storage: Arc<dyn MetaStorage>,
+    pub meta_storage: Arc<dyn MetaStorage>,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -202,7 +199,7 @@ pub fn get_persister_file_name(internal: &str, external: Option<&str>) -> String
 }
 
 impl<P: WalletPersister> NgAccount<P> {
-    pub(crate) fn new_from_descriptors(
+    pub fn new_from_descriptors(
         ng_account_config: NgAccountConfig,
         meta: Arc<dyn MetaStorage>,
         descriptors: Vec<Descriptor<P>>,
@@ -259,14 +256,14 @@ impl<P: WalletPersister> NgAccount<P> {
         Self::open_account_inner(descriptors, Arc::new(meta_storage))
     }
 
-    pub fn open_account_from_backend(
+    pub fn open_account_from_db(
         descriptors: Vec<Descriptor<P>>,
-        backend: impl StorageBackend,
+        db: redb::Database,
     ) -> anyhow::Result<Self>
     where
         <P as WalletPersister>::Error: Debug,
     {
-        let meta_storage = RedbMetaStorage::from_backend(backend)?;
+        let meta_storage = RedbMetaStorage::from_db(db);
         Self::open_account_inner(descriptors, Arc::new(meta_storage))
     }
 
@@ -684,16 +681,6 @@ impl<P: WalletPersister> NgAccount<P> {
         descriptors
     }
 
-    pub fn read_config_from_file(db_path: Option<String>) -> Option<NgAccountConfig> {
-        let meta_storage = RedbMetaStorage::from_file(db_path).ok()?;
-        Self::read_config_inner(meta_storage)
-    }
-
-    pub fn read_config_from_backend(backend: impl StorageBackend) -> Option<NgAccountConfig> {
-        let meta_storage = RedbMetaStorage::from_backend(backend).ok()?;
-        Self::read_config_inner(meta_storage)
-    }
-
     #[cfg(feature = "envoy")]
     pub fn fetch_fee_from_electrum(
         txid: &str,
@@ -962,15 +949,5 @@ impl<P: WalletPersister> NgAccount<P> {
             wallets,
             meta_storage,
         })
-    }
-
-    fn read_config_inner(meta_storage: impl MetaStorage) -> Option<NgAccountConfig> {
-        match meta_storage.get_config() {
-            Ok(value) => value.clone(),
-            Err(e) => {
-                info!("Error reading config {e:?}");
-                None
-            }
-        }
     }
 }

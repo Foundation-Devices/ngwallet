@@ -21,7 +21,6 @@ use bdk_wallet::miniscript::descriptor::{
     DerivPaths, DescriptorMultiXKey, DescriptorPublicKey, DescriptorXKey, ShInner, SortedMultiVec,
     Wildcard, WshInner,
 };
-use redb::StorageBackend;
 use regex::Regex;
 use serde::{Deserialize, Serialize};
 
@@ -732,6 +731,21 @@ impl NgAccountConfig {
             Some(update) => Ok(update),
         }
     }
+
+    pub fn from_storage(meta_storage: impl MetaStorage) -> Option<NgAccountConfig> {
+        match meta_storage.get_config() {
+            Ok(value) => value,
+            Err(e) => {
+                log::info!("Error reading config {e:?}");
+                None
+            }
+        }
+    }
+
+    pub fn from_file(db_path: Option<String>) -> Option<NgAccountConfig> {
+        let meta_storage = RedbMetaStorage::from_file(db_path).ok()?;
+        Self::from_storage(meta_storage)
+    }
 }
 
 impl NgAccountBackup {
@@ -851,8 +865,8 @@ impl<P: WalletPersister> NgAccountBuilder<P> {
         self.build_inner(meta_storage)
     }
 
-    pub fn build_from_backend(self, backend: impl StorageBackend) -> anyhow::Result<NgAccount<P>> {
-        let meta_storage = RedbMetaStorage::from_backend(backend)?;
+    pub fn build_from_db(self, db: redb::Database) -> anyhow::Result<NgAccount<P>> {
+        let meta_storage = RedbMetaStorage::from_db(db);
         self.build_inner(meta_storage)
     }
 
