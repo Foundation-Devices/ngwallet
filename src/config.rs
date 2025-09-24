@@ -1,4 +1,5 @@
 use anyhow::{self, Context, bail};
+use bdk_core::bitcoin::hex::DisplayHex;
 #[cfg(feature = "sha2")]
 use sha2::{Digest, Sha256};
 use std::cmp::Ordering;
@@ -35,7 +36,7 @@ pub const ACCEPTED_FORMATS: &[AddressType] =
 )]
 pub struct MultiSigSigner {
     derivation: String,
-    fingerprint: String,
+    fingerprint: [u8; 4],
     pubkey: String,
 }
 
@@ -71,7 +72,7 @@ impl MultiSigSigner {
 
         Self {
             derivation: deriv_str,
-            fingerprint: fingerprint.to_string().to_uppercase(),
+            fingerprint: fingerprint.to_bytes(),
             pubkey: pubkey.to_string(),
         }
     }
@@ -80,18 +81,18 @@ impl MultiSigSigner {
         DerivationPath::from_str(&self.derivation)
     }
 
-    pub fn get_fingerprint(&self) -> Result<Fingerprint, bip32::Error> {
-        Fingerprint::from_str(&self.fingerprint).map_err(bip32::Error::Hex)
+    pub fn get_fingerprint(&self) -> Fingerprint {
+        Fingerprint::from(&self.fingerprint)
     }
 
     pub fn get_pubkey(&self) -> Result<Xpub, bip32::Error> {
         Xpub::from_str(&self.pubkey)
     }
 
-    pub fn get_derivation_str(&self) -> &str {
+    pub fn get_derivation_inner(&self) -> &str {
         &self.derivation
     }
-    pub fn get_fingerprint_str(&self) -> &str {
+    pub fn get_fingerprint_inner(&self) -> &[u8; 4] {
         &self.fingerprint
     }
     pub fn get_pubkey_str(&self) -> &str {
@@ -140,7 +141,12 @@ impl fmt::Display for MultiSigDetails {
 
         for (i, signer) in self.signers.iter().enumerate() {
             writeln!(f, "Derivation: {}", signer.derivation)?;
-            write!(f, "{}: {}", signer.fingerprint, signer.pubkey)?;
+            write!(
+                f,
+                "{}: {}",
+                signer.fingerprint.to_upper_hex_string(),
+                signer.pubkey
+            )?;
             if i + 1 != self.policy_total_keys {
                 write!(f, "\n\n")?;
             }
@@ -424,7 +430,7 @@ impl MultiSigDetails {
             signer.get_derivation(),
             signer.get_pubkey(),
         ) {
-            (Ok(f), Ok(d), Ok(p)) => (f, d, p),
+            (f, Ok(d), Ok(p)) => (f, d, p),
             _ => return None,
         };
         let master_path = DerivationPath::master();
@@ -451,7 +457,7 @@ impl MultiSigDetails {
             signer.get_derivation(),
             signer.get_pubkey(),
         ) {
-            (Ok(f), Ok(d), Ok(p)) => (f, d, p),
+            (f, Ok(d), Ok(p)) => (f, d, p),
             _ => return None,
         };
         let path = DerivationPath::master().child(ChildNumber::Normal {
@@ -547,7 +553,7 @@ impl MultiSigDetails {
 
         for s in signers {
             hasher.update(s.derivation.as_bytes());
-            hasher.update(s.fingerprint.as_bytes());
+            hasher.update(s.fingerprint);
             hasher.update(s.pubkey.as_bytes());
         }
 
@@ -942,14 +948,14 @@ AB88DE89: tpubDFUc8ddWCzA8kC195Zn6UitBcBGXbPbtjktU2dk2Deprnf6sR15GAyHLQKUjAPa3gq
             signers: vec![
                 MultiSigSigner {
                     derivation: String::from("m/48'/1'/0'/2'"),
-                    fingerprint: String::from("AB88DE89"),
+                    fingerprint: [0xAB, 0x88, 0xDE, 0x89],
                     pubkey: String::from(
                         "tpubDFUc8ddWCzA8kC195Zn6UitBcBGXbPbtjktU2dk2Deprnf6sR15GAyHLQKUjAPa3gqD74g7Eea3NSqkb9FfYRZzEm2MTbCtTDZAKSHezJwb",
                     ),
                 },
                 MultiSigSigner {
                     derivation: String::from("m/48'/1'/0'/2'"),
-                    fingerprint: String::from("662A42E4"),
+                    fingerprint: [0x66, 0x2A, 0x42, 0xE4],
                     pubkey: String::from(
                         "tpubDFGqX4Ge633XixPNo4uF5h6sPkv32bwJrknDmmPGMq8Tn3Pu9QgWfk5hUiDe7gvv2eaFeaHXgjiZwKvnP3AhusoaWBK3qTv8cznyHxxGoSF",
                     ),
@@ -1034,14 +1040,14 @@ Derivation: m/48'/1'/0'/2'
             signers: vec![
                 MultiSigSigner {
                     derivation: String::from("m/48'/1'/0'/2'"),
-                    fingerprint: String::from("662A42E4"),
+                    fingerprint: [0x66, 0x2A, 0x42, 0xE4],
                     pubkey: String::from(
                         "tpubDFGqX4Ge633XixPNo4uF5h6sPkv32bwJrknDmmPGMq8Tn3Pu9QgWfk5hUiDe7gvv2eaFeaHXgjiZwKvnP3AhusoaWBK3qTv8cznyHxxGoSF",
                     ),
                 },
                 MultiSigSigner {
                     derivation: String::from("m/48'/1'/0'/2'"),
-                    fingerprint: String::from("AB88DE89"),
+                    fingerprint: [0xAB, 0x88, 0xDE, 0x89],
                     pubkey: String::from(
                         "tpubDFUc8ddWCzA8kC195Zn6UitBcBGXbPbtjktU2dk2Deprnf6sR15GAyHLQKUjAPa3gqD74g7Eea3NSqkb9FfYRZzEm2MTbCtTDZAKSHezJwb",
                     ),
@@ -1067,17 +1073,17 @@ Derivation: m/48'/1'/0'/2'
             vec![
                 MultiSigSigner {
                     derivation: String::from("m/48'/0'/0'/2'"),
-                    fingerprint: String::from("71C8BD85"),
+                    fingerprint: [0x71, 0xC8, 0xBD, 0x85],
                     pubkey: String::from("xpub6ESpvmZa75rCQWKik2KoCZrjTi6xhSubZKJ25rbtgZRk2g9tZTJqubhaGD3dJeqruw9KMCaanoEfJ1PVtBXiwTuuqLVwk9ucqkRv1sKWiEC"),
                 },
                 MultiSigSigner {
                     derivation: String::from("m/48'/0'/0'/2'"),
-                    fingerprint: String::from("AB88DE89"),
+                    fingerprint: [0xAB, 0x88, 0xDE, 0x89],
                     pubkey: String::from("xpub6EPJuK8Ejz82nKc7PsRgcYqdcQH9G1ZikCTasr9i79CbXxMMiPfxEyA14S6HPTHufmcQR7x8t5L3BP9tRfm9EBRBPic2xV892j9z4ePESae"),
                 },
                 MultiSigSigner {
                     derivation: String::from("m/48'/0'/0'/2'"),
-                    fingerprint: String::from("A9F9964A"),
+                    fingerprint: [0xA9, 0xF9, 0x96, 0x4A],
                     pubkey: String::from("xpub6FQY5W8WygMVYY2nTP188jFHNdZfH2t9qtcS8SPpFatUGiciqUsGZpNvEa1oABEyeAsrUL2XSnvuRUdrhf5LcMXcjhrUFBcneBYYZzky3Mc"),
                 }
             ],
@@ -1101,17 +1107,17 @@ Derivation: m/48'/1'/0'/2'
             vec![
                 MultiSigSigner {
                     derivation: String::from("m/48'/0'/0'/1'"),
-                    fingerprint: String::from("71C8BD85"),
+                    fingerprint: [0x71, 0xC8, 0xBD, 0x85],
                     pubkey: String::from("xpub6ESpvmZa75rCQWKik2KoCZrjTi6xhSubZKJ25rbtgZRk2g9tZTJqubhaGD3dJeqruw9KMCaanoEfJ1PVtBXiwTuuqLVwk9ucqkRv1sKWiEC"),
                 },
                 MultiSigSigner {
                     derivation: String::from("m/48'/0'/0'/1'"),
-                    fingerprint: String::from("AB88DE89"),
+                    fingerprint: [0xAB, 0x88, 0xDE, 0x89],
                     pubkey: String::from("xpub6EPJuK8Ejz82nKc7PsRgcYqdcQH9G1ZikCTasr9i79CbXxMMiPfxEyA14S6HPTHufmcQR7x8t5L3BP9tRfm9EBRBPic2xV892j9z4ePESae"),
                 },
                 MultiSigSigner {
                     derivation: String::from("m/48'/0'/0'/1'"),
-                    fingerprint: String::from("A9F9964A"),
+                    fingerprint: [0xA9, 0xF9, 0x96, 0x4A],
                     pubkey: String::from("xpub6FQY5W8WygMVYY2nTP188jFHNdZfH2t9qtcS8SPpFatUGiciqUsGZpNvEa1oABEyeAsrUL2XSnvuRUdrhf5LcMXcjhrUFBcneBYYZzky3Mc"),
                 }
             ],
@@ -1135,17 +1141,17 @@ Derivation: m/48'/1'/0'/2'
             vec![
                 MultiSigSigner {
                     derivation: String::from("m/48'/0'/0'/3'"),
-                    fingerprint: String::from("71C8BD85"),
+                    fingerprint: [0x71, 0xC8, 0xBD, 0x85],
                     pubkey: String::from("xpub6ESpvmZa75rCQWKik2KoCZrjTi6xhSubZKJ25rbtgZRk2g9tZTJqubhaGD3dJeqruw9KMCaanoEfJ1PVtBXiwTuuqLVwk9ucqkRv1sKWiEC"),
                 },
                 MultiSigSigner {
                     derivation: String::from("m/48'/0'/0'/3'"),
-                    fingerprint: String::from("AB88DE89"),
+                    fingerprint: [0xAB, 0x88, 0xDE, 0x89],
                     pubkey: String::from("xpub6EPJuK8Ejz82nKc7PsRgcYqdcQH9G1ZikCTasr9i79CbXxMMiPfxEyA14S6HPTHufmcQR7x8t5L3BP9tRfm9EBRBPic2xV892j9z4ePESae"),
                 },
                 MultiSigSigner {
                     derivation: String::from("m/48'/0'/0'/3'"),
-                    fingerprint: String::from("A9F9964A"),
+                    fingerprint: [0xA9, 0xF9, 0x96, 0x4A],
                     pubkey: String::from("xpub6FQY5W8WygMVYY2nTP188jFHNdZfH2t9qtcS8SPpFatUGiciqUsGZpNvEa1oABEyeAsrUL2XSnvuRUdrhf5LcMXcjhrUFBcneBYYZzky3Mc"),
                 }
             ],
