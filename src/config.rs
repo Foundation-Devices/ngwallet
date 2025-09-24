@@ -702,6 +702,7 @@ pub struct NgAccountConfig {
     pub network: Network,
     pub id: String,
     pub multisig: Option<MultiSigDetails>,
+    pub archived: bool,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -780,6 +781,7 @@ impl<P: WalletPersister> Default for NgAccountBuilder<P> {
             date_synced: None,
             seed_has_passphrase: None,
             multisig: None,
+            archived: None,
         }
     }
 }
@@ -798,6 +800,7 @@ pub struct NgAccountBuilder<P: WalletPersister> {
     date_synced: Option<String>,
     seed_has_passphrase: Option<bool>,
     multisig: Option<MultiSigDetails>,
+    archived: Option<bool>,
 }
 
 impl<P: WalletPersister> NgAccountBuilder<P> {
@@ -917,6 +920,7 @@ impl<P: WalletPersister> NgAccountBuilder<P> {
             date_synced: self.date_synced,
             seed_has_passphrase: self.seed_has_passphrase.unwrap_or(false),
             multisig: self.multisig,
+            archived: self.archived.unwrap_or_default(),
         };
 
         NgAccount::new_from_descriptors(ng_account_config, Arc::new(meta_storage), descriptors)
