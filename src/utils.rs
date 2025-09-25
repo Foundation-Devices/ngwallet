@@ -7,6 +7,7 @@ use {
 
 use crate::config::AddressType;
 use serde::Serialize;
+use std::time::{SystemTime, UNIX_EPOCH};
 
 #[derive(Serialize)]
 struct Bip329Item {
@@ -49,6 +50,14 @@ pub(crate) fn build_electrum_client(
     let client = Client::from_config(electrum_server, electrum_config).unwrap();
     let bdk_client: BdkElectrumClient<Client> = BdkElectrumClient::new(client);
     bdk_client
+}
+
+/// Returns the current timestamp as `u64` (seconds since UNIX epoch).
+pub fn now_as_unix() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("Time went backwards")
+        .as_millis() as u64
 }
 
 //

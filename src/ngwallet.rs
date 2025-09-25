@@ -236,6 +236,23 @@ impl<P: WalletPersister> NgWallet<P> {
                     }
                 })
                 .collect::<Vec<Output>>();
+
+            // Use stored pending date or set current time if first seen tx
+            let pending_date = match storage.get_pending_date(&tx_id)? {
+                Some(d) => Some(d),
+                None => {
+                    let now = utils::now_as_unix();
+                    let _ = storage.set_pending_date(&tx_id, now);
+                    Some(now)
+                }
+            };
+
+            date = if confirmations <= 3 {
+                pending_date
+            } else {
+                date
+            };
+
             let amount: i64 = (received.to_sat() as i64) - (sent.to_sat() as i64);
 
             let address = {
@@ -562,9 +579,10 @@ impl<P: WalletPersister> NgWallet<P> {
 
         for output in tx.clone().output {
             if let Ok(address) = Address::from_script(&output.script_pubkey, wallet.network())
-                && !wallet.is_mine(output.script_pubkey) {
-                    outputs.insert(output.value.to_sat(), address.to_string());
-                }
+                && !wallet.is_mine(output.script_pubkey)
+            {
+                outputs.insert(output.value.to_sat(), address.to_string());
+            }
         }
 
         if let Ok(fee_amount) = wallet.calculate_fee(&tx) {

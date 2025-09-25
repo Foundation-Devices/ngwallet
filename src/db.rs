@@ -6,6 +6,7 @@ use redb::{Builder, Database, ReadableTable, StorageBackend, TableDefinition};
 use std::sync::Arc;
 
 const FEE_TABLE: TableDefinition<&str, u64> = TableDefinition::new("fees");
+const PENDING_DATE_TABLE: TableDefinition<&str, u64> = TableDefinition::new("pending_dates");
 
 const NOTE_TABLE: TableDefinition<&str, &str> = TableDefinition::new("notes");
 const TAG_TABLE: TableDefinition<&str, &str> = TableDefinition::new("tags");
@@ -254,5 +255,28 @@ impl MetaStorage for RedbMetaStorage {
 
     fn persist(&self) -> Result<bool> {
         Ok(true)
+    }
+
+    fn set_pending_date(&self, txid: &str, ts: u64) -> Result<()> {
+        let write_txn = self.db.begin_write()?;
+        {
+            let mut table = write_txn.open_table(PENDING_DATE_TABLE)?;
+            table.insert(txid, ts)?;
+        }
+        write_txn
+            .commit()
+            .map_err(|e| anyhow::anyhow!(e.to_string()))
+    }
+
+    fn get_pending_date(&self, txid: &str) -> Result<Option<u64>> {
+        let read_txn = self.db.begin_read()?;
+        match read_txn.open_table(PENDING_DATE_TABLE) {
+            Ok(table) => match table.get(txid) {
+                Ok(Some(value)) => Ok(Some(value.value())),
+                Ok(None) => Ok(None),
+                Err(e) => Err(anyhow::anyhow!(e.to_string())),
+            },
+            Err(_) => Ok(None),
+        }
     }
 }
