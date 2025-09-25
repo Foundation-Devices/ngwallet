@@ -397,6 +397,8 @@ impl<P: WalletPersister> NgAccount<P> {
     ) -> anyhow::Result<(AddressType, FullScanRequest<KeychainKind>), Error> {
         match self
             .wallets
+            .read()
+            .unwrap()
             .iter()
             .find(|ng_wallet| ng_wallet.address_type == address_type)
         {
@@ -428,6 +430,8 @@ impl<P: WalletPersister> NgAccount<P> {
     ) -> anyhow::Result<(AddressType, SyncRequest<(KeychainKind, u32)>)> {
         match self
             .wallets
+            .read()
+            .unwrap()
             .iter()
             .find(|ng_wallet| ng_wallet.address_type == address_type)
         {
@@ -970,6 +974,6 @@ mod tests {
             meta_storage: Arc::new(InMemoryMetaStorage::default()),
         };
 
-        let sendable: Box<dyn Any + Send> = Box::new(account);
+        let _sendable: Box<dyn Any + Send> = Box::new(account);
     }
 }
