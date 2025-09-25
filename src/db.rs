@@ -18,7 +18,7 @@ const ACCOUNT_CONFIG: TableDefinition<&str, &str> = TableDefinition::new("config
 const LAST_VERIFIED_ADDRESS_TABLE: TableDefinition<&str, u32> =
     TableDefinition::new("last_verified_address");
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct RedbMetaStorage {
     db: Arc<Database>,
 }
