@@ -3,7 +3,6 @@ use crate::store::MetaStorage;
 use anyhow::{Context, Result};
 use bdk_wallet::KeychainKind;
 use redb::{Builder, Database, ReadableTable, TableDefinition};
-use std::sync::Arc;
 
 const FEE_TABLE: TableDefinition<&str, u64> = TableDefinition::new("fees");
 
@@ -18,9 +17,9 @@ const ACCOUNT_CONFIG: TableDefinition<&str, &str> = TableDefinition::new("config
 const LAST_VERIFIED_ADDRESS_TABLE: TableDefinition<&str, u32> =
     TableDefinition::new("last_verified_address");
 
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct RedbMetaStorage {
-    db: Arc<Database>,
+    db: Database,
 }
 
 impl RedbMetaStorage {
@@ -35,11 +34,11 @@ impl RedbMetaStorage {
                 .with_context(|| "Failed to create redb database")?
         };
 
-        Ok(RedbMetaStorage { db: Arc::new(db) })
+        Ok(RedbMetaStorage { db })
     }
 
     pub fn from_db(db: Database) -> Self {
-        Self { db: Arc::new(db) }
+        Self { db }
     }
 
     //TODO: fix persist
