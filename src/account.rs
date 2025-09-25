@@ -27,6 +27,16 @@ pub struct NgAccount<P: WalletPersister> {
     pub meta_storage: Arc<dyn MetaStorage + Send>,
 }
 
+impl<P: WalletPersister> Clone for NgAccount<P> {
+    fn clone(&self) -> Self {
+        Self {
+            config: self.config.clone(),
+            wallets: self.wallets.clone(),
+            meta_storage: self.meta_storage.clone(),
+        }
+    }
+}
+
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct Descriptor<P: WalletPersister> {
     pub internal: String,
