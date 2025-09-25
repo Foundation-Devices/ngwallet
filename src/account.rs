@@ -21,10 +21,10 @@ use bdk_wallet::{AddressInfo, Balance, KeychainKind, Update, WalletPersister};
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug)]
-pub struct NgAccount<P: WalletPersister + Send> {
+pub struct NgAccount<P: WalletPersister> {
     pub config: Arc<RwLock<NgAccountConfig>>,
     pub wallets: Arc<RwLock<Vec<NgWallet<P>>>>,
-    pub meta_storage: Arc<dyn MetaStorage>,
+    pub meta_storage: Arc<dyn MetaStorage + Send>,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -933,5 +933,43 @@ pub fn search_for_address(
         change_upper,
         receive_lower,
         receive_upper,
+    }
+}
+
+#[cfg(test)]
+#[cfg(feature = "envoy")]
+mod tests {
+    use super::*;
+    use crate::config::NgAccountConfig;
+    use crate::store::InMemoryMetaStorage;
+    use bdk_wallet::bitcoin::Network;
+    use bdk_wallet::rusqlite::Connection;
+    use std::any::Any;
+    #[test]
+    fn test_ng_account_send() {
+        // Create a dummy config
+        let config = NgAccountConfig {
+            name: "test".to_string(),
+            color: "blue".to_string(),
+            seed_has_passphrase: false,
+            device_serial: None,
+            date_added: None,
+            preferred_address_type: crate::config::AddressType::P2pkh,
+            index: 0,
+            descriptors: vec![],
+            date_synced: None,
+            network: Network::Bitcoin,
+            id: "test_id".to_string(),
+            multisig: None,
+            archived: false,
+        };
+
+        let account = NgAccount {
+            config: Arc::new(RwLock::new(config)),
+            wallets: Arc::new(RwLock::new(Vec::<NgWallet<Connection>>::new())),
+            meta_storage: Arc::new(InMemoryMetaStorage::default()),
+        };
+
+        let sendable: Box<dyn Any + Send> = Box::new(account);
     }
 }
