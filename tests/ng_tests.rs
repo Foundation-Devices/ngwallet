@@ -50,7 +50,7 @@ mod tests {
             },
         ];
 
-        let mut account = NgAccountBuilder::default()
+        let account = NgAccountBuilder::default()
             .name("Passport Prime".to_string())
             .color("red".to_string())
             .seed_has_passphrase(false)
@@ -208,7 +208,7 @@ mod tests {
         })
         .unwrap();
 
-        let mut account = NgAccountBuilder::default()
+        let account = NgAccountBuilder::default()
             .name("Passport Prime".to_string())
             .color("red".to_string())
             .seed_has_passphrase(false)
@@ -305,7 +305,7 @@ mod tests {
             bdk_persister: Arc::new(Mutex::new(Connection::open_in_memory().unwrap())),
         }];
 
-        let mut account = NgAccountBuilder::default()
+        let account = NgAccountBuilder::default()
             .name("Passport Prime".to_string())
             .color("#fafafa".to_string())
             .seed_has_passphrase(false)
@@ -470,7 +470,7 @@ mod tests {
     #[test]
     #[cfg(feature = "envoy")]
     fn change_address_type() {
-        let mut account = utils::tests_util::get_ng_hot_wallet();
+        let account = utils::tests_util::get_ng_hot_wallet();
         let wallet = account.get_coordinator_wallet();
         assert_eq!(
             account.config.read().unwrap().preferred_address_type,

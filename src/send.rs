@@ -495,7 +495,7 @@ impl<P: WalletPersister> NgAccount<P> {
 
     pub(crate) fn apply_meta_to_psbt_outputs(
         wallet: &MutexGuard<PersistedWallet<P>>,
-        non_coordinator_wallets: &Vec<NgWallet<P>>,
+        non_coordinator_wallets: &[NgWallet<P>],
         utxos: Vec<Output>,
         tag: Option<String>,
         do_not_spend_change: bool,

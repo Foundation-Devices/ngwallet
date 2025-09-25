@@ -45,7 +45,7 @@ impl<P: WalletPersister> Clone for NgWallet<P> {
     fn clone(&self) -> Self {
         Self {
             bdk_wallet: self.bdk_wallet.clone(),
-            address_type: self.address_type.clone(),
+            address_type: self.address_type,
             meta_storage: self.meta_storage.clone(),
             bdk_persister: self.bdk_persister.clone(),
         }
