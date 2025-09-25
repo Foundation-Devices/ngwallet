@@ -864,27 +864,27 @@ impl<P: WalletPersister> NgAccountBuilder<P> {
         self
     }
 
-    pub fn build_in_memory(self) -> anyhow::Result<NgAccount<P>> {
-        let meta_storage = crate::store::InMemoryMetaStorage::default();
-        self.build_inner(meta_storage)
-    }
-
-    pub fn build_from_file(self, db_path: Option<String>) -> anyhow::Result<NgAccount<P>> {
-        let meta_storage = RedbMetaStorage::from_file(db_path)?;
-        self.build_inner(meta_storage)
-    }
-
-    pub fn build_from_db(self, db: redb::Database) -> anyhow::Result<NgAccount<P>> {
-        let meta_storage = RedbMetaStorage::from_db(db);
-        self.build_inner(meta_storage)
-    }
-
     pub fn multisig(mut self, multisig: MultiSigDetails) -> Self {
         self.multisig = Some(multisig);
         self
     }
 
-    fn build_inner(self, meta_storage: impl MetaStorage + 'static) -> anyhow::Result<NgAccount<P>> {
+    pub fn build_in_memory(self) -> anyhow::Result<NgAccount<P>> {
+        let meta_storage = Arc::new(crate::store::InMemoryMetaStorage::default());
+        self.build(meta_storage)
+    }
+
+    pub fn build_from_file(self, db_path: Option<String>) -> anyhow::Result<NgAccount<P>> {
+        let meta_storage = Arc::new(RedbMetaStorage::from_file(db_path)?);
+        self.build(meta_storage)
+    }
+
+    pub fn build_from_db(self, db: redb::Database) -> anyhow::Result<NgAccount<P>> {
+        let meta_storage = Arc::new(RedbMetaStorage::from_db(db));
+        self.build(meta_storage)
+    }
+
+    pub fn build(self, storage: Arc<dyn MetaStorage>) -> anyhow::Result<NgAccount<P>> {
         let descriptors = self
             .descriptors
             .ok_or(anyhow::anyhow!("Descriptors are required"))?;
@@ -923,7 +923,7 @@ impl<P: WalletPersister> NgAccountBuilder<P> {
             archived: self.archived.unwrap_or_default(),
         };
 
-        NgAccount::new_from_descriptors(ng_account_config, Arc::new(meta_storage), descriptors)
+        NgAccount::new_from_descriptors(ng_account_config, storage, descriptors)
     }
 }
 
