@@ -1,7 +1,7 @@
 use std::collections::{HashMap, HashSet};
 use std::fmt::Debug;
 use std::str::FromStr;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, RwLock};
 
 use crate::config::{AddressType, NgAccountBackup, NgAccountConfig, NgDescriptor};
 use crate::db::RedbMetaStorage;
@@ -167,8 +167,8 @@ pub fn verify_address_stateless(
 
 #[derive(Debug)]
 pub struct NgAccount<P: WalletPersister> {
-    pub config: NgAccountConfig,
-    pub wallets: Vec<NgWallet<P>>,
+    pub config: Arc<RwLock<NgAccountConfig>>,
+    pub wallets: Arc<RwLock<Vec<NgWallet<P>>>>,
     pub meta_storage: Arc<dyn MetaStorage>,
 }
 
@@ -239,8 +239,8 @@ impl<P: WalletPersister> NgAccount<P> {
             .with_context(|| "Failed to persist account config")?;
 
         Ok(Self {
-            config: account_config,
-            wallets,
+            config: Arc::new(RwLock::new(account_config)),
+            wallets: Arc::new(RwLock::new(wallets)),
             meta_storage: meta,
         })
     }
@@ -293,62 +293,67 @@ impl<P: WalletPersister> NgAccount<P> {
         }
 
         Ok(Self {
-            config,
-            wallets,
+            config: Arc::new(RwLock::new(config)),
+            wallets: Arc::new(RwLock::new(wallets)),
             meta_storage,
         })
     }
 
-    pub fn rename(&mut self, name: &str) -> Result<(), Error> {
-        self.config.name = name.to_string();
+    pub fn rename(&self, name: &str) -> Result<(), Error> {
+        self.config.write().unwrap().name = name.to_string();
         self.persist()
     }
 
-    pub fn set_preferred_address_type(&mut self, address_type: AddressType) -> Result<(), Error> {
-        self.config.preferred_address_type = address_type;
+    pub fn set_preferred_address_type(&self, address_type: AddressType) -> Result<(), Error> {
+        self.config.write().unwrap().preferred_address_type = address_type;
         self.persist()
     }
 
-    pub fn persist(&mut self) -> Result<(), Error> {
-        for wallet in &mut self.wallets {
+    pub fn persist(&self) -> Result<(), Error> {
+        for wallet in self.wallets.read().unwrap().iter() {
             wallet.persist()?;
         }
 
+        let config = self.config.read().unwrap();
         self.meta_storage
-            .set_config(self.config.serialize().as_str())
+            .set_config(config.serialize().as_str())
             .map_err(|e| anyhow::anyhow!(e))
     }
 
-    pub fn add_new_descriptor(&mut self, descriptor: &Descriptor<P>) -> Result<(), Error> {
+    pub fn add_new_descriptor(&self, descriptor: &Descriptor<P>) -> Result<(), Error> {
         let address_type = get_address_type(&descriptor.internal);
-        for wallet_descriptor in &mut self.config.descriptors {
-            if wallet_descriptor.internal == descriptor.internal {
-                return Err(anyhow::anyhow!("Descriptor already exists"));
+        {
+            let mut config = self.config.write().unwrap();
+            for wallet_descriptor in &config.descriptors {
+                if wallet_descriptor.internal == descriptor.internal {
+                    return Err(anyhow::anyhow!("Descriptor already exists"));
+                }
+                if address_type == wallet_descriptor.address_type {
+                    return Err(anyhow::anyhow!("Address type already exists"));
+                }
             }
-            if address_type == wallet_descriptor.address_type {
-                return Err(anyhow::anyhow!("Address type already exists"));
-            }
+            config.descriptors.push(NgDescriptor {
+                internal: descriptor.internal.clone(),
+                external: descriptor.external.clone(),
+                address_type,
+            });
+            let wallet = NgWallet::new_from_descriptor(
+                descriptor.internal.clone(),
+                descriptor.external.clone(),
+                config.network,
+                self.meta_storage.clone(),
+                descriptor.bdk_persister.clone(),
+            )?;
+            self.wallets.write().unwrap().push(wallet);
         }
-        self.config.descriptors.push(NgDescriptor {
-            internal: descriptor.internal.clone(),
-            external: descriptor.external.clone(),
-            address_type,
-        });
-        let wallet = NgWallet::new_from_descriptor(
-            descriptor.internal.clone(),
-            descriptor.external.clone(),
-            self.config.network,
-            self.meta_storage.clone(),
-            descriptor.bdk_persister.clone(),
-        )?;
-        self.wallets.push(wallet);
+
         self.persist()?;
         Ok(())
     }
 
     pub fn get_backup_json(&self) -> Result<String, Error> {
         let config = {
-            let mut config = self.config.clone();
+            let mut config = self.config.read().unwrap().clone();
             if self.is_hot() {
                 config.descriptors = vec![];
             }
@@ -387,9 +392,9 @@ impl<P: WalletPersister> NgAccount<P> {
         }
     }
 
-    pub fn next_address(&mut self) -> anyhow::Result<Vec<(AddressInfo, AddressType)>> {
+    pub fn next_address(&self) -> anyhow::Result<Vec<(AddressInfo, AddressType)>> {
         let mut addresses = vec![];
-        for wallet in self.wallets.iter_mut() {
+        for wallet in self.wallets.write().unwrap().iter_mut() {
             let address: AddressInfo = wallet
                 .bdk_wallet
                 .lock()
@@ -405,7 +410,7 @@ impl<P: WalletPersister> NgAccount<P> {
     pub fn balance(&self) -> anyhow::Result<Balance> {
         let mut balance = Balance::default();
 
-        for wallet in self.wallets.iter() {
+        for wallet in self.wallets.read().unwrap().iter() {
             let wallet_balance = wallet.bdk_wallet.lock().unwrap().balance();
             balance.confirmed += wallet_balance.confirmed;
             balance.immature += wallet_balance.immature;
@@ -418,7 +423,7 @@ impl<P: WalletPersister> NgAccount<P> {
 
     pub fn wallet_balances(&self) -> anyhow::Result<Vec<(AddressType, Balance)>> {
         let mut balances: Vec<(AddressType, Balance)> = vec![];
-        for wallet in self.wallets.iter() {
+        for wallet in self.wallets.read().unwrap().iter() {
             let wallet = wallet.bdk_wallet.lock().unwrap();
             let balance = wallet.balance();
             balances.push((
@@ -432,7 +437,9 @@ impl<P: WalletPersister> NgAccount<P> {
     pub fn transactions(&self) -> anyhow::Result<Vec<BitcoinTransaction>> {
         let mut transactions: Vec<BitcoinTransaction> = vec![];
 
-        for wallet in self.wallets.iter() {
+        let config = self.config.read().unwrap();
+
+        for wallet in self.wallets.read().unwrap().iter() {
             let wallet_txs = wallet.transactions().unwrap_or_default();
             for wallet_tx in wallet_txs {
                 let tx = {
@@ -471,7 +478,7 @@ impl<P: WalletPersister> NgAccount<P> {
             .iter()
             .map(|tx| {
                 let mut tx = tx.clone();
-                tx.account_id = self.config.id.clone();
+                tx.account_id = config.id.clone();
                 tx
             })
             .collect();
@@ -487,14 +494,14 @@ impl<P: WalletPersister> NgAccount<P> {
 
     pub fn utxos(&self) -> anyhow::Result<Vec<Output>> {
         let mut utxos = vec![];
-        for wallet in self.wallets.iter() {
+        for wallet in self.wallets.read().unwrap().iter() {
             utxos.extend(wallet.utxos()?);
         }
 
         Ok(utxos)
     }
 
-    pub fn set_note(&mut self, tx_id: &str, note: &str) -> anyhow::Result<bool> {
+    pub fn set_note(&self, tx_id: &str, note: &str) -> anyhow::Result<bool> {
         self.meta_storage
             .set_note(tx_id, note)
             .with_context(|| "Could not set note")?;
@@ -502,13 +509,13 @@ impl<P: WalletPersister> NgAccount<P> {
     }
 
     //TODO: handle error
-    pub fn get_xfp(&mut self) -> String {
+    pub fn get_xfp(&self) -> String {
         self.get_coordinator_wallet().get_xfp()
     }
 
     //if tag is empty, the tag will be removed from the output
     //else new tag will be assigned and tag name will be added to the list
-    pub fn set_tag(&mut self, output_id: &str, tag: &str) -> anyhow::Result<bool> {
+    pub fn set_tag(&self, output_id: &str, tag: &str) -> anyhow::Result<bool> {
         if tag.is_empty() {
             self.meta_storage
                 .remove_tag(output_id)
@@ -524,7 +531,7 @@ impl<P: WalletPersister> NgAccount<P> {
         Ok(true)
     }
 
-    pub fn set_do_not_spend(&mut self, output_id: &str, state: bool) -> anyhow::Result<()> {
+    pub fn set_do_not_spend(&self, output_id: &str, state: bool) -> anyhow::Result<()> {
         self.meta_storage.set_do_not_spend(output_id, state)
     }
 
@@ -546,6 +553,8 @@ impl<P: WalletPersister> NgAccount<P> {
     pub fn apply(&self, update: (AddressType, Update)) -> anyhow::Result<()> {
         match self
             .wallets
+            .read()
+            .unwrap()
             .iter()
             .find(|ng_wallet| ng_wallet.address_type == update.0)
         {
@@ -572,28 +581,31 @@ impl<P: WalletPersister> NgAccount<P> {
         }
     }
 
-    pub fn get_coordinator_wallet(&self) -> &NgWallet<P> {
-        let address_type = self.config.preferred_address_type;
-        let mut coordinator: &NgWallet<P> = self.wallets.first().unwrap();
-        for wallet in &self.wallets {
+    pub fn get_coordinator_wallet(&self) -> NgWallet<P> {
+        let address_type = self.config.read().unwrap().preferred_address_type;
+        let wallets = self.wallets.read().unwrap();
+        for wallet in wallets.iter() {
             if wallet.address_type == address_type {
-                coordinator = wallet;
+                return wallet.clone();
             }
         }
-        coordinator
+        wallets.first().unwrap().clone()
     }
 
-    pub fn non_coordinator_wallets(&self) -> Vec<&NgWallet<P>> {
-        let address_type = self.config.preferred_address_type;
+    pub fn non_coordinator_wallets(&self) -> Vec<NgWallet<P>> {
+        let address_type = self.config.read().unwrap().preferred_address_type;
         self.wallets
+            .read()
+            .unwrap()
             .iter()
             .filter(|wallet| wallet.address_type != address_type)
+            .cloned()
             .collect()
     }
 
     pub fn get_derivation_index(&self) -> Vec<(AddressType, KeychainKind, u32)> {
         let mut derivation_index = vec![];
-        for wallet in self.wallets.iter() {
+        for wallet in self.wallets.read().unwrap().iter() {
             let bdk_wallet = wallet.bdk_wallet.lock().unwrap();
             let external_index = bdk_wallet
                 .derivation_index(KeychainKind::External)
@@ -611,7 +623,7 @@ impl<P: WalletPersister> NgAccount<P> {
     pub fn sign(&self, psbt: &[u8], options: bdk_wallet::SignOptions) -> anyhow::Result<Vec<u8>> {
         let mut psbt = Psbt::deserialize(psbt).with_context(|| "Failed to deserialize PSBT")?;
 
-        for wallet in self.wallets.iter() {
+        for wallet in self.wallets.read().unwrap().iter() {
             wallet.sign_psbt(&mut psbt, options.clone())?;
         }
 
@@ -620,7 +632,7 @@ impl<P: WalletPersister> NgAccount<P> {
     }
 
     pub fn cancel_tx(&self, psbt: Psbt) -> anyhow::Result<Vec<u8>> {
-        for wallet in self.wallets.iter() {
+        for wallet in self.wallets.read().unwrap().iter() {
             wallet.cancel_tx(&psbt.unsigned_tx)?;
         }
         let encoded_psbt = psbt.serialize();
@@ -628,7 +640,7 @@ impl<P: WalletPersister> NgAccount<P> {
     }
 
     pub fn is_hot(&self) -> bool {
-        for wallet in self.wallets.iter() {
+        for wallet in self.wallets.read().unwrap().iter() {
             if wallet.is_hot() {
                 return true;
             }
@@ -638,7 +650,7 @@ impl<P: WalletPersister> NgAccount<P> {
     pub fn sent_and_received(&self, tx: &Transaction) -> (Amount, Amount) {
         let mut sent = Amount::from_sat(0);
         let mut received = Amount::from_sat(0);
-        for wallet in self.wallets.iter() {
+        for wallet in self.wallets.read().unwrap().iter() {
             let (_send, _received) = wallet.sent_and_received(tx);
             sent += _send;
             received += _received;
@@ -651,7 +663,7 @@ impl<P: WalletPersister> NgAccount<P> {
     }
 
     pub fn mark_utxo_as_used(&self, transaction: Transaction) {
-        for wallet in self.wallets.iter() {
+        for wallet in self.wallets.read().unwrap().iter() {
             let mut wallet_mut = wallet.bdk_wallet.lock().unwrap();
             for txout in &transaction.output {
                 if let Some((keychain, index)) =
@@ -663,7 +675,7 @@ impl<P: WalletPersister> NgAccount<P> {
         }
     }
     /// Sets a note for a transaction without checking if the transaction existence.
-    pub fn set_note_unchecked(&mut self, tx_id: &str, note: &str) -> anyhow::Result<bool> {
+    pub fn set_note_unchecked(&self, tx_id: &str, note: &str) -> anyhow::Result<bool> {
         self.meta_storage
             .set_note(tx_id, note)
             .with_context(|| "Could not set note")?;
@@ -676,7 +688,7 @@ impl<P: WalletPersister> NgAccount<P> {
             .with_context(|| "Could not get tag ")
     }
 
-    pub fn remove_tag(&mut self, target_tag: &str, rename_to: Option<&str>) -> anyhow::Result<()> {
+    pub fn remove_tag(&self, target_tag: &str, rename_to: Option<&str>) -> anyhow::Result<()> {
         self.meta_storage.remove_tag(target_tag)?;
         let utxos = self.utxos()?;
         for output in utxos {
@@ -700,7 +712,7 @@ impl<P: WalletPersister> NgAccount<P> {
     pub fn get_external_public_descriptors(&self) -> Vec<(AddressType, String)> {
         let mut descriptors = vec![];
 
-        for wallet in self.wallets.iter() {
+        for wallet in self.wallets.read().unwrap().iter() {
             let external_pubkey = wallet
                 .bdk_wallet
                 .lock()
@@ -764,7 +776,7 @@ impl<P: WalletPersister> NgAccount<P> {
         minicbor_serde::to_vec(&update).map_err(|_| anyhow::anyhow!("Could not serialize updates"))
     }
 
-    pub fn update(&mut self, payload: Vec<u8>) -> anyhow::Result<()> {
+    pub fn update(&self, payload: Vec<u8>) -> anyhow::Result<()> {
         let update: RemoteUpdate = minicbor_serde::from_slice(&payload)?;
 
         for wallet_update in update.wallet_update {
@@ -774,7 +786,7 @@ impl<P: WalletPersister> NgAccount<P> {
         match update.metadata {
             None => {}
             Some(m) => {
-                self.config = m;
+                *self.config.write().unwrap() = m;
             }
         }
 
@@ -783,15 +795,12 @@ impl<P: WalletPersister> NgAccount<P> {
     }
 
     pub fn get_address_script_type(&self, address: &str) -> anyhow::Result<AddressType> {
+        let network = self.config.read().unwrap().network;
         let address: Address<NetworkUnchecked> =
             Address::from_str(address).map_err(|_| anyhow::anyhow!("Could not parse address"))?;
-        let address: Address<NetworkChecked> =
-            address.require_network(self.config.network).map_err(|_| {
-                anyhow::anyhow!(
-                    "Address is invalid for current network: {}",
-                    self.config.network
-                )
-            })?;
+        let address: Address<NetworkChecked> = address
+            .require_network(network)
+            .map_err(|_| anyhow::anyhow!("Address is invalid for current network: {network}"))?;
         match address.address_type() {
             Some(t) => t.try_into(),
             None => Err(anyhow::anyhow!("Unknown address type")),
@@ -804,7 +813,8 @@ impl<P: WalletPersister> NgAccount<P> {
     ) -> anyhow::Result<AddressVerificationInfo> {
         let address_type = self.get_address_script_type(&address)?;
 
-        let wallet = self.wallets.iter().find(|w| w.address_type == address_type);
+        let wallets = self.wallets.read().unwrap();
+        let wallet = wallets.iter().find(|w| w.address_type == address_type);
         let wallet = match wallet {
             Some(w) => w,
             None => anyhow::bail!(
@@ -832,7 +842,7 @@ impl<P: WalletPersister> NgAccount<P> {
             address,
             internal_descriptor,
             external_descriptor: Some(external_descriptor),
-            network: self.config.network,
+            network: self.config.read().unwrap().network,
             address_type,
             receive_start,
             change_start,
@@ -864,12 +874,22 @@ impl<P: WalletPersister> NgAccount<P> {
     ) -> anyhow::Result<AddressVerificationResult> {
         let address_type = self.get_address_script_type(&address)?;
 
-        let wallet = self.wallets.iter().find(|w| w.address_type == address_type);
-
+        let wallet = self
+            .wallets
+            .read()
+            .unwrap()
+            .iter()
+            .find(|w| w.address_type == address_type)
+            .cloned();
         let wallet = match wallet {
-            Some(w) => w.bdk_wallet.lock().unwrap(),
-            None => anyhow::bail!("No wallet found with the corresponding address type"),
+            Some(w) => w,
+            None => anyhow::bail!(
+                "No wallet found with the corresponding address type: {:?}",
+                address_type
+            ),
         };
+
+        let wallet = wallet.bdk_wallet.lock().unwrap();
 
         let receive_start = self
             .meta_storage
@@ -899,8 +919,9 @@ impl<P: WalletPersister> NgAccount<P> {
     pub fn get_bip329_data(&self) -> anyhow::Result<Vec<String>> {
         let mut result = vec![];
         let mut seen_tx_refs = HashSet::new();
+        let config = self.config.read().unwrap();
 
-        for wallet in &self.wallets {
+        for wallet in self.wallets.read().unwrap().iter() {
             let descriptor = wallet
                 .bdk_wallet
                 .lock()
@@ -910,7 +931,7 @@ impl<P: WalletPersister> NgAccount<P> {
 
             // Add xpub entry
             let xpub = utils::extract_xpub_from_descriptor(&descriptor);
-            let label_opt = (!self.config.name.is_empty()).then_some(self.config.name.as_str());
+            let label_opt = (!config.name.is_empty()).then_some(config.name.as_str());
             result.push(utils::build_key_json("xpub", &xpub, label_opt, None, None));
 
             // Add UTXO entries

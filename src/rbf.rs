@@ -401,11 +401,11 @@ impl<P: WalletPersister> NgAccount<P> {
         let tx_id = Txid::from_str(bitcoin_transaction.clone().tx_id.as_str())
             .map_err(|_| BumpFeeError::TransactionNotFound())?;
 
-        let wallet_index = Self::find_outgoing_wallet_index(&self.wallets, tx_id);
+        let wallets = self.wallets.read().unwrap();
+        let wallet_index = Self::find_outgoing_wallet_index(&wallets, tx_id);
 
         let psbt = {
-            let coordinator_wallet = self
-                .wallets
+            let coordinator_wallet = wallets
                 .get(wallet_index)
                 .ok_or(BumpFeeError::UnableToAccessWallet)?;
             let mut bdk_wallet = coordinator_wallet
@@ -457,12 +457,11 @@ impl<P: WalletPersister> NgAccount<P> {
                 for spendable_utxo in spendables {
                     let outpoint = spendable_utxo.get_outpoint();
                     //find all wallets that doesnt include current tx_id
-                    let non_coordinator_wallets: Vec<&NgWallet<P>> = self
-                        .wallets
+                    let non_coordinator_wallets: Vec<NgWallet<P>> = wallets
                         .iter()
                         .enumerate()
                         .filter(|(idx, _)| *idx != wallet_index)
-                        .map(|(_, w)| w)
+                        .map(|(_, w)| w.clone())
                         .collect();
 
                     match self.get_utxo_input(&spendable_utxo, non_coordinator_wallets) {
@@ -494,7 +493,7 @@ impl<P: WalletPersister> NgAccount<P> {
                     trust_witness_utxo: true,
                     ..Default::default()
                 };
-                Self::sign_psbt(self.wallets.iter().collect(), &mut psbt, sign_options);
+                Self::sign_psbt(self.wallets.read().unwrap().clone(), &mut psbt, sign_options);
                 self.cancel_tx(psbt.clone()).unwrap();
                 Ok(psbt)
             }
@@ -506,7 +505,7 @@ impl<P: WalletPersister> NgAccount<P> {
     }
 
     fn derivation_of_spk(&self, script_buf: ScriptBuf) -> Option<(KeychainKind, u32)> {
-        for ng_wallets in self.wallets.iter() {
+        for ng_wallets in self.wallets.read().unwrap().iter() {
             let wallet = ng_wallets.bdk_wallet.lock().unwrap();
             if let Some(derivation) = wallet.derivation_of_spk(script_buf.clone()) {
                 return Some(derivation);
@@ -515,7 +514,7 @@ impl<P: WalletPersister> NgAccount<P> {
         None
     }
     fn network(&self) -> Network {
-        for ng_wallets in self.wallets.iter() {
+        for ng_wallets in self.wallets.read().unwrap().iter() {
             if let Ok(bdk_wallet) = ng_wallets.bdk_wallet.lock() {
                 return bdk_wallet.network();
             }

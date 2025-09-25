@@ -88,8 +88,8 @@ impl<P: WalletPersister> NgAccount<P> {
         let utxos = self
             .utxos()
             .map_err(|e| TransactionComposeError::Error(format!("Failed to get UTXOs: {e:?}")))?;
-        let mut coordinator_wallet = self
-            .get_coordinator_wallet()
+        let coordinator_ng_wallet = self.get_coordinator_wallet();
+        let mut coordinator_wallet = coordinator_ng_wallet
             .bdk_wallet
             .lock()
             .map_err(|_| TransactionComposeError::WalletError("Failed to lock wallet".into()))?;
@@ -318,8 +318,8 @@ impl<P: WalletPersister> NgAccount<P> {
 
         // The wallet will be locked for the rest of the spend method,
         // so calling other NgWallet APIs won't succeed.
-        let mut coordinator_wallet = self
-            .get_coordinator_wallet()
+        let coordinator_ng_wallet = self.get_coordinator_wallet();
+        let mut coordinator_wallet = coordinator_ng_wallet
             .bdk_wallet
             .lock()
             .map_err(|_| TransactionComposeError::WalletError("Failed to lock wallet".into()))?;
@@ -495,7 +495,7 @@ impl<P: WalletPersister> NgAccount<P> {
 
     pub(crate) fn apply_meta_to_psbt_outputs(
         wallet: &MutexGuard<PersistedWallet<P>>,
-        non_coordinator_wallets: &Vec<&NgWallet<P>>,
+        non_coordinator_wallets: &Vec<NgWallet<P>>,
         utxos: Vec<Output>,
         tag: Option<String>,
         do_not_spend_change: bool,
@@ -588,7 +588,7 @@ impl<P: WalletPersister> NgAccount<P> {
 
     pub(crate) fn apply_meta_to_inputs(
         wallet: &MutexGuard<PersistedWallet<P>>,
-        non_coordinator_wallets: &Vec<&NgWallet<P>>,
+        non_coordinator_wallets: &Vec<NgWallet<P>>,
         transaction: Transaction,
         utxos: Vec<Output>,
     ) -> Vec<Input> {
@@ -718,7 +718,7 @@ impl<P: WalletPersister> NgAccount<P> {
     pub(crate) fn get_utxo_input(
         &self,
         output: &Output,
-        wallets: Vec<&NgWallet<P>>,
+        wallets: Vec<NgWallet<P>>,
     ) -> Option<(psbt::Input, Weight)> {
         let mut input_for_fore: Option<(psbt::Input, Weight)> = None;
         for wallet in wallets.iter() {
@@ -751,7 +751,7 @@ impl<P: WalletPersister> NgAccount<P> {
         input_for_fore
     }
 
-    pub fn sign_psbt(wallets: Vec<&NgWallet<P>>, psbt: &mut Psbt, sign_options: SignOptions) {
+    pub fn sign_psbt(wallets: Vec<NgWallet<P>>, psbt: &mut Psbt, sign_options: SignOptions) {
         for wallet in wallets {
             let mut wallet = wallet.bdk_wallet.lock().unwrap();
             wallet.sign(psbt, sign_options.clone()).unwrap_or(false);
@@ -764,13 +764,13 @@ impl<P: WalletPersister> NgAccount<P> {
     ///TODO, verify inputs belongs to the wallet
     pub fn get_bitcoin_tx_from_psbt(&self, psbt: &[u8]) -> Result<BitcoinTransaction> {
         let psbt = Psbt::deserialize(psbt).with_context(|| "Failed to deserialize PSBT")?;
-        let account_id = self.config.id.clone();
+        let account_id = self.config.read().unwrap().id.clone();
         let transaction = psbt.clone().unsigned_tx;
         let mut amount = 0;
         let mut address = "".to_string();
         for outputs in transaction.output.iter() {
             let script = outputs.script_pubkey.clone();
-            for wallet in self.wallets.iter() {
+            for wallet in self.wallets.read().unwrap().iter() {
                 let bdk_wallet = wallet.bdk_wallet.lock().unwrap();
                 let derivation = bdk_wallet.derivation_of_spk(script.clone());
                 if derivation.is_none() {
@@ -782,7 +782,7 @@ impl<P: WalletPersister> NgAccount<P> {
             }
             //check for self spends
             if address.is_empty() {
-                for wallet in self.wallets.iter() {
+                for wallet in self.wallets.read().unwrap().iter() {
                     let bdk_wallet = wallet.bdk_wallet.lock().unwrap();
                     let derivation = bdk_wallet.derivation_of_spk(script.clone());
                     match derivation {
@@ -867,7 +867,7 @@ impl<P: WalletPersister> NgAccount<P> {
             outputs.clone(),
             inputs.clone(),
             transaction_params.note,
-            self.config.id.clone(),
+            self.config.read().unwrap().id.clone(),
         );
 
         let mut change_out_put_tag: Option<String> = None;

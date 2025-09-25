@@ -41,6 +41,17 @@ pub struct NgWallet<P: WalletPersister> {
     bdk_persister: Arc<Mutex<P>>,
 }
 
+impl<P: WalletPersister> Clone for NgWallet<P> {
+    fn clone(&self) -> Self {
+        Self {
+            bdk_wallet: self.bdk_wallet.clone(),
+            address_type: self.address_type.clone(),
+            meta_storage: self.meta_storage.clone(),
+            bdk_persister: self.bdk_persister.clone(),
+        }
+    }
+}
+
 impl<P: WalletPersister> NgWallet<P> {
     pub fn new_from_descriptor(
         internal_descriptor: String,
@@ -80,7 +91,7 @@ impl<P: WalletPersister> NgWallet<P> {
         })
     }
 
-    pub fn persist(&mut self) -> Result<bool> {
+    pub fn persist(&self) -> Result<bool> {
         self.bdk_wallet
             .lock()
             .unwrap()
@@ -562,9 +573,10 @@ impl<P: WalletPersister> NgWallet<P> {
 
         for output in tx.clone().output {
             if let Ok(address) = Address::from_script(&output.script_pubkey, wallet.network())
-                && !wallet.is_mine(output.script_pubkey) {
-                    outputs.insert(output.value.to_sat(), address.to_string());
-                }
+                && !wallet.is_mine(output.script_pubkey)
+            {
+                outputs.insert(output.value.to_sat(), address.to_string());
+            }
         }
 
         if let Ok(fee_amount) = wallet.calculate_fee(&tx) {
