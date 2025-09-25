@@ -57,7 +57,7 @@ pub fn now_as_unix() -> u64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .expect("Time went backwards")
-        .as_millis() as u64
+        .as_secs()
 }
 
 //
