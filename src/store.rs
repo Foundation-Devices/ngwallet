@@ -38,6 +38,9 @@ pub trait MetaStorage: Debug + Send + Sync {
     ) -> Result<u32>;
 
     fn persist(&self) -> Result<bool>;
+
+    fn set_pending_date(&self, txid: &str, date: u64) -> Result<()>;
+    fn get_pending_date(&self, txid: &str) -> Result<Option<u64>>;
 }
 
 #[derive(Debug, Default, Clone)]
@@ -49,11 +52,23 @@ pub struct InMemoryMetaStorage {
     do_not_spend_store: Map<String, bool>,
     last_verified_address_store: Map<(AddressType, KeychainKind), u32>,
     fee_store: Map<String, u64>,
+    pending_date_store: Map<String, u64>,
 }
 
 type Map<K, V> = Arc<Mutex<std::collections::HashMap<K, V>>>;
 
 impl MetaStorage for InMemoryMetaStorage {
+    fn set_pending_date(&self, txid: &str, date: u64) -> Result<()> {
+        let mut map = self.pending_date_store.lock().unwrap();
+        map.insert(txid.to_string(), date);
+        Ok(())
+    }
+
+    fn get_pending_date(&self, txid: &str) -> Result<Option<u64>> {
+        let map = self.pending_date_store.lock().unwrap();
+        Ok(map.get(txid).cloned())
+    }
+
     fn set_fee(&self, txid: &str, fee: u64) -> Result<()> {
         let mut map = self.fee_store.lock().unwrap();
         map.insert(txid.to_string(), fee);
