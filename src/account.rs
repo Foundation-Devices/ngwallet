@@ -253,7 +253,7 @@ impl<P: WalletPersister> NgAccount<P> {
         <P as WalletPersister>::Error: Debug,
     {
         let meta_storage = RedbMetaStorage::from_file(db_path)?;
-        Self::open_account_inner(descriptors, Arc::new(meta_storage))
+        Self::open_account(descriptors, Arc::new(meta_storage))
     }
 
     pub fn open_account_from_db(
@@ -264,7 +264,39 @@ impl<P: WalletPersister> NgAccount<P> {
         <P as WalletPersister>::Error: Debug,
     {
         let meta_storage = RedbMetaStorage::from_db(db);
-        Self::open_account_inner(descriptors, Arc::new(meta_storage))
+        Self::open_account(descriptors, Arc::new(meta_storage))
+    }
+
+    pub fn open_account(
+        descriptors: Vec<Descriptor<P>>,
+        meta_storage: Arc<dyn MetaStorage>,
+    ) -> anyhow::Result<Self>
+    where
+        <P as WalletPersister>::Error: Debug,
+    {
+        let config = meta_storage
+            .get_config()
+            .with_context(|| "Failed to get load account config")?
+            .ok_or(anyhow::anyhow!("Account config not found"))?;
+
+        let mut wallets: Vec<NgWallet<P>> = vec![];
+
+        for descriptor in descriptors {
+            let wallet = NgWallet::load(
+                descriptor.internal,
+                descriptor.external,
+                meta_storage.clone(),
+                descriptor.bdk_persister.clone(),
+            )
+            .with_context(|| "Failed to load wallet")?;
+            wallets.push(wallet);
+        }
+
+        Ok(Self {
+            config,
+            wallets,
+            meta_storage,
+        })
     }
 
     pub fn rename(&mut self, name: &str) -> Result<(), Error> {
@@ -915,39 +947,5 @@ impl<P: WalletPersister> NgAccount<P> {
         }
 
         Ok(result)
-    }
-}
-
-impl<P: WalletPersister> NgAccount<P> {
-    fn open_account_inner(
-        descriptors: Vec<Descriptor<P>>,
-        meta_storage: Arc<dyn MetaStorage>,
-    ) -> anyhow::Result<Self>
-    where
-        <P as WalletPersister>::Error: Debug,
-    {
-        let config = meta_storage
-            .get_config()
-            .with_context(|| "Failed to get load account config")?
-            .ok_or(anyhow::anyhow!("Account config not found"))?;
-
-        let mut wallets: Vec<NgWallet<P>> = vec![];
-
-        for descriptor in descriptors {
-            let wallet = NgWallet::load(
-                descriptor.internal,
-                descriptor.external,
-                meta_storage.clone(),
-                descriptor.bdk_persister.clone(),
-            )
-            .with_context(|| "Failed to load wallet")?;
-            wallets.push(wallet);
-        }
-
-        Ok(Self {
-            config,
-            wallets,
-            meta_storage,
-        })
     }
 }
