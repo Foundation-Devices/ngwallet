@@ -2,8 +2,7 @@ use crate::config::{AddressType, NgAccountConfig};
 use crate::store::MetaStorage;
 use anyhow::{Context, Result};
 use bdk_wallet::KeychainKind;
-use redb::{Builder, Database, ReadableTable, StorageBackend, TableDefinition};
-use std::sync::Arc;
+use redb::{Builder, Database, ReadableTable, TableDefinition};
 
 const FEE_TABLE: TableDefinition<&str, u64> = TableDefinition::new("fees");
 
@@ -20,7 +19,7 @@ const LAST_VERIFIED_ADDRESS_TABLE: TableDefinition<&str, u32> =
 
 #[derive(Debug)]
 pub struct RedbMetaStorage {
-    db: Arc<Database>,
+    db: Database,
 }
 
 impl RedbMetaStorage {
@@ -35,14 +34,11 @@ impl RedbMetaStorage {
                 .with_context(|| "Failed to create redb database")?
         };
 
-        Ok(RedbMetaStorage { db: Arc::new(db) })
+        Ok(RedbMetaStorage { db })
     }
 
-    pub fn from_backend(backend: impl StorageBackend) -> anyhow::Result<Self> {
-        let db = Builder::new()
-            .create_with_backend(backend)
-            .with_context(|| "Failed to create database")?;
-        Ok(RedbMetaStorage { db: Arc::new(db) })
+    pub fn from_db(db: Database) -> Self {
+        Self { db }
     }
 
     //TODO: fix persist
