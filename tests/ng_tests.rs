@@ -639,6 +639,60 @@ mod tests {
     }
 
     #[test]
+    #[cfg(feature = "envoy")]
+    fn verify_address_2() {
+        let account = utils::tests_util::get_ng_hot_wallet();
+
+        // multi-attempt address verification (address 30 fails on first attempt, succeeds on second)
+        let result = account
+            .verify_address(
+                String::from("tb1qsqtlt0q4why79qmf9jddp53nncyrutv90wdjkz"),
+                0,
+                50,
+            )
+            .unwrap();
+        assert_eq!(result.found_index, None);
+        assert_eq!(result.change_lower, 0);
+        assert_eq!(result.change_upper, 25);
+        assert_eq!(result.receive_lower, 0);
+        assert_eq!(result.receive_upper, 25);
+
+        let result = account
+            .verify_address(
+                String::from("tb1qsqtlt0q4why79qmf9jddp53nncyrutv90wdjkz"),
+                1,
+                50,
+            )
+            .unwrap();
+        assert_eq!(result.found_index, Some(30));
+        assert_eq!(result.change_lower, 0);
+        assert_eq!(result.change_upper, 29);
+        assert_eq!(result.receive_lower, 0);
+        assert_eq!(result.receive_upper, 30);
+
+        // change address verification
+        let result = account
+            .verify_address(
+                String::from("tb1qm2rus4zu75exrlu9rrk0l3ctktkujtetqrjd88"),
+                0,
+                50,
+            )
+            .unwrap();
+        assert_eq!(result.found_index, None);
+
+        // network validation (mainnet address should fail on testnet account)
+        assert!(
+            account
+                .verify_address(
+                    String::from("bc1q99mxpdle2pqs3pkaxcz2wmk8l0avgskyuuc6pl"),
+                    0,
+                    50,
+                )
+                .is_err()
+        );
+    }
+
+    #[test]
     fn autocomplete_seedword() {
         let suggestions = bip39::get_seedword_suggestions("fa", 3);
         assert_eq!(suggestions, ["fabric", "face", "faculty"]);
