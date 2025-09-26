@@ -1,10 +1,7 @@
 use crate::config::{AddressType, NgAccountConfig};
 use anyhow::Result;
 use bdk_wallet::KeychainKind;
-use std::{
-    fmt::Debug,
-    sync::{Arc, Mutex},
-};
+use std::{fmt::Debug, sync::Mutex};
 
 pub trait MetaStorage: Debug + Send + Sync {
     fn set_fee(&self, txid: &str, fee: u64) -> Result<()>;
@@ -40,7 +37,7 @@ pub trait MetaStorage: Debug + Send + Sync {
     fn persist(&self) -> Result<bool>;
 }
 
-#[derive(Debug, Default, Clone)]
+#[derive(Debug, Default)]
 pub struct InMemoryMetaStorage {
     config_store: Map<String, String>,
     notes_store: Map<String, String>,
@@ -51,7 +48,7 @@ pub struct InMemoryMetaStorage {
     fee_store: Map<String, u64>,
 }
 
-type Map<K, V> = Arc<Mutex<std::collections::HashMap<K, V>>>;
+type Map<K, V> = Mutex<std::collections::HashMap<K, V>>;
 
 impl MetaStorage for InMemoryMetaStorage {
     fn set_fee(&self, txid: &str, fee: u64) -> Result<()> {

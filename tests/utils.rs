@@ -92,19 +92,19 @@ pub mod tests_util {
     }
 
     pub fn add_funds_to_wallet<P: WalletPersister>(account: &mut NgAccount<P>) {
-        for (index, ngwallet) in account.wallets.iter().enumerate() {
+        for (index, ngwallet) in account.wallets.read().unwrap().iter().enumerate() {
             fill_with_txes(index, &ngwallet)
         }
     }
 
     pub fn add_funds_wallet_with_unconfirmed<P: WalletPersister>(account: &mut NgAccount<P>) {
-        for (index, ngwallet) in account.wallets.iter().enumerate() {
+        for (index, ngwallet) in account.wallets.read().unwrap().iter().enumerate() {
             fill_with_txes(index, &ngwallet);
         }
         fill_with_unconfirmed(&account.get_coordinator_wallet());
     }
 
-    fn fill_with_unconfirmed<P: WalletPersister>(ngwallet: &&NgWallet<P>) {
+    fn fill_with_unconfirmed<P: WalletPersister>(ngwallet: &NgWallet<P>) {
         let mut wallet = ngwallet.bdk_wallet.lock().unwrap();
         let to_address =
             Address::from_str("tb1pspfcrvz538vvj9f9gfkd85nu5ty98zw9y5e302kha6zurv6vg07s8z7a8w")
