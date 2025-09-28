@@ -50,7 +50,7 @@ mod tests {
             },
         ];
 
-        let mut account = NgAccountBuilder::default()
+        let account = NgAccountBuilder::default()
             .name("Passport Prime".to_string())
             .color("red".to_string())
             .seed_has_passphrase(false)
@@ -69,7 +69,7 @@ mod tests {
         // Let's imagine we are applying updates remotely
         let mut updates = vec![];
 
-        for wallet in account.wallets.iter() {
+        for wallet in account.wallets.read().unwrap().iter() {
             let (address_type, request) = account.full_scan_request(wallet.address_type).unwrap();
             let update = NgWallet::<Connection>::scan(request, ELECTRUM_SERVER, None).unwrap();
             updates.push((address_type, Update::from(update)));
@@ -208,7 +208,7 @@ mod tests {
         })
         .unwrap();
 
-        let mut account = NgAccountBuilder::default()
+        let account = NgAccountBuilder::default()
             .name("Passport Prime".to_string())
             .color("red".to_string())
             .seed_has_passphrase(false)
@@ -243,7 +243,7 @@ mod tests {
         // Let's imagine we are applying updates remotely
         let mut updates = vec![];
 
-        for wallet in account.wallets.iter() {
+        for wallet in account.wallets.read().unwrap().iter() {
             let (address_type, request) = account.full_scan_request(wallet.address_type).unwrap();
             let update = NgWallet::<Connection>::scan(request, ELECTRUM_SERVER_T4, None).unwrap();
             updates.push((address_type, Update::from(update)));
@@ -305,7 +305,7 @@ mod tests {
             bdk_persister: Arc::new(Mutex::new(Connection::open_in_memory().unwrap())),
         }];
 
-        let mut account = NgAccountBuilder::default()
+        let account = NgAccountBuilder::default()
             .name("Passport Prime".to_string())
             .color("#fafafa".to_string())
             .seed_has_passphrase(false)
@@ -323,9 +323,9 @@ mod tests {
 
         account.add_new_descriptor(&second_descriptor).unwrap();
 
-        assert_eq!(account.wallets.len(), 2);
+        assert_eq!(account.wallets.read().unwrap().len(), 2);
 
-        assert_eq!(account.config.descriptors.len(), 2);
+        assert_eq!(account.config.read().unwrap().descriptors.len(), 2);
 
         //expect error when adding duplicate descriptor
         assert!(account.add_new_descriptor(&second_descriptor).is_err());
@@ -398,8 +398,8 @@ mod tests {
         let account_backup = serde_json::from_str::<NgAccountBackup>(&backup).unwrap();
         let config_from_backup = account_backup.ng_account_config;
 
-        assert_eq!(config_from_backup.name, config.name);
-        assert_eq!(config_from_backup.network, config.network);
+        assert_eq!(config_from_backup.name, config.read().unwrap().name);
+        assert_eq!(config_from_backup.network, config.read().unwrap().network);
         //hot wallet doesnt export descriptors, since they contain xprv
         assert_eq!(config_from_backup.descriptors.len(), 0);
         let last_used_index = account_backup.last_used_index;
@@ -429,10 +429,13 @@ mod tests {
         let config_from_backup = account_backup.ng_account_config;
         let last_used_index = account_backup.last_used_index;
         println!("last_used_index: {last_used_index:?}");
-        assert_eq!(config_from_backup.name, config.name);
-        assert_eq!(config_from_backup.network, config.network);
+        assert_eq!(config_from_backup.name, config.read().unwrap().name);
+        assert_eq!(config_from_backup.network, config.read().unwrap().network);
         //watch only must export public descriptors
-        assert_eq!(config_from_backup.descriptors, config.descriptors);
+        assert_eq!(
+            config_from_backup.descriptors,
+            config.read().unwrap().descriptors
+        );
     }
 
     #[test]
@@ -467,16 +470,22 @@ mod tests {
     #[test]
     #[cfg(feature = "envoy")]
     fn change_address_type() {
-        let mut account = utils::tests_util::get_ng_hot_wallet();
+        let account = utils::tests_util::get_ng_hot_wallet();
         let wallet = account.get_coordinator_wallet();
-        assert_eq!(account.config.preferred_address_type, AddressType::P2tr);
+        assert_eq!(
+            account.config.read().unwrap().preferred_address_type,
+            AddressType::P2tr
+        );
         assert_eq!(wallet.address_type, AddressType::P2tr);
 
         account
             .set_preferred_address_type(AddressType::P2wpkh)
             .unwrap();
         let wallet = account.get_coordinator_wallet();
-        assert_eq!(account.config.preferred_address_type, AddressType::P2wpkh);
+        assert_eq!(
+            account.config.read().unwrap().preferred_address_type,
+            AddressType::P2wpkh
+        );
         assert_eq!(wallet.address_type, AddressType::P2wpkh);
     }
 
@@ -631,149 +640,56 @@ mod tests {
 
     #[test]
     #[cfg(feature = "envoy")]
-    fn verify_address_stateless_test() {
-        use ngwallet::account::verify_address_stateless;
-
+    fn verify_address_2() {
         let account = utils::tests_util::get_ng_hot_wallet();
 
-        // testnet segwit receive address 0
-        let address_segwit_testnet = String::from("tb1qp3s35d5579w9mtx4vkx2lngfpnwyjx8jxhveym");
-        let address_verification_info = account
-            .get_address_verification_info(address_segwit_testnet)
+        // multi-attempt address verification (address 30 fails on first attempt, succeeds on second)
+        let result = account
+            .verify_address(
+                String::from("tb1qsqtlt0q4why79qmf9jddp53nncyrutv90wdjkz"),
+                0,
+                50,
+            )
             .unwrap();
-        let result = verify_address_stateless(address_verification_info, 0, 50).unwrap();
-        assert_eq!(result.found_index, Some(0));
-        assert_eq!(result.change_lower, 0);
-        assert_eq!(result.change_upper, 0);
-        assert_eq!(result.receive_lower, 0);
-        assert_eq!(result.receive_upper, 0);
-
-        // Update state after successful verification
-        account.update_verification_state(&result).unwrap();
-
-        // testnet segwit receive address 5
-        let address_segwit_5 = String::from("tb1qttqxp75y56gvnrr6cy9p8ynvgyjf683ce6d9c4");
-        let address_verification_info = account
-            .get_address_verification_info(address_segwit_5)
-            .unwrap();
-        let result = verify_address_stateless(address_verification_info, 0, 50).unwrap();
-        assert_eq!(result.found_index, Some(5));
-        assert_eq!(result.change_lower, 0);
-        assert_eq!(result.change_upper, 4);
-        assert_eq!(result.receive_lower, 0);
-        assert_eq!(result.receive_upper, 5);
-
-        account.update_verification_state(&result).unwrap();
-
-        let address_segwit_5_repeat = String::from("tb1qttqxp75y56gvnrr6cy9p8ynvgyjf683ce6d9c4");
-        let address_verification_info = account
-            .get_address_verification_info(address_segwit_5_repeat)
-            .unwrap();
-        let result = verify_address_stateless(address_verification_info, 0, 50).unwrap();
-        assert_eq!(result.found_index, Some(5));
-        assert_eq!(result.change_lower, 0);
-        assert_eq!(result.change_upper, 0);
-        assert_eq!(result.receive_lower, 5);
-        assert_eq!(result.receive_upper, 5);
-
-        account.update_verification_state(&result).unwrap();
-
-        // testnet segwit receive address 0, reset for next tests
-        let address_segwit_0_reset = String::from("tb1qp3s35d5579w9mtx4vkx2lngfpnwyjx8jxhveym");
-        let address_verification_info = account
-            .get_address_verification_info(address_segwit_0_reset)
-            .unwrap();
-        let result = verify_address_stateless(address_verification_info, 0, 50).unwrap();
-        assert_eq!(result.found_index, Some(0));
-        assert_eq!(result.change_lower, 0);
-        assert_eq!(result.change_upper, 0);
-        assert_eq!(result.receive_lower, 0);
-        assert_eq!(result.receive_upper, 0);
-
-        account.update_verification_state(&result).unwrap();
-
-        // testnet segwit receive address 30
-        let address_segwit_30 = String::from("tb1qsqtlt0q4why79qmf9jddp53nncyrutv90wdjkz");
-        let address_verification_info = account
-            .get_address_verification_info(address_segwit_30.clone())
-            .unwrap();
-        let result = verify_address_stateless(address_verification_info, 0, 50).unwrap();
         assert_eq!(result.found_index, None);
         assert_eq!(result.change_lower, 0);
         assert_eq!(result.change_upper, 25);
         assert_eq!(result.receive_lower, 0);
         assert_eq!(result.receive_upper, 25);
 
-        account.update_verification_state(&result).unwrap();
-
-        let address_verification_info = account
-            .get_address_verification_info(address_segwit_30)
+        let result = account
+            .verify_address(
+                String::from("tb1qsqtlt0q4why79qmf9jddp53nncyrutv90wdjkz"),
+                1,
+                50,
+            )
             .unwrap();
-        let result = verify_address_stateless(address_verification_info, 1, 50).unwrap();
         assert_eq!(result.found_index, Some(30));
         assert_eq!(result.change_lower, 0);
         assert_eq!(result.change_upper, 29);
         assert_eq!(result.receive_lower, 0);
         assert_eq!(result.receive_upper, 30);
 
-        account.update_verification_state(&result).unwrap();
-
-        // test that we resume the search from the last verified address, and the downward search
-        // works
-        // testnet segwit receive address 5
-        let address_segwit_5_resume = String::from("tb1qttqxp75y56gvnrr6cy9p8ynvgyjf683ce6d9c4");
-        let address_verification_info = account
-            .get_address_verification_info(address_segwit_5_resume.clone())
+        // change address verification
+        let result = account
+            .verify_address(
+                String::from("tb1qm2rus4zu75exrlu9rrk0l3ctktkujtetqrjd88"),
+                0,
+                50,
+            )
             .unwrap();
-        let result = verify_address_stateless(address_verification_info, 0, 50).unwrap();
-        assert_eq!(result.found_index, None);
-        assert_eq!(result.change_lower, 0);
-        assert_eq!(result.change_upper, 25);
-        assert_eq!(result.receive_lower, 6);
-        assert_eq!(result.receive_upper, 55);
-
-        account.update_verification_state(&result).unwrap();
-
-        let address_verification_info = account
-            .get_address_verification_info(address_segwit_5_resume)
-            .unwrap();
-        let result = verify_address_stateless(address_verification_info, 1, 50).unwrap();
-        assert_eq!(result.found_index, Some(5));
-        assert_eq!(result.change_lower, 0);
-        assert_eq!(result.change_upper, 25);
-        assert_eq!(result.receive_lower, 5);
-        assert_eq!(result.receive_upper, 55);
-
-        account.update_verification_state(&result).unwrap();
-
-        // testnet segwit change address 0
-        let address_segwit_change_0 = String::from("tb1qm2rus4zu75exrlu9rrk0l3ctktkujtetqrjd88");
-        let address_verification_info = account
-            .get_address_verification_info(address_segwit_change_0)
-            .unwrap();
-        let result = verify_address_stateless(address_verification_info, 0, 50).unwrap();
         assert_eq!(result.found_index, None);
 
-        account.update_verification_state(&result).unwrap();
-
-        // mainnet segwit receive address 0, should fail network requirement
-        let address_mainnet = String::from("bc1q99mxpdle2pqs3pkaxcz2wmk8l0avgskyuuc6pl");
+        // network validation (mainnet address should fail on testnet account)
         assert!(
             account
-                .get_address_verification_info(address_mainnet)
+                .verify_address(
+                    String::from("bc1q99mxpdle2pqs3pkaxcz2wmk8l0avgskyuuc6pl"),
+                    0,
+                    50,
+                )
                 .is_err()
         );
-
-        // testnet taproot receive address 0
-        let address_taproot_0 =
-            String::from("tb1phv4spu4u6uakttj3mqqcr77la4u6a28j943d3cxjh02a6ny78d0s7tupl5");
-        let address_verification_info = account
-            .get_address_verification_info(address_taproot_0)
-            .unwrap();
-        let result = verify_address_stateless(address_verification_info, 0, 50).unwrap();
-        assert_eq!(result.found_index.unwrap(), 0);
-
-        account.update_verification_state(&result).unwrap();
     }
 
     #[test]

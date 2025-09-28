@@ -37,8 +37,19 @@ pub struct PsbtInfo {
 pub struct NgWallet<P: WalletPersister> {
     pub bdk_wallet: Arc<Mutex<PersistedWallet<P>>>,
     pub address_type: AddressType,
-    pub(crate) meta_storage: Arc<dyn MetaStorage>,
+    pub(crate) meta_storage: Arc<dyn MetaStorage + Send>,
     bdk_persister: Arc<Mutex<P>>,
+}
+
+impl<P: WalletPersister> Clone for NgWallet<P> {
+    fn clone(&self) -> Self {
+        Self {
+            bdk_wallet: self.bdk_wallet.clone(),
+            address_type: self.address_type,
+            meta_storage: self.meta_storage.clone(),
+            bdk_persister: self.bdk_persister.clone(),
+        }
+    }
 }
 
 impl<P: WalletPersister> NgWallet<P> {
@@ -80,7 +91,7 @@ impl<P: WalletPersister> NgWallet<P> {
         })
     }
 
-    pub fn persist(&mut self) -> Result<bool> {
+    pub fn persist(&self) -> Result<bool> {
         self.bdk_wallet
             .lock()
             .unwrap()
@@ -562,9 +573,10 @@ impl<P: WalletPersister> NgWallet<P> {
 
         for output in tx.clone().output {
             if let Ok(address) = Address::from_script(&output.script_pubkey, wallet.network())
-                && !wallet.is_mine(output.script_pubkey) {
-                    outputs.insert(output.value.to_sat(), address.to_string());
-                }
+                && !wallet.is_mine(output.script_pubkey)
+            {
+                outputs.insert(output.value.to_sat(), address.to_string());
+            }
         }
 
         if let Ok(fee_amount) = wallet.calculate_fee(&tx) {
