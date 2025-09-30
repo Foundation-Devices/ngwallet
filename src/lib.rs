@@ -1,6 +1,7 @@
 pub mod account;
 pub mod config;
 pub mod ngwallet;
+pub mod psbt;
 pub mod rbf;
 pub mod send;
 pub mod store;
