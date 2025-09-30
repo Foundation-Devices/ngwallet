@@ -17,6 +17,7 @@ minicbor-serde = { version = "0.4.1", features = ["alloc"] }
 rkyv = { version = "0.7", default-features = false, features = ["size_32", "alloc"], optional = true }
 regex = "1.11.1"
 sha2 = { version = "0.10.9", optional = true }
+thiserror = "2.0"
 
 [lints.rust]
 unexpected_cfgs = { level = "warn", check-cfg = ['cfg(frb_expand)'] }

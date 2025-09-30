@@ -10,6 +10,7 @@ pub mod utxo;
 pub use bdk_wallet;
 pub use redb;
 
+pub mod bip32;
 pub mod bip39;
 pub mod db;
 pub mod utils;
