@@ -1,5 +1,7 @@
 use crate::bip32::NgAccountPath;
-use crate::psbt::{Error, Output, OutputKind, derive_account_xpub, derive_full_descriptor_pubkey};
+use crate::psbt::{
+    Error, OutputKind, PsbtOutput, derive_account_xpub, derive_full_descriptor_pubkey,
+};
 use bdk_wallet::bitcoin::bip32::{ChildNumber, Xpriv};
 use bdk_wallet::bitcoin::psbt;
 use bdk_wallet::bitcoin::secp256k1::{Secp256k1, Signing};
@@ -16,7 +18,7 @@ pub fn validate_output(
     txout: &TxOut,
     network: Network,
     index: usize,
-) -> Result<Output, Error> {
+) -> Result<PsbtOutput, Error> {
     if output.bip32_derivation.len() != 1 {
         return Err(Error::MultipleKeysNotExpected { index });
     }
@@ -33,7 +35,7 @@ pub fn validate_output(
         return Err(Error::FraudulentOutput { index });
     }
 
-    Ok(Output {
+    Ok(PsbtOutput {
         amount: txout.value,
         kind: OutputKind::from_derivation_path(&source.1, 44, network, address)?,
     })

@@ -1,4 +1,4 @@
-use crate::psbt::{OpReturnPart, Output, OutputKind};
+use crate::psbt::{OpReturnPart, OutputKind, PsbtOutput};
 use bdk_wallet::bitcoin::TxOut;
 use bdk_wallet::bitcoin::opcodes::all::OP_RETURN;
 use bdk_wallet::bitcoin::script::Instruction;
@@ -8,7 +8,7 @@ use std::str;
 ///
 /// It is assumed that the data after the OP_RETURN instruction are still
 /// valid data pushes which are then decoded as UTF-8 strings.
-pub fn parse(txout: &TxOut) -> Output {
+pub fn parse(txout: &TxOut) -> PsbtOutput {
     let mut instructions = txout.script_pubkey.instructions();
 
     // Skip the OP_RETURN instruction itself.
@@ -46,7 +46,7 @@ pub fn parse(txout: &TxOut) -> Output {
         }
     }
 
-    Output {
+    PsbtOutput {
         amount: txout.value,
         kind: OutputKind::OpReturn(parts),
     }
@@ -69,7 +69,7 @@ fn is_op_return(instruction: Instruction) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::psbt::{OpReturnPart, Output, OutputKind};
+    use crate::psbt::{OpReturnPart, OutputKind, PsbtOutput};
     use bdk_wallet::bitcoin::{Amount, Script, script::PushBytes};
 
     #[test]
@@ -90,7 +90,7 @@ mod tests {
         });
         assert_eq!(
             output,
-            Output {
+            PsbtOutput {
                 amount: value,
                 kind: OutputKind::OpReturn(vec![OpReturnPart::Message(MESSAGE.to_owned())])
             }

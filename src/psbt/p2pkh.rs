@@ -1,5 +1,7 @@
 use crate::bip32::NgAccountPath;
-use crate::psbt::{Error, Output, OutputKind, derive_account_xpub, derive_full_descriptor_pubkey};
+use crate::psbt::{
+    Error, OutputKind, PsbtOutput, derive_account_xpub, derive_full_descriptor_pubkey,
+};
 use bdk_wallet::bitcoin::bip32::{ChildNumber, Xpriv};
 use bdk_wallet::bitcoin::secp256k1::{Secp256k1, Signing};
 use bdk_wallet::bitcoin::{Address, CompressedPublicKey, Network, TxOut, psbt};
@@ -12,7 +14,7 @@ pub fn validate_output(
     txout: &TxOut,
     network: Network,
     index: usize,
-) -> Result<Output, Error> {
+) -> Result<PsbtOutput, Error> {
     debug_assert!(txout.script_pubkey.is_p2pkh());
 
     // This output type is by definition single-sig only, so exactly one
@@ -33,7 +35,7 @@ pub fn validate_output(
         return Err(Error::FraudulentOutput { index });
     }
 
-    Ok(Output {
+    Ok(PsbtOutput {
         amount: txout.value,
         kind: OutputKind::from_derivation_path(&source.1, 44, network, address)?,
     })
