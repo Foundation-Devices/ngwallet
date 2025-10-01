@@ -1,8 +1,8 @@
 use bdk_wallet::KeychainKind;
 use bdk_wallet::bitcoin::Network;
-use bdk_wallet::bitcoin::secp256k1::{Secp256k1, Signing};
 use bdk_wallet::bitcoin::bip32;
-use bdk_wallet::bitcoin::bip32::{Xpriv, Fingerprint};
+use bdk_wallet::bitcoin::bip32::{Fingerprint, Xpriv};
+use bdk_wallet::bitcoin::secp256k1::Secp256k1;
 use bdk_wallet::keys::bip39;
 use bdk_wallet::keys::bip39::{Language, Mnemonic};
 use bdk_wallet::miniscript::descriptor::DescriptorType;
@@ -27,29 +27,27 @@ pub struct MasterKey {
 
 impl MasterKey {
     /// Compute the master key from the entropy.
-    pub fn from_entropy<C>(
-        secp: &Secp256k1<C>,
+    pub fn from_entropy(
         network: impl Into<Network>,
         entropy: &[u8],
         passphrase: &str,
         bip85: Option<(WordCount, u32)>,
-    ) -> Result<Self, Error>
-    where
-        C: Signing,
-    {
+    ) -> Result<Self, Error> {
         let network = network.into();
         let mnemonic = Mnemonic::from_entropy(entropy)?;
         let key = mnemonic.to_seed(passphrase);
         let xpriv = Xpriv::new_master(network, &key)?;
-        let fingerprint = xpriv.fingerprint(secp);
+        let secp = Secp256k1::signing_only();
+        let fingerprint = xpriv.fingerprint(&secp);
 
         if let Some((word_count, index)) = bip85 {
             // Once the bip85 crate implements std::error::Error add
             // #[from] in the error enum.
-            let bip85_mnemonic = bip85::to_mnemonic(secp, &xpriv, word_count.into(), index).map_err(|_| Error::Bip85)?;
+            let bip85_mnemonic = bip85::to_mnemonic(&secp, &xpriv, word_count.into(), index)
+                .map_err(|_| Error::Bip85)?;
             let bip85_key = bip85_mnemonic.to_seed("");
             let bip85_xpriv = Xpriv::new_master(network, &bip85_key)?;
-            let bip85_fingerprint = bip85_xpriv.fingerprint(secp);
+            let bip85_fingerprint = bip85_xpriv.fingerprint(&secp);
 
             Ok(Self {
                 mnemonic: bip85_mnemonic.to_string(),
@@ -57,7 +55,11 @@ impl MasterKey {
                 fingerprint: bip85_fingerprint,
             })
         } else {
-            Ok(Self { mnemonic: mnemonic.to_string(), key: Key(key), fingerprint })
+            Ok(Self {
+                mnemonic: mnemonic.to_string(),
+                key: Key(key),
+                fingerprint,
+            })
         }
     }
 }
