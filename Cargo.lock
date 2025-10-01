@@ -116,9 +116,9 @@ checksum = "d965446196e3b7decd44aa7ee49e31d630118f90ef12f97900f262eb915c951d"
 
 [[package]]
 name = "bip39"
-version = "2.1.0"
+version = "2.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "33415e24172c1b7d6066f6d999545375ab8e1d95421d6784bdfff9496f292387"
+checksum = "43d193de1f7487df1914d3a568b772458861d33f9c54249612cc2893d6915054"
 dependencies = [
  "bitcoin_hashes 0.13.0",
  "rand",
@@ -128,10 +128,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "bip85"
+version = "0.2.0"
+source = "git+https://github.com/Foundation-Devices/rust-bip85?rev=cea22d90fcbca6d142aa26a48581511575d0dfae#cea22d90fcbca6d142aa26a48581511575d0dfae"
+dependencies = [
+ "bip39",
+ "bitcoin",
+]
+
+[[package]]
 name = "bitcoin"
-version = "0.32.6"
+version = "0.32.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ad8929a18b8e33ea6b3c09297b687baaa71fb1b97353243a3f1029fad5c59c5b"
+checksum = "0fda569d741b895131a88ee5589a467e73e9c4718e958ac9308e4f7dc44b6945"
 dependencies = [
  "base58ck",
  "base64",
@@ -465,6 +474,7 @@ dependencies = [
  "bdk_electrum",
  "bdk_wallet",
  "bip39",
+ "bip85",
  "log",
  "minicbor-serde",
  "redb",
@@ -474,6 +484,7 @@ dependencies = [
  "serde_json",
  "sha2",
  "thiserror",
+ "zeroize",
 ]
 
 [[package]]
@@ -1034,3 +1045,17 @@ name = "zeroize"
 version = "1.8.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ced3678a2879b30306d323f4542626697a464a97c0a07c9aebf7ebca65cd4dde"
+dependencies = [
+ "zeroize_derive",
+]
+
+[[package]]
+name = "zeroize_derive"
+version = "1.4.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ce36e65b0d2999d2aafac989fb249189a141aee1f53c612c1f37d72631959f69"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 2.0.101",
+]
