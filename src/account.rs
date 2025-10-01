@@ -51,6 +51,15 @@ pub struct RemoteUpdate {
 }
 
 impl RemoteUpdate {
+    pub fn new(
+        metadata: Option<NgAccountConfig>,
+        wallet_update: Vec<(AddressType, Update)>,
+    ) -> Self {
+        Self {
+            metadata,
+            wallet_update,
+        }
+    }
     pub fn serialize(self) -> Vec<u8> {
         minicbor_serde::to_vec(self).unwrap()
     }
