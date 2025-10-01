@@ -50,6 +50,16 @@ pub struct RemoteUpdate {
     pub wallet_update: Vec<(AddressType, Update)>,
 }
 
+impl RemoteUpdate {
+    pub fn serialize(self) -> Vec<u8> {
+        minicbor_serde::to_vec(self).unwrap()
+    }
+
+    pub fn deserialize(bytes: &[u8]) -> anyhow::Result<Self> {
+        Ok(minicbor_serde::from_slice(bytes)?)
+    }
+}
+
 pub fn get_persister_file_name(internal: &str, external: Option<&str>) -> String {
     fn get_last_eight_chars(s: &str) -> Option<String> {
         if s.chars().count() >= 6 {
@@ -633,20 +643,8 @@ impl<P: WalletPersister> NgAccount<P> {
             .with_context(|| "Failed to set fee")
     }
 
-    pub fn serialize_updates(
-        metadata: Option<NgAccountConfig>,
-        wallet_updates: Vec<(AddressType, Update)>,
-    ) -> anyhow::Result<Vec<u8>> {
-        let update = RemoteUpdate {
-            metadata,
-            wallet_update: wallet_updates,
-        };
-
-        minicbor_serde::to_vec(&update).map_err(|_| anyhow::anyhow!("Could not serialize updates"))
-    }
-
     pub fn update(&self, payload: Vec<u8>) -> anyhow::Result<()> {
-        let update: RemoteUpdate = minicbor_serde::from_slice(&payload)?;
+        let update = RemoteUpdate::deserialize(&payload)?;
 
         for wallet_update in update.wallet_update {
             self.apply(wallet_update)?
