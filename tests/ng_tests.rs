@@ -22,6 +22,7 @@ mod tests {
     use bdk_wallet::miniscript::psbt::PsbtExt;
     use bdk_wallet::{KeychainKind, SignOptions};
     use ngwallet::account::NgAccount;
+    use ngwallet::account::RemoteUpdate;
     use ngwallet::bip39;
     use ngwallet::bip39::get_descriptors;
     use ngwallet::config::{AddressType, NgAccountBackup, NgAccountBuilder};
@@ -75,7 +76,7 @@ mod tests {
             updates.push((address_type, Update::from(update)));
         }
 
-        let payload = NgAccount::<Connection>::serialize_updates(None, updates).unwrap();
+        let payload = RemoteUpdate::new(None, updates).serialize();
         account.update(payload).unwrap();
 
         let address = account.next_address().unwrap();
@@ -249,7 +250,7 @@ mod tests {
             updates.push((address_type, Update::from(update)));
         }
 
-        let payload = NgAccount::<Connection>::serialize_updates(None, updates).unwrap();
+        let payload = RemoteUpdate::new(None, updates).serialize();
         account.update(payload).unwrap();
 
         let address = account.next_address().unwrap();
