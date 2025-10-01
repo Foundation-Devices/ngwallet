@@ -1,12 +1,105 @@
 use bdk_wallet::KeychainKind;
 use bdk_wallet::bitcoin::Network;
-use bdk_wallet::bitcoin::bip32::Xpriv;
+use bdk_wallet::bitcoin::secp256k1::{Secp256k1, Signing};
+use bdk_wallet::bitcoin::bip32;
+use bdk_wallet::bitcoin::bip32::{Xpriv, Fingerprint};
+use bdk_wallet::keys::bip39;
 use bdk_wallet::keys::bip39::{Language, Mnemonic};
 use bdk_wallet::miniscript::descriptor::DescriptorType;
 use bdk_wallet::template::{
     Bip44, Bip48Member, Bip49, Bip84, Bip86, DescriptorTemplate, DescriptorTemplateOut,
 };
 use std::cmp::min;
+use thiserror::Error;
+use zeroize::ZeroizeOnDrop;
+
+/// A master key for a given BIP-0039 mnemonic seed.
+#[derive(Debug, Clone, ZeroizeOnDrop)]
+pub struct MasterKey {
+    /// The mnemonic itself.
+    pub mnemonic: String,
+    /// The BIP-0032 master key.
+    pub key: Key,
+    /// The computed fingerprint from `xpriv`.
+    #[zeroize(skip)]
+    pub fingerprint: Fingerprint,
+}
+
+impl MasterKey {
+    /// Compute the master key from the entropy.
+    pub fn from_entropy<C>(
+        secp: &Secp256k1<C>,
+        network: impl Into<Network>,
+        entropy: &[u8],
+        passphrase: &str,
+        bip85: Option<(WordCount, u32)>,
+    ) -> Result<Self, Error>
+    where
+        C: Signing,
+    {
+        let network = network.into();
+        let mnemonic = Mnemonic::from_entropy(entropy)?;
+        let key = mnemonic.to_seed(passphrase);
+        let xpriv = Xpriv::new_master(network, &key)?;
+        let fingerprint = xpriv.fingerprint(secp);
+
+        if let Some((word_count, index)) = bip85 {
+            // Once the bip85 crate implements std::error::Error add
+            // #[from] in the error enum.
+            let bip85_mnemonic = bip85::to_mnemonic(secp, &xpriv, word_count.into(), index).map_err(|_| Error::Bip85)?;
+            let bip85_key = bip85_mnemonic.to_seed("");
+            let bip85_xpriv = Xpriv::new_master(network, &bip85_key)?;
+            let bip85_fingerprint = bip85_xpriv.fingerprint(secp);
+
+            Ok(Self {
+                mnemonic: bip85_mnemonic.to_string(),
+                key: Key(bip85_key),
+                fingerprint: bip85_fingerprint,
+            })
+        } else {
+            Ok(Self { mnemonic: mnemonic.to_string(), key: Key(key), fingerprint })
+        }
+    }
+}
+
+pub const KEY_LEN: usize = 64;
+
+#[derive(Debug, Clone, ZeroizeOnDrop)]
+pub struct Key(pub [u8; KEY_LEN]);
+
+/// The word count of a mnemonic seed.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum WordCount {
+    /// 12.
+    Twelve,
+    /// 18.
+    Eighteen,
+    /// 24.
+    TwentyFour,
+}
+
+impl From<WordCount> for u32 {
+    fn from(v: WordCount) -> u32 {
+        match v {
+            WordCount::Twelve => 12,
+            WordCount::Eighteen => 18,
+            WordCount::TwentyFour => 24,
+        }
+    }
+}
+
+/// Errors that can occur when computing the master key.
+#[derive(Debug, Error)]
+pub enum Error {
+    #[error("couldn't derive key: {0}")]
+    Bip32(#[from] bip32::Error),
+
+    #[error("couldn't create mnemonic: {0}")]
+    Bip39(#[from] bip39::Error),
+
+    #[error("couldn't derive seed")]
+    Bip85,
+}
 
 #[derive(Debug, PartialEq)]
 pub struct Descriptors {
