@@ -1,6 +1,7 @@
 pub mod account;
 pub mod config;
 pub mod ngwallet;
+pub mod psbt;
 pub mod rbf;
 pub mod send;
 pub mod store;
@@ -10,6 +11,7 @@ pub mod utxo;
 pub use bdk_wallet;
 pub use redb;
 
+pub mod bip32;
 pub mod bip39;
 pub mod db;
 pub mod utils;
