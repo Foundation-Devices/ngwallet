@@ -1,4 +1,4 @@
-use crate::psbt::{Error, Output, OutputKind};
+use crate::psbt::{Error, PsbtOutput, OutputKind};
 use bdk_wallet::bitcoin::psbt;
 use bdk_wallet::bitcoin::secp256k1::{Secp256k1, Verification};
 use bdk_wallet::bitcoin::{Address, Network, TxOut, XOnlyPublicKey};
@@ -14,7 +14,7 @@ pub fn validate_output<C>(
     txout: &TxOut,
     network: Network,
     index: usize,
-) -> Result<Output, Error>
+) -> Result<PsbtOutput, Error>
 where
     C: Verification,
 {
@@ -40,7 +40,7 @@ where
         return Err(Error::FraudulentOutput { index });
     }
 
-    Ok(Output {
+    Ok(PsbtOutput {
         amount: txout.value,
         kind: OutputKind::from_derivation_path(&source.1, 86, network, address)?,
     })

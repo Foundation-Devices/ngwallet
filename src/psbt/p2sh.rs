@@ -1,4 +1,4 @@
-use crate::psbt::{Error, Output, OutputKind};
+use crate::psbt::{Error, PsbtOutput, OutputKind};
 use bdk_wallet::bitcoin::bip32::ChildNumber;
 use bdk_wallet::bitcoin::psbt;
 use bdk_wallet::bitcoin::{Address, CompressedPublicKey, Network, TxOut};
@@ -8,7 +8,7 @@ pub fn validate_output(
     txout: &TxOut,
     network: Network,
     index: usize,
-) -> Result<Output, Error> {
+) -> Result<PsbtOutput, Error> {
     debug_assert!(txout.script_pubkey.is_p2sh());
 
     // There should be at least one.
@@ -38,7 +38,7 @@ fn validate_p2wpkh_nested_in_p2sh_output(
     txout: &TxOut,
     network: Network,
     index: usize,
-) -> Result<Output, Error> {
+) -> Result<PsbtOutput, Error> {
     if output.bip32_derivation.len() != 1 {
         return Err(Error::MultipleKeysNotExpected { index });
     }
@@ -55,7 +55,7 @@ fn validate_p2wpkh_nested_in_p2sh_output(
         return Err(Error::FraudulentOutput { index });
     }
 
-    Ok(Output {
+    Ok(PsbtOutput {
         amount: txout.value,
         kind: OutputKind::from_derivation_path(&source.1, 49, network, address)?,
     })

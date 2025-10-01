@@ -29,13 +29,13 @@ pub struct TransactionDetails {
     /// The descriptors discovered in the PSBT.
     pub descriptors: HashSet<String>,
     /// The inputs.
-    pub inputs: Vec<Input>,
+    pub inputs: Vec<PsbtInput>,
     /// The outputs.
-    pub outputs: Vec<Output>,
+    pub outputs: Vec<PsbtOutput>,
 }
 
 #[derive(Debug, Clone)]
-pub struct Input {
+pub struct PsbtInput {
     /// Amount, in satoshis.
     pub amount: Amount,
     /// The address of the input.
@@ -43,14 +43,14 @@ pub struct Input {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Output {
+pub struct PsbtOutput {
     /// Amount spent, in satoshis.
     pub amount: Amount,
     /// The kind of output.
     pub kind: OutputKind,
 }
 
-impl Output {
+impl PsbtOutput {
     /// Convert this output to a Bitcoin address.
     pub fn to_address(&self) -> Option<&Address> {
         match self.kind {
@@ -381,7 +381,7 @@ where
                 return Err(Error::FraudulentInput { index: i });
             }
 
-            inputs.push(Input {
+            inputs.push(PsbtInput {
                 amount: funding_utxo.value,
                 address,
             });
@@ -399,7 +399,7 @@ where
                 return Err(Error::FraudulentInput { index: i });
             }
 
-            inputs.push(Input {
+            inputs.push(PsbtInput {
                 amount: funding_utxo.value,
                 address,
             });
@@ -577,7 +577,7 @@ fn validate_output<C>(
     network: Network,
     is_internal: bool,
     index: usize,
-) -> Result<Output, Error>
+) -> Result<PsbtOutput, Error>
 where
     C: Verification,
 {
@@ -588,7 +588,7 @@ where
             let address = Address::from_script(&txout.script_pubkey, network.params())
                 .map_err(|_| Error::UnknownScript { index })?;
 
-            Output {
+            PsbtOutput {
                 amount: txout.value,
                 kind: OutputKind::External(address),
             }
