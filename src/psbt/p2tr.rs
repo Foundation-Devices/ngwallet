@@ -1,4 +1,4 @@
-use crate::psbt::{Error, PsbtOutput, OutputKind};
+use crate::psbt::{Error, OutputKind, PsbtOutput};
 use bdk_wallet::bitcoin::psbt;
 use bdk_wallet::bitcoin::secp256k1::{Secp256k1, Verification};
 use bdk_wallet::bitcoin::{Address, Network, TxOut, XOnlyPublicKey};
