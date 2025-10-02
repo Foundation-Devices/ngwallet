@@ -13,7 +13,7 @@ pub fn multisig_descriptor(
     required_signers: u8,
     global_xpubs: &BTreeMap<Xpub, KeySource>,
     bip32_derivations: &BTreeMap<PublicKey, KeySource>,
-) -> String {
+) -> ExtendedDescriptor {
     // Find the account Xpubs in the global Xpub map of the PSBT.
     let xpubs = bip32_derivations
         .iter()
@@ -37,14 +37,12 @@ pub fn multisig_descriptor(
                 DerivationPath::from(vec![ChildNumber::Normal { index: 0 }]),
                 DerivationPath::from(vec![ChildNumber::Normal { index: 1 }]),
             ])
-            .unwrap(),
+            .expect("the vector passed should not be empty"),
             wildcard: Wildcard::Unhardened,
         });
         descriptor_pubkeys.push(descriptor_pubkey);
     }
 
-    let descriptor =
-        ExtendedDescriptor::new_wsh_sortedmulti(usize::from(required_signers), descriptor_pubkeys)
-            .unwrap();
-    descriptor.to_string()
+    ExtendedDescriptor::new_wsh_sortedmulti(usize::from(required_signers), descriptor_pubkeys)
+        .unwrap()
 }
