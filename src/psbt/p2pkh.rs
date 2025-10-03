@@ -47,7 +47,7 @@ pub fn descriptor<C>(
     master_key: &Xpriv,
     path: impl AsRef<[ChildNumber]>,
     network: Network,
-) -> String
+) -> ExtendedDescriptor
 where
     C: Signing,
 {
@@ -58,12 +58,11 @@ where
             // computed public key.
             if !account_path.matches(44, network) || !account_path.is_for_address() {
                 let pk = derive_full_descriptor_pubkey(secp, master_key, path);
-                let descriptor = ExtendedDescriptor::new_pkh(pk).unwrap();
-                return descriptor.to_string();
+                return ExtendedDescriptor::new_pkh(pk).unwrap();
             }
 
             let xpub = derive_account_xpub(secp, master_key, path);
-            let descriptor = Bip44Public(
+            Bip44Public(
                 xpub,
                 master_key.fingerprint(secp),
                 account_path
@@ -72,15 +71,13 @@ where
             )
             .build(network)
             .unwrap()
-            .0;
-            descriptor.to_string()
+            .0
         }
         // Not a BIP-0044 account, just return the wpkh descriptor with the full derivation path
         // and the computed public key.
         _ => {
             let pk = derive_full_descriptor_pubkey(secp, master_key, path);
-            let descriptor = ExtendedDescriptor::new_pkh(pk).unwrap();
-            descriptor.to_string()
+            ExtendedDescriptor::new_pkh(pk).unwrap()
         }
     }
 }

@@ -17,6 +17,7 @@ use bdk_wallet::bitcoin::secp256k1::{PublicKey, Secp256k1, Signing, Verification
 use bdk_wallet::bitcoin::{
     Address, Amount, CompressedPublicKey, Network, NetworkKind, TxIn, TxOut,
 };
+use bdk_wallet::descriptor::ExtendedDescriptor;
 use bdk_wallet::keys::{DescriptorPublicKey, SinglePub, SinglePubKey};
 use std::collections::{BTreeMap, HashSet};
 use thiserror::Error;
@@ -27,7 +28,7 @@ pub struct TransactionDetails {
     /// The fee of this transaction.
     pub fee: Amount,
     /// The descriptors discovered in the PSBT.
-    pub descriptors: HashSet<String>,
+    pub descriptors: HashSet<ExtendedDescriptor>,
     /// The inputs.
     pub inputs: Vec<PsbtInput>,
     /// The outputs.
@@ -300,6 +301,12 @@ pub fn validate<C>(
 where
     C: Signing + Verification,
 {
+    // SAFETY: This is allowed because the implementation of ExtendedDescriptor
+    // correctly implements hash with interior mutability as Tr does not hash
+    // the spend_info field which can be mutated.
+    //
+    // See: <https://rust-lang.github.io/rust-clippy/master/index.html#mutable_key_type>.
+    #[allow(clippy::mutable_key_type)]
     let mut descriptors = HashSet::new();
     let mut inputs = Vec::new();
     let mut outputs = Vec::new();

@@ -1,4 +1,4 @@
-use crate::psbt::{Error, PsbtOutput, OutputKind};
+use crate::psbt::{Error, OutputKind, PsbtOutput};
 use bdk_wallet::bitcoin::bip32::ChildNumber;
 use bdk_wallet::bitcoin::psbt;
 use bdk_wallet::bitcoin::{Address, CompressedPublicKey, Network, TxOut};
