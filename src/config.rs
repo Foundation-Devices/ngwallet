@@ -137,7 +137,7 @@ impl fmt::Display for MultiSigDetails {
             self.policy_threshold, self.policy_total_keys
         )?;
 
-        writeln!(f, "Format: {}\n", self.format.to_string().to_uppercase())?;
+        writeln!(f, "Format: {}\n", self.format.to_export_string())?;
 
         for (i, signer) in self.signers.iter().enumerate() {
             writeln!(f, "Derivation: {}", signer.derivation)?;
@@ -417,7 +417,7 @@ impl MultiSigDetails {
             BdkDescriptor::Wsh(desc) => match desc.into_inner() {
                 WshInner::SortedMulti(ms) => Self::from_sorted_multi(AddressType::P2wsh, ms),
                 _ => anyhow::bail!(
-                    "Multisig descriptors starting with Wsh() shoud only contain a SortedMulti(), other scripts are not currently accepted."
+                    "Multisig descriptors starting with Wsh() should only contain a SortedMulti(), other scripts are not currently accepted."
                 ),
             },
             _ => anyhow::bail!("Multisig descriptors should start with Sh() or Wsh()."),
@@ -650,6 +650,18 @@ impl AddressType {
             AddressType::P2ShWpkh => AddressType::P2sh,
             AddressType::P2ShWsh => AddressType::P2sh,
         }
+    }
+
+    pub fn to_export_string(&self) -> String {
+        match self {
+            AddressType::P2pkh => "P2PKH",
+            AddressType::P2sh => "P2SH",
+            AddressType::P2wpkh => "P2WPKH",
+            AddressType::P2wsh => "P2WSH",
+            AddressType::P2tr => "P2TR",
+            AddressType::P2ShWpkh => "P2WPKH-P2SH",
+            AddressType::P2ShWsh => "P2WSH-P2SH",
+        }.into()
     }
 }
 
