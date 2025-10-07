@@ -13,9 +13,9 @@ use bdk_wallet::bitcoin::bip32::{
 };
 use bdk_wallet::bitcoin::psbt;
 use bdk_wallet::bitcoin::psbt::Psbt;
-use bdk_wallet::bitcoin::secp256k1::{PublicKey, Secp256k1, Signing, Verification};
+use bdk_wallet::bitcoin::secp256k1::{PublicKey, Secp256k1, Signing, Verification, XOnlyPublicKey};
 use bdk_wallet::bitcoin::{
-    Address, Amount, CompressedPublicKey, Network, NetworkKind, TxIn, TxOut,
+    Address, Amount, CompressedPublicKey, Network, NetworkKind, TapLeafHash, TxIn, TxOut,
 };
 use bdk_wallet::descriptor::ExtendedDescriptor;
 use bdk_wallet::keys::{DescriptorPublicKey, SinglePub, SinglePubKey};
@@ -154,9 +154,9 @@ pub enum Error {
         error: ParsePathError,
     },
 
-    /// One of the extended public keys in the PSBT doesn't match our derivation.
-    #[error("Fraudulent extended public key")]
-    FraudulentXpub,
+    /// One of the public keys in the PSBT doesn't match our derivation.
+    #[error("Fraudulent key")]
+    FraudulentKey,
 
     /// No keys in the PSBT are from the seed used to validate PSBT.
     #[error("No keys found")]
@@ -323,8 +323,10 @@ where
     let maybe_valid = validate_xpubs(secp, master_key, &psbt.xpub, fingerprint)?;
     match maybe_valid {
         Some(true) => (),
-        Some(false) => return Err(Error::FraudulentXpub),
-        None => return Err(Error::NoKeysFound),
+        Some(false) => return Err(Error::FraudulentKey),
+        // Maybe a taproot only PSBT, which seem to not include Xpubs here but only
+        // in tap_key_origins for each input and output.
+        None => (),
     }
 
     for (i, input) in psbt.inputs.iter().enumerate() {
@@ -359,14 +361,25 @@ where
             }
         }
 
-        let is_our_input =
+        let has_our_public_keys =
             validate_public_keys(secp, master_key, &input.bip32_derivation, fingerprint)
                 .map_err(Error::from)
                 .and_then(|maybe_valid| match maybe_valid {
                     Some(true) => Ok(true),
-                    Some(false) => Err(Error::FraudulentXpub),
+                    Some(false) => Err(Error::FraudulentKey),
                     None => Ok(false),
                 })?;
+
+        let has_our_x_only_public_keys =
+            validate_x_only_public_keys(secp, master_key, &input.tap_key_origins, fingerprint)
+                .map_err(Error::from)
+                .and_then(|maybe_valid| match maybe_valid {
+                    Some(true) => Ok(true),
+                    Some(false) => Err(Error::FraudulentKey),
+                    None => Ok(false),
+                })?;
+
+        let is_our_input = has_our_public_keys || has_our_x_only_public_keys;
 
         if !is_our_input {
             continue;
@@ -375,7 +388,24 @@ where
         let funding_utxo =
             funding_utxo(input, txin).ok_or(Error::MissingInputFundingUtxo { index: i })?;
 
-        if funding_utxo.script_pubkey.is_p2wpkh() {
+        if funding_utxo.script_pubkey.is_p2tr() {
+            // Only single-sig P2TR supported for now.
+            if input.tap_key_origins.len() != 1 {
+                return Err(Error::MultipleKeysNotExpected { index: i });
+            }
+
+            let (x_only_pk, (_, source)) = input.tap_key_origins.first_key_value().unwrap();
+            let address = Address::p2tr(secp, *x_only_pk, None, network);
+            if !address.matches_script_pubkey(&funding_utxo.script_pubkey) {
+                return Err(Error::FraudulentInput { index: i });
+            }
+
+            inputs.push(PsbtInput {
+                amount: funding_utxo.value,
+                address,
+            });
+            descriptors.insert(p2tr::descriptor(secp, master_key, &source.1, network));
+        } else if funding_utxo.script_pubkey.is_p2wpkh() {
             if input.bip32_derivation.len() != 1 {
                 return Err(Error::MultipleKeysNotExpected { index: i });
             }
@@ -438,14 +468,25 @@ where
             return Err(Error::MissingOutput { index: i });
         };
 
-        let is_internal =
+        let has_our_public_keys =
             validate_public_keys(secp, master_key, &output.bip32_derivation, fingerprint)
                 .map_err(Error::from)
                 .and_then(|maybe_valid| match maybe_valid {
                     Some(true) => Ok(true),
-                    Some(false) => Err(Error::FraudulentXpub),
+                    Some(false) => Err(Error::FraudulentKey),
                     None => Ok(false),
                 })?;
+
+        let has_our_x_only_public_keys =
+            validate_x_only_public_keys(secp, master_key, &output.tap_key_origins, fingerprint)
+                .map_err(Error::from)
+                .and_then(|maybe_valid| match maybe_valid {
+                    Some(true) => Ok(true),
+                    Some(false) => Err(Error::FraudulentKey),
+                    None => Ok(false),
+                })?;
+
+        let is_internal = has_our_public_keys || has_our_x_only_public_keys;
 
         outputs.push(validate_output(
             secp,
@@ -556,6 +597,43 @@ where
     }
 }
 
+/// Validate that the X-only public keys in `tap_key_origins` are correctly
+/// derived from the `master_key`.
+///
+/// # Return
+///
+/// This has the same behaviour as in [`validate_xpubs`].
+fn validate_x_only_public_keys<C>(
+    secp: &Secp256k1<C>,
+    master_key: &Xpriv,
+    tap_key_origins: &BTreeMap<XOnlyPublicKey, (Vec<TapLeafHash>, KeySource)>,
+    fingerprint: Fingerprint,
+) -> Result<Option<bool>, bip32::Error>
+where
+    C: Signing,
+{
+    debug_assert!(is_master_key(master_key));
+    debug_assert!(master_key.fingerprint(secp) == fingerprint);
+
+    let mut fingerprint_seen = false;
+    for (x_only_pk, (_, source)) in x_only_keys_iterator(tap_key_origins, fingerprint) {
+        debug_assert!(source.0 == fingerprint);
+        fingerprint_seen = true;
+
+        let derived_xpriv = master_key.derive_priv(secp, &source.1)?;
+        let derived_xpub = Xpub::from_priv(secp, &derived_xpriv);
+        if x_only_pk != &derived_xpub.public_key.x_only_public_key().0 {
+            return Ok(Some(false));
+        }
+    }
+
+    if fingerprint_seen {
+        Ok(Some(true))
+    } else {
+        Ok(None)
+    }
+}
+
 /// Returns an iterator over the extended public keys matching the fingerprint.
 fn keys_iterator<K>(
     keys: &BTreeMap<K, KeySource>,
@@ -563,6 +641,15 @@ fn keys_iterator<K>(
 ) -> impl Iterator<Item = (&K, &KeySource)> {
     keys.iter()
         .filter(move |(_, source)| fingerprint == source.0)
+}
+
+/// Returns an iterator over the x-only public keys matching the fingerprint.
+fn x_only_keys_iterator<K>(
+    keys: &BTreeMap<K, (Vec<TapLeafHash>, KeySource)>,
+    fingerprint: Fingerprint,
+) -> impl Iterator<Item = (&K, &(Vec<TapLeafHash>, KeySource))> {
+    keys.iter()
+        .filter(move |(_, (_, source))| fingerprint == source.0)
 }
 
 fn funding_utxo<'a>(input: &'a psbt::Input, txin: &'a TxIn) -> Option<&'a TxOut> {

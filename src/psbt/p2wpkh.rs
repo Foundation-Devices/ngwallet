@@ -37,7 +37,7 @@ pub fn validate_output(
 
     Ok(PsbtOutput {
         amount: txout.value,
-        kind: OutputKind::from_derivation_path(&source.1, 44, network, address)?,
+        kind: OutputKind::from_derivation_path(&source.1, 84, network, address)?,
     })
 }
 
