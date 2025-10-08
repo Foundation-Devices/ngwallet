@@ -714,6 +714,7 @@ pub struct NgAccountConfig {
     pub network: Network,
     pub id: String,
     pub multisig: Option<MultiSigDetails>,
+    #[serde(default)]
     pub archived: bool,
 }
 
