@@ -3,6 +3,8 @@ use bdk_wallet::bitcoin::Network;
 use bdk_wallet::bitcoin::bip32;
 use bdk_wallet::bitcoin::bip32::{Fingerprint, Xpriv};
 use bdk_wallet::bitcoin::secp256k1::{Secp256k1, Signing};
+use bdk_wallet::descriptor::ExtendedDescriptor;
+use bdk_wallet::keys::KeyMap;
 use bdk_wallet::keys::bip39;
 use bdk_wallet::keys::bip39::{Language, Mnemonic};
 use bdk_wallet::miniscript::descriptor::DescriptorType;
@@ -109,10 +111,8 @@ pub enum Error {
 #[derive(Debug, PartialEq)]
 pub struct Descriptors {
     pub bip: String,
-    pub descriptor_xprv: String,
-    pub change_descriptor_xprv: String,
-    pub descriptor_xpub: String,
-    pub change_descriptor_xpub: String,
+    pub descriptor: (ExtendedDescriptor, KeyMap),
+    pub change_descriptor: (ExtendedDescriptor, KeyMap),
     pub descriptor_type: DescriptorType,
 }
 
@@ -121,20 +121,22 @@ impl Descriptors {
         &self.bip
     }
 
-    pub fn descriptor_xprv(&self) -> &str {
-        &self.descriptor_xprv
+    pub fn descriptor_xprv(&self) -> String {
+        let (desc, map) = &self.descriptor;
+        desc.to_string_with_secret(&map)
     }
 
-    pub fn change_descriptor_xprv(&self) -> &str {
-        &self.change_descriptor_xprv
+    pub fn change_descriptor_xprv(&self) -> String {
+        let (desc, map) = &self.change_descriptor;
+        desc.to_string_with_secret(&map)
     }
 
-    pub fn descriptor_xpub(&self) -> &str {
-        &self.descriptor_xpub
+    pub fn descriptor_xpub(&self) -> String {
+        self.descriptor.0.to_string()
     }
 
-    pub fn change_descriptor_xpub(&self) -> &str {
-        &self.change_descriptor_xpub
+    pub fn change_descriptor_xpub(&self) -> String {
+        self.change_descriptor.0.to_string()
     }
 }
 
@@ -162,15 +164,8 @@ pub fn get_seed_string(prime_master_seed: [u8; 72]) -> anyhow::Result<String> {
     Ok(mnemonic.to_string())
 }
 
-pub fn get_descriptors(
-    seed: String,
-    network: Network,
-    passphrase: Option<String>,
-) -> anyhow::Result<Vec<Descriptors>> {
-    let mnemonic = Mnemonic::parse(seed)?;
-    let seed = mnemonic.to_seed(passphrase.unwrap_or("".to_owned()));
-
-    let xprv: Xpriv = Xpriv::new_master(network, &seed)?;
+pub fn get_descriptors(seed: &[u8], network: Network) -> anyhow::Result<Vec<Descriptors>> {
+    let xprv: Xpriv = Xpriv::new_master(network, seed)?;
 
     let mut descriptors = vec![];
 
@@ -222,12 +217,10 @@ pub fn get_descriptors(
         );
 
         descriptors.push(Descriptors {
-            bip,
-            descriptor_xprv: descriptor.to_string_with_secret(&key_map),
-            change_descriptor_xprv: change_descriptor.to_string_with_secret(&change_key_map),
-            descriptor_xpub: descriptor.to_string(),
-            change_descriptor_xpub: change_descriptor.to_string(),
             descriptor_type: descriptor.desc_type(),
+            bip,
+            descriptor: (descriptor, key_map),
+            change_descriptor: (change_descriptor, change_key_map),
         });
     }
 
@@ -242,25 +235,28 @@ mod test {
     use crate::bip39::get_random_seed;
 
     use bdk_wallet::bitcoin::Network;
+    use bip85::bip39::Mnemonic;
 
     #[test]
     fn test_get_descriptor_from_seed() {
-        let mnemonic =
-            "axis minimum please frozen option smooth alone identify term fatigue crisp entry"
-                .to_owned();
+        let seed = Mnemonic::parse(
+            "axis minimum please frozen option smooth alone identify term fatigue crisp entry",
+        )
+        .unwrap()
+        .to_seed("");
 
-        let descriptors = get_descriptors(mnemonic, Network::Bitcoin, None).unwrap();
+        let descriptors = get_descriptors(&seed, Network::Bitcoin).unwrap();
 
-        assert_eq!(descriptors[0].descriptor_xprv, "sh(wpkh(xprv9s21ZrQH143K4EyEi77g3rpPu5byQ3EnnMJ4Y2KRNFp5Z4hin7er2j1VEtW92DfDyLGaXvv7LAnMbeHLwWSkv3WJjNhXDhjV7up579LwqWK/49'/0'/0'/0/*))#ujfh5d2y".to_owned());
-        assert_eq!(descriptors[0].change_descriptor_xprv, "sh(wpkh(xprv9s21ZrQH143K4EyEi77g3rpPu5byQ3EnnMJ4Y2KRNFp5Z4hin7er2j1VEtW92DfDyLGaXvv7LAnMbeHLwWSkv3WJjNhXDhjV7up579LwqWK/49'/0'/0'/1/*))#63pj0qps".to_owned());
-        assert_eq!(descriptors[0].descriptor_xpub, "sh(wpkh([ab88de89/49'/0'/0']xpub6CpdbYf1vdUMh5ryZWEQBoBVvmTTFYdi92VvknfMeVsgjiXXnmyDrCdkUKLzvEUYgBJrvyb3pmW488dctFrfJ1RaVNPa1T1nmraemfFCbuY/0/*))#k4daxnp5".to_owned());
-        assert_eq!(descriptors[0].change_descriptor_xpub, "sh(wpkh([ab88de89/49'/0'/0']xpub6CpdbYf1vdUMh5ryZWEQBoBVvmTTFYdi92VvknfMeVsgjiXXnmyDrCdkUKLzvEUYgBJrvyb3pmW488dctFrfJ1RaVNPa1T1nmraemfFCbuY/1/*))#r5rt7v5t".to_owned());
+        assert_eq!(descriptors[0].descriptor_xprv(), "sh(wpkh(xprv9s21ZrQH143K4EyEi77g3rpPu5byQ3EnnMJ4Y2KRNFp5Z4hin7er2j1VEtW92DfDyLGaXvv7LAnMbeHLwWSkv3WJjNhXDhjV7up579LwqWK/49'/0'/0'/0/*))#ujfh5d2y".to_owned());
+        assert_eq!(descriptors[0].change_descriptor_xprv(), "sh(wpkh(xprv9s21ZrQH143K4EyEi77g3rpPu5byQ3EnnMJ4Y2KRNFp5Z4hin7er2j1VEtW92DfDyLGaXvv7LAnMbeHLwWSkv3WJjNhXDhjV7up579LwqWK/49'/0'/0'/1/*))#63pj0qps".to_owned());
+        assert_eq!(descriptors[0].descriptor_xpub(), "sh(wpkh([ab88de89/49'/0'/0']xpub6CpdbYf1vdUMh5ryZWEQBoBVvmTTFYdi92VvknfMeVsgjiXXnmyDrCdkUKLzvEUYgBJrvyb3pmW488dctFrfJ1RaVNPa1T1nmraemfFCbuY/0/*))#k4daxnp5".to_owned());
+        assert_eq!(descriptors[0].change_descriptor_xpub(), "sh(wpkh([ab88de89/49'/0'/0']xpub6CpdbYf1vdUMh5ryZWEQBoBVvmTTFYdi92VvknfMeVsgjiXXnmyDrCdkUKLzvEUYgBJrvyb3pmW488dctFrfJ1RaVNPa1T1nmraemfFCbuY/1/*))#r5rt7v5t".to_owned());
 
-        assert_eq!(descriptors[4].descriptor_xpub, "pkh([ab88de89/48'/0'/0'/1']xpub6EPJuK8Ejz82itf1fRUaHE3VXoPfVCJbW6MndSdcAzcxTMnixnWHJeMAVLw7iEMSJd1GmHUinhDEHoNKXAWwdhmTvgQiDTkHprTvmnE4AcB/0/*)#w4yvp7z8".to_owned());
-        assert_eq!(descriptors[4].change_descriptor_xpub, "pkh([ab88de89/48'/0'/0'/1']xpub6EPJuK8Ejz82itf1fRUaHE3VXoPfVCJbW6MndSdcAzcxTMnixnWHJeMAVLw7iEMSJd1GmHUinhDEHoNKXAWwdhmTvgQiDTkHprTvmnE4AcB/1/*)#lppdutjl".to_owned());
+        assert_eq!(descriptors[4].descriptor_xpub(), "pkh([ab88de89/48'/0'/0'/1']xpub6EPJuK8Ejz82itf1fRUaHE3VXoPfVCJbW6MndSdcAzcxTMnixnWHJeMAVLw7iEMSJd1GmHUinhDEHoNKXAWwdhmTvgQiDTkHprTvmnE4AcB/0/*)#w4yvp7z8".to_owned());
+        assert_eq!(descriptors[4].change_descriptor_xpub(), "pkh([ab88de89/48'/0'/0'/1']xpub6EPJuK8Ejz82itf1fRUaHE3VXoPfVCJbW6MndSdcAzcxTMnixnWHJeMAVLw7iEMSJd1GmHUinhDEHoNKXAWwdhmTvgQiDTkHprTvmnE4AcB/1/*)#lppdutjl".to_owned());
 
-        assert_eq!(descriptors[5].descriptor_xpub, "pkh([ab88de89/48'/0'/0'/2']xpub6EPJuK8Ejz82nKc7PsRgcYqdcQH9G1ZikCTasr9i79CbXxMMiPfxEyA14S6HPTHufmcQR7x8t5L3BP9tRfm9EBRBPic2xV892j9z4ePESae/0/*)#7gv8p6fu".to_owned());
-        assert_eq!(descriptors[5].change_descriptor_xpub, "pkh([ab88de89/48'/0'/0'/2']xpub6EPJuK8Ejz82nKc7PsRgcYqdcQH9G1ZikCTasr9i79CbXxMMiPfxEyA14S6HPTHufmcQR7x8t5L3BP9tRfm9EBRBPic2xV892j9z4ePESae/1/*)#0ufxu0ey".to_owned());
+        assert_eq!(descriptors[5].descriptor_xpub(), "pkh([ab88de89/48'/0'/0'/2']xpub6EPJuK8Ejz82nKc7PsRgcYqdcQH9G1ZikCTasr9i79CbXxMMiPfxEyA14S6HPTHufmcQR7x8t5L3BP9tRfm9EBRBPic2xV892j9z4ePESae/0/*)#7gv8p6fu".to_owned());
+        assert_eq!(descriptors[5].change_descriptor_xpub(), "pkh([ab88de89/48'/0'/0'/2']xpub6EPJuK8Ejz82nKc7PsRgcYqdcQH9G1ZikCTasr9i79CbXxMMiPfxEyA14S6HPTHufmcQR7x8t5L3BP9tRfm9EBRBPic2xV892j9z4ePESae/1/*)#0ufxu0ey".to_owned());
     }
 
     #[cfg(feature = "envoy")]

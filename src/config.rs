@@ -3,7 +3,7 @@ use bdk_core::bitcoin::hex::DisplayHex;
 #[cfg(feature = "sha2")]
 use sha2::{Digest, Sha256};
 use std::cmp::Ordering;
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::fmt;
 use std::str::FromStr;
 use std::sync::Arc;
@@ -523,10 +523,8 @@ impl MultiSigDetails {
         let descriptor_type = descriptor_xpub.desc_type();
         let descriptors = vec![Descriptors {
             bip: self.get_bip()?,
-            descriptor_xprv: String::new(),
-            change_descriptor_xprv: String::new(),
-            descriptor_xpub: descriptor_xpub.to_string(),
-            change_descriptor_xpub: change_descriptor_xpub.to_string(),
+            descriptor: (descriptor_xpub, BTreeMap::default()),
+            change_descriptor: (change_descriptor_xpub, BTreeMap::default()),
             descriptor_type,
         }];
 
@@ -661,7 +659,8 @@ impl AddressType {
             AddressType::P2tr => "P2TR",
             AddressType::P2ShWpkh => "P2WPKH-P2SH",
             AddressType::P2ShWsh => "P2WSH-P2SH",
-        }.into()
+        }
+        .into()
     }
 }
 
@@ -943,7 +942,6 @@ impl<P: WalletPersister> NgAccountBuilder<P> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use bdk_wallet::miniscript::descriptor::DescriptorType;
 
     #[test]
     fn multisig_from_config_1() {
@@ -1009,16 +1007,16 @@ AB88DE89: tpubDFUc8ddWCzA8kC195Zn6UitBcBGXbPbtjktU2dk2Deprnf6sR15GAyHLQKUjAPa3gq
 
         let descriptors = multisig.get_descriptors().unwrap();
 
+        let descriptor = &descriptors[0];
+        assert_eq!(String::from("48_2"), descriptor.bip);
+        assert_eq!(expected_receive_descriptor, descriptor.descriptor_xpub());
         assert_eq!(
-            descriptors,
-            vec![Descriptors {
-                bip: String::from("48_2"),
-                descriptor_xprv: String::new(),
-                change_descriptor_xprv: String::new(),
-                descriptor_xpub: expected_receive_descriptor.to_string(),
-                change_descriptor_xpub: expected_change_descriptor.to_string(),
-                descriptor_type: DescriptorType::WshSortedMulti,
-            }]
+            expected_change_descriptor,
+            descriptor.change_descriptor_xpub()
+        );
+        assert_eq!(
+            bdk_wallet::miniscript::descriptor::DescriptorType::WshSortedMulti,
+            descriptor.descriptor_type
         );
 
         let expected_config = String::from("Name: Multisig 2-of-2 Test

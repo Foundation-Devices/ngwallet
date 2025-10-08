@@ -10,6 +10,7 @@ use bdk_wallet::chain::ChainPosition::{Confirmed, Unconfirmed};
 use bdk_wallet::chain::local_chain::CannotConnectError;
 #[cfg(feature = "envoy")]
 use bdk_wallet::chain::spk_client::{FullScanRequest, FullScanResponse, SyncRequest, SyncResponse};
+use bdk_wallet::descriptor::IntoWalletDescriptor;
 use bdk_wallet::miniscript::ForEachKey;
 use bdk_wallet::{CreateWithPersistError, LoadWithPersistError, PersistedWallet, SignOptions};
 use bdk_wallet::{KeychainKind, WalletPersister};
@@ -53,15 +54,18 @@ impl<P: WalletPersister> Clone for NgWallet<P> {
 }
 
 impl<P: WalletPersister> NgWallet<P> {
-    pub fn new_from_descriptor(
-        internal_descriptor: String,
-        external_descriptor: Option<String>,
+    pub fn new_from_descriptor<D>(
+        internal_descriptor: D,
+        external_descriptor: Option<D>,
         network: Network,
         meta_storage: Arc<dyn MetaStorage>,
         bdk_persister: Arc<Mutex<P>>,
-    ) -> Result<NgWallet<P>> {
+    ) -> Result<NgWallet<P>>
+    where
+        D: IntoWalletDescriptor + Send + Clone + 'static,
+    {
         let wallet = match external_descriptor {
-            None => Wallet::create_single(internal_descriptor.to_string()),
+            None => Wallet::create_single(internal_descriptor),
             Some(external_descriptor) => Wallet::create(external_descriptor, internal_descriptor),
         }
         .network(network)
@@ -99,18 +103,16 @@ impl<P: WalletPersister> NgWallet<P> {
             .map_err(|_| anyhow::anyhow!("Could not persist wallet"))
     }
 
-    pub fn load(
-        internal_descriptor: String,
-        external_descriptor: Option<String>,
+    pub fn load<D>(
+        internal_descriptor: D,
+        external_descriptor: Option<D>,
         meta_storage: Arc<dyn MetaStorage>,
         bdk_persister: Arc<Mutex<P>>,
     ) -> Result<NgWallet<P>>
     where
+        D: IntoWalletDescriptor + Send + Clone + 'static,
         <P as WalletPersister>::Error: Debug,
     {
-        // #[cfg(feature = "envoy")]
-        //     let mut persister = Connection::open(format!("{}/wallet.sqlite",db_path))?;
-
         let wallet = Wallet::load()
             .descriptor(KeychainKind::Internal, Some(internal_descriptor))
             .descriptor(KeychainKind::External, external_descriptor)

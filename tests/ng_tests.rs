@@ -19,6 +19,7 @@ mod utils;
 mod tests {
     use bdk_wallet::bitcoin::Psbt;
     use bdk_wallet::bitcoin::key::Secp256k1;
+    use bdk_wallet::keys::bip39::Mnemonic;
     use bdk_wallet::miniscript::psbt::PsbtExt;
     use bdk_wallet::{KeychainKind, SignOptions};
     use ngwallet::account::NgAccount;
@@ -28,6 +29,7 @@ mod tests {
     use ngwallet::config::{AddressType, NgAccountBackup, NgAccountBuilder};
     use ngwallet::send::TransactionParams;
     use std::sync::{Arc, Mutex};
+
     #[cfg(feature = "envoy")]
     use {
         crate::*, bdk_wallet::Update, bdk_wallet::bitcoin::Network,
@@ -173,41 +175,37 @@ mod tests {
     #[test]
     #[cfg(feature = "envoy")]
     fn test_input_mis_match() {
-        let descriptors = get_descriptors(
-            "addict hold sand engage ostrich cousin swarm away puzzle huge rookie fancy"
-                .to_string(),
-            Network::Testnet4,
-            None,
+        let seed = Mnemonic::parse(
+            "addict hold sand engage ostrich cousin swarm away puzzle huge rookie fancy",
         )
-        .map(|descriptors| {
-            descriptors
-                .into_iter()
-                .map(|d| Descriptor {
-                    internal: d.descriptor_xpub.to_string(),
-                    external: Some(d.change_descriptor_xpub.to_string()),
-                    bdk_persister: Arc::new(Mutex::new(Connection::open_in_memory().unwrap())),
-                })
-                .collect::<Vec<_>>()
-        })
-        .unwrap();
+        .unwrap()
+        .to_seed("");
 
-        let descriptors_xprv = get_descriptors(
-            "addict hold sand engage ostrich cousin swarm away puzzle huge rookie fancy"
-                .to_string(),
-            Network::Testnet4,
-            None,
-        )
-        .map(|descriptors| {
-            descriptors
-                .into_iter()
-                .map(|d| Descriptor {
-                    internal: d.descriptor_xprv.to_string(),
-                    external: Some(d.change_descriptor_xprv.to_string()),
-                    bdk_persister: Arc::new(Mutex::new(Connection::open_in_memory().unwrap())),
-                })
-                .collect::<Vec<_>>()
-        })
-        .unwrap();
+        let descriptors = get_descriptors(&seed, Network::Testnet4)
+            .map(|descriptors| {
+                descriptors
+                    .into_iter()
+                    .map(|d| Descriptor {
+                        internal: d.descriptor_xpub(),
+                        external: Some(d.change_descriptor_xpub()),
+                        bdk_persister: Arc::new(Mutex::new(Connection::open_in_memory().unwrap())),
+                    })
+                    .collect::<Vec<_>>()
+            })
+            .unwrap();
+
+        let descriptors_xprv = get_descriptors(&seed, Network::Testnet4)
+            .map(|descriptors| {
+                descriptors
+                    .into_iter()
+                    .map(|d| Descriptor {
+                        internal: d.descriptor_xprv(),
+                        external: Some(d.change_descriptor_xprv()),
+                        bdk_persister: Arc::new(Mutex::new(Connection::open_in_memory().unwrap())),
+                    })
+                    .collect::<Vec<_>>()
+            })
+            .unwrap();
 
         let account = NgAccountBuilder::default()
             .name("Passport Prime".to_string())
