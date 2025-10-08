@@ -123,12 +123,12 @@ impl Descriptors {
 
     pub fn descriptor_xprv(&self) -> String {
         let (desc, map) = &self.descriptor;
-        desc.to_string_with_secret(&map)
+        desc.to_string_with_secret(map)
     }
 
     pub fn change_descriptor_xprv(&self) -> String {
         let (desc, map) = &self.change_descriptor;
-        desc.to_string_with_secret(&map)
+        desc.to_string_with_secret(map)
     }
 
     pub fn descriptor_xpub(&self) -> String {
