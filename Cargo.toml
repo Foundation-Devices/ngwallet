@@ -4,7 +4,7 @@ version = "1.1.1"
 edition = "2024"
 
 [dependencies]
-bdk_wallet = { git = "https://github.com/Foundation-Devices/bdk_wallet", rev = "622143d55c8a5607b144db70fca358ceb2c648f5", features = ["keys-bip39","test-utils"] }
+bdk_wallet = { git = "https://github.com/Foundation-Devices/bdk_wallet", rev = "3a983ae313c661c63b2bd6bc8a68551b07d83d8a", features = ["keys-bip39","test-utils"] }
 bdk_core = { git = "https://github.com/Foundation-Devices/bdk-1", rev = "aa0cad567e9fa3553e5649b3a682f8dfad930946" }
 bdk_electrum = { git = "https://github.com/Foundation-Devices/bdk-1", rev = "aa0cad567e9fa3553e5649b3a682f8dfad930946", optional = true,default-features = false,features = ["use-rustls-ring"] }
 anyhow = "1.0.97"

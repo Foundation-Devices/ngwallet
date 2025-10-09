@@ -9,7 +9,7 @@ use bdk_wallet::keys::bip39;
 use bdk_wallet::keys::bip39::{Language, Mnemonic};
 use bdk_wallet::miniscript::descriptor::DescriptorType;
 use bdk_wallet::template::{
-    Bip44, Bip48Member, Bip49, Bip84, Bip86, DescriptorTemplate, DescriptorTemplateOut,
+    Bip44, Bip48Member, Bip49, Bip84, Bip86, DescriptorTemplateOut,
 };
 use std::cmp::min;
 use thiserror::Error;
@@ -164,7 +164,7 @@ pub fn get_seed_string(prime_master_seed: [u8; 72]) -> anyhow::Result<String> {
     Ok(mnemonic.to_string())
 }
 
-pub fn get_descriptors(seed: &[u8], network: Network) -> anyhow::Result<Vec<Descriptors>> {
+pub fn get_descriptors(seed: &[u8], network: Network, account_index: u32) -> anyhow::Result<Vec<Descriptors>> {
     let xprv: Xpriv = Xpriv::new_master(network, seed)?;
 
     let mut descriptors = vec![];
@@ -172,38 +172,38 @@ pub fn get_descriptors(seed: &[u8], network: Network) -> anyhow::Result<Vec<Desc
     let descriptor_templates = vec![
         NgDescriptorTemplate {
             bip: String::from("49"),
-            receive_template: Bip49(xprv, KeychainKind::External).build(network)?,
-            change_template: Bip49(xprv, KeychainKind::Internal).build(network)?,
+            receive_template: Bip49(xprv, KeychainKind::External).build_account(network, account_index)?,
+            change_template: Bip49(xprv, KeychainKind::Internal).build_account(network, account_index)?,
         },
         NgDescriptorTemplate {
             bip: String::from("44"),
-            receive_template: Bip44(xprv, KeychainKind::External).build(network)?,
-            change_template: Bip44(xprv, KeychainKind::Internal).build(network)?,
+            receive_template: Bip44(xprv, KeychainKind::External).build_account(network, account_index)?,
+            change_template: Bip44(xprv, KeychainKind::Internal).build_account(network, account_index)?,
         },
         NgDescriptorTemplate {
             bip: String::from("84"),
-            receive_template: Bip84(xprv, KeychainKind::External).build(network)?,
-            change_template: Bip84(xprv, KeychainKind::Internal).build(network)?,
+            receive_template: Bip84(xprv, KeychainKind::External).build_account(network, account_index)?,
+            change_template: Bip84(xprv, KeychainKind::Internal).build_account(network, account_index)?,
         },
         NgDescriptorTemplate {
             bip: String::from("86"),
-            receive_template: Bip86(xprv, KeychainKind::External).build(network)?,
-            change_template: Bip86(xprv, KeychainKind::Internal).build(network)?,
+            receive_template: Bip86(xprv, KeychainKind::External).build_account(network, account_index)?,
+            change_template: Bip86(xprv, KeychainKind::Internal).build_account(network, account_index)?,
         },
         NgDescriptorTemplate {
             bip: String::from("48_1"),
-            receive_template: Bip48Member(xprv, KeychainKind::External, 1).build(network)?,
-            change_template: Bip48Member(xprv, KeychainKind::Internal, 1).build(network)?,
+            receive_template: Bip48Member(xprv, KeychainKind::External, 1).build_account(network, account_index)?,
+            change_template: Bip48Member(xprv, KeychainKind::Internal, 1).build_account(network, account_index)?,
         },
         NgDescriptorTemplate {
             bip: String::from("48_2"),
-            receive_template: Bip48Member(xprv, KeychainKind::External, 2).build(network)?,
-            change_template: Bip48Member(xprv, KeychainKind::Internal, 2).build(network)?,
+            receive_template: Bip48Member(xprv, KeychainKind::External, 2).build_account(network, account_index)?,
+            change_template: Bip48Member(xprv, KeychainKind::Internal, 2).build_account(network, account_index)?,
         },
         NgDescriptorTemplate {
             bip: String::from("48_3"),
-            receive_template: Bip48Member(xprv, KeychainKind::External, 3).build(network)?,
-            change_template: Bip48Member(xprv, KeychainKind::Internal, 3).build(network)?,
+            receive_template: Bip48Member(xprv, KeychainKind::External, 3).build_account(network, account_index)?,
+            change_template: Bip48Member(xprv, KeychainKind::Internal, 3).build_account(network, account_index)?,
         },
     ];
 
@@ -245,7 +245,7 @@ mod test {
         .unwrap()
         .to_seed("");
 
-        let descriptors = get_descriptors(&seed, Network::Bitcoin).unwrap();
+        let descriptors = get_descriptors(&seed, Network::Bitcoin, 0).unwrap();
 
         assert_eq!(descriptors[0].descriptor_xprv(), "sh(wpkh(xprv9s21ZrQH143K4EyEi77g3rpPu5byQ3EnnMJ4Y2KRNFp5Z4hin7er2j1VEtW92DfDyLGaXvv7LAnMbeHLwWSkv3WJjNhXDhjV7up579LwqWK/49'/0'/0'/0/*))#ujfh5d2y".to_owned());
         assert_eq!(descriptors[0].change_descriptor_xprv(), "sh(wpkh(xprv9s21ZrQH143K4EyEi77g3rpPu5byQ3EnnMJ4Y2KRNFp5Z4hin7er2j1VEtW92DfDyLGaXvv7LAnMbeHLwWSkv3WJjNhXDhjV7up579LwqWK/49'/0'/0'/1/*))#63pj0qps".to_owned());
