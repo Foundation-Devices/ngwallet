@@ -158,9 +158,9 @@ pub enum Error {
     #[error("Fraudulent key")]
     FraudulentKey,
 
-    /// No keys in the PSBT are from the seed used to validate PSBT.
-    #[error("No keys found")]
-    NoKeysFound,
+    /// No inputs in the PSBT match the wallet fingerprint.
+    #[error("transaction cannot be signed, no input matches the wallet fingerprint")]
+    CantSign,
 
     /// Failed to calculate taproot key
     #[error("Failed to calculate taproot key")]
@@ -324,9 +324,28 @@ where
     match maybe_valid {
         Some(true) => (),
         Some(false) => return Err(Error::FraudulentKey),
-        // Maybe a taproot only PSBT, which seem to not include Xpubs here but only
-        // in tap_key_origins for each input and output.
+        // Some PSBT creators don't specify global xpubs, instead each input
+        // and output specify the BIP-0032 derivations on bip32_derivations
+        // and/or tap_key_origins.
         None => (),
+    }
+
+    let is_fingerprint_present = psbt.inputs.iter().any(|input| {
+        let has_bip32 = input
+            .bip32_derivation
+            .iter()
+            .any(|(_, (v, _))| *v == fingerprint);
+
+        let has_tap = input
+            .tap_key_origins
+            .iter()
+            .any(|(_, (_, (v, _)))| *v == fingerprint);
+
+        has_bip32 || has_tap
+    });
+
+    if !is_fingerprint_present {
+        return Err(Error::CantSign);
     }
 
     for (i, input) in psbt.inputs.iter().enumerate() {
