@@ -181,7 +181,7 @@ mod tests {
         .unwrap()
         .to_seed("");
 
-        let descriptors = get_descriptors(&seed, Network::Testnet4)
+        let descriptors = get_descriptors(&seed, Network::Testnet4, 0)
             .map(|descriptors| {
                 descriptors
                     .into_iter()
@@ -194,7 +194,7 @@ mod tests {
             })
             .unwrap();
 
-        let descriptors_xprv = get_descriptors(&seed, Network::Testnet4)
+        let descriptors_xprv = get_descriptors(&seed, Network::Testnet4, 0)
             .map(|descriptors| {
                 descriptors
                     .into_iter()
