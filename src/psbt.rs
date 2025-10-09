@@ -25,6 +25,10 @@ use thiserror::Error;
 /// Details of a PSBT.
 #[derive(Debug, Clone)]
 pub struct TransactionDetails {
+    /// The amount spent including change.
+    pub total_with_self_send: Amount,
+    /// The total self send amount, including change and transfers.
+    pub total_self_send: Amount,
     /// The fee of this transaction.
     pub fee: Amount,
     /// The descriptors discovered in the PSBT.
@@ -33,6 +37,20 @@ pub struct TransactionDetails {
     pub inputs: Vec<PsbtInput>,
     /// The outputs.
     pub outputs: Vec<PsbtOutput>,
+}
+
+impl TransactionDetails {
+    /// Total amount sent to external addresses (including OP_RETURNs).
+    pub fn total(&self) -> Amount {
+        self.total_with_self_send
+            .checked_sub(self.total_self_send)
+            .unwrap_or(Amount::ZERO)
+    }
+
+    /// Returns true if the entire transaction is a self-send.
+    pub fn is_self_send(&self) -> bool {
+        self.total() == Amount::ZERO
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -61,6 +79,11 @@ impl PsbtOutput {
             OutputKind::External(ref address) => Some(address),
             _ => None,
         }
+    }
+
+    /// Returns true if the output is a self-send.
+    pub fn is_self_send(&self) -> bool {
+        self.kind.is_self_send()
     }
 }
 
@@ -119,6 +142,14 @@ impl OutputKind {
                 account: account_path.account,
             }
         })
+    }
+
+    /// Returns true if the output kind is a self-send.
+    pub fn is_self_send(&self) -> bool {
+        match self {
+            OutputKind::Change(_) | OutputKind::Transfer { .. } | OutputKind::Suspicious(_) => true,
+            OutputKind::External(_) | OutputKind::OpReturn(_) => false,
+        }
     }
 }
 
@@ -482,6 +513,8 @@ where
         }
     }
 
+    let mut total_with_self_send = Amount::ZERO;
+    let mut total_self_send = Amount::ZERO;
     for (i, output) in psbt.outputs.iter().enumerate() {
         let Some(txout) = psbt.unsigned_tx.output.get(i) else {
             return Err(Error::MissingOutput { index: i });
@@ -507,17 +540,19 @@ where
 
         let is_internal = has_our_public_keys || has_our_x_only_public_keys;
 
-        outputs.push(validate_output(
-            secp,
-            output,
-            txout,
-            network,
-            is_internal,
-            i,
-        )?);
+        let output_details = validate_output(secp, output, txout, network, is_internal, i)?;
+
+        total_with_self_send += output_details.amount;
+        if output_details.is_self_send() {
+            total_self_send += output_details.amount;
+        }
+
+        outputs.push(output_details);
     }
 
     Ok(TransactionDetails {
+        total_with_self_send,
+        total_self_send,
         fee: psbt.fee()?,
         descriptors,
         inputs,
