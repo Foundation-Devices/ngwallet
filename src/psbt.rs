@@ -384,26 +384,6 @@ where
             return Err(Error::MissingInput { index: i });
         };
 
-        if let Some(script) = input.witness_script.as_ref() {
-            let Some(&v) = script.as_bytes().get(1) else {
-                return Err(Error::InvalidWitnessScript { index: i });
-            };
-
-            if v < 30 {
-                return Err(Error::InvalidWitnessScript { index: i });
-            }
-        }
-
-        if let Some(script) = input.redeem_script.as_ref() {
-            let Some(&v) = script.as_bytes().get(1) else {
-                return Err(Error::InvalidRedeemScript { index: i });
-            };
-
-            if v < 22 {
-                return Err(Error::InvalidRedeemScript { index: i });
-            }
-        }
-
         if let Some(non_witness_utxo) = input.non_witness_utxo.as_ref() {
             let computed_txid = non_witness_utxo.compute_txid();
             if computed_txid != txin.previous_output.txid {
@@ -509,7 +489,31 @@ where
                 return Err(Error::InvalidWitnessScript { index: i });
             }
         } else if funding_utxo.script_pubkey.is_p2sh() {
-            return Err(Error::Unimplemented);
+            if let Some(redeem_script) = input.redeem_script.as_ref() {
+                if redeem_script.is_p2wpkh() {
+                    if input.bip32_derivation.len() != 1 {
+                        return Err(Error::MultipleKeysNotExpected { index: i });
+                    }
+
+                    let (pk, source) = input.bip32_derivation.first_key_value().unwrap();
+
+                    let pk = CompressedPublicKey(*pk);
+                    let address = Address::p2shwpkh(&pk, network);
+                    if !address.matches_script_pubkey(&funding_utxo.script_pubkey) {
+                        return Err(Error::FraudulentInput { index: i });
+                    }
+
+                    inputs.push(PsbtInput {
+                        amount: funding_utxo.value,
+                        address,
+                    });
+                    descriptors.insert(p2sh::p2shwpkh_descriptor(secp, master_key, &source.1, network));
+                } else {
+                    return Err(Error::Unimplemented);
+                }
+            } else {
+                return Err(Error::InvalidRedeemScript { index: i });
+            }
         }
     }
 
