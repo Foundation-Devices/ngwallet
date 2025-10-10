@@ -284,42 +284,63 @@ pub fn validate_network(psbt: &Psbt) -> Result<Option<NetworkKind>, Error> {
     // We can only determine the network from the path if it is
     // account-like as here we only have public keys instead of xpubs.
     for input in psbt.inputs.iter() {
-        maybe_network = validate_paths_network(&input.bip32_derivation, maybe_network)?;
+        maybe_network = validate_bip32_derivation_network(&input.bip32_derivation, maybe_network)?;
+        maybe_network = validate_tap_key_origins_network(&input.tap_key_origins, maybe_network)?;
     }
 
     for output in psbt.outputs.iter() {
-        maybe_network = validate_paths_network(&output.bip32_derivation, maybe_network)?;
+        maybe_network = validate_bip32_derivation_network(&output.bip32_derivation, maybe_network)?;
+        maybe_network = validate_tap_key_origins_network(&output.tap_key_origins, maybe_network)?;
     }
 
     Ok(maybe_network)
 }
 
-fn validate_paths_network(
+fn validate_bip32_derivation_network(
     bip32_derivation: &BTreeMap<PublicKey, KeySource>,
     maybe_network: Option<NetworkKind>,
 ) -> Result<Option<NetworkKind>, Error> {
     bip32_derivation
         .iter()
-        .try_fold(maybe_network, |mut maybe_network, (_public_key, source)| {
-            let maybe_path = NgAccountPath::parse(&source.1)
-                .map_err(|e| Error::invalid_path(source.1.clone(), e))?;
-
-            let Some(path) = maybe_path else {
-                return Ok(maybe_network);
-            };
-
-            if let Some(network_kind) = path.to_network_kind() {
-                // Highly unlikely that maybe_network is not set already, but
-                // do so if there weren't any global xpubs.
-                let network = *maybe_network.get_or_insert(network_kind);
-
-                if let Some(false) = path.is_valid_for_network_kind(network) {
-                    return Err(Error::NetworkInconsistency);
-                }
-            }
-
-            Ok(maybe_network)
+        .try_fold(maybe_network, |maybe_network, (_public_key, source)| {
+            validate_key_source_network(maybe_network, source)
         })
+}
+
+fn validate_tap_key_origins_network(
+    tap_key_origins: &BTreeMap<XOnlyPublicKey, (Vec<TapLeafHash>, KeySource)>,
+    maybe_network: Option<NetworkKind>,
+) -> Result<Option<NetworkKind>, Error> {
+    tap_key_origins.iter().try_fold(
+        maybe_network,
+        |maybe_network, (_x_only_public_key, (_leaf_hashes, source))| {
+            validate_key_source_network(maybe_network, source)
+        },
+    )
+}
+
+fn validate_key_source_network(
+    mut maybe_network: Option<NetworkKind>,
+    source: &KeySource,
+) -> Result<Option<NetworkKind>, Error> {
+    let maybe_path =
+        NgAccountPath::parse(&source.1).map_err(|e| Error::invalid_path(source.1.clone(), e))?;
+
+    let Some(path) = maybe_path else {
+        return Ok(maybe_network);
+    };
+
+    if let Some(network_kind) = path.to_network_kind() {
+        // Highly unlikely that maybe_network is not set already, but
+        // do so if there weren't any global xpubs.
+        let network = *maybe_network.get_or_insert(network_kind);
+
+        if let Some(false) = path.is_valid_for_network_kind(network) {
+            return Err(Error::NetworkInconsistency);
+        }
+    }
+
+    Ok(maybe_network)
 }
 
 /// Validate a PSBT against the master key.
