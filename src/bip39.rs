@@ -14,6 +14,7 @@ use bdk_wallet::template::{
 use std::cmp::min;
 use thiserror::Error;
 use zeroize::ZeroizeOnDrop;
+use crate::config::AddressType;
 
 /// A master key for a given BIP-0039 mnemonic seed.
 #[derive(Debug, Clone, ZeroizeOnDrop)]
@@ -111,6 +112,7 @@ pub enum Error {
 #[derive(Debug, PartialEq)]
 pub struct Descriptors {
     pub bip: String,
+    pub export_addr_hint: AddressType,
     pub descriptor: (ExtendedDescriptor, KeyMap),
     pub change_descriptor: (ExtendedDescriptor, KeyMap),
     pub descriptor_type: DescriptorType,
@@ -143,6 +145,7 @@ impl Descriptors {
 #[derive(Debug)]
 pub struct NgDescriptorTemplate {
     pub bip: String,
+    pub export_addr_hint: AddressType,
     pub receive_template: DescriptorTemplateOut,
     pub change_template: DescriptorTemplateOut,
 }
@@ -172,44 +175,52 @@ pub fn get_descriptors(seed: &[u8], network: Network, account_index: u32) -> any
     let descriptor_templates = vec![
         NgDescriptorTemplate {
             bip: String::from("49"),
+            export_addr_hint: AddressType::P2ShWpkh,
             receive_template: Bip49(xprv, KeychainKind::External).build_account(network, account_index)?,
             change_template: Bip49(xprv, KeychainKind::Internal).build_account(network, account_index)?,
         },
         NgDescriptorTemplate {
             bip: String::from("44"),
+            export_addr_hint: AddressType::P2pkh,
             receive_template: Bip44(xprv, KeychainKind::External).build_account(network, account_index)?,
             change_template: Bip44(xprv, KeychainKind::Internal).build_account(network, account_index)?,
         },
         NgDescriptorTemplate {
             bip: String::from("84"),
+            export_addr_hint: AddressType::P2wpkh,
             receive_template: Bip84(xprv, KeychainKind::External).build_account(network, account_index)?,
             change_template: Bip84(xprv, KeychainKind::Internal).build_account(network, account_index)?,
         },
         NgDescriptorTemplate {
             bip: String::from("86"),
+            export_addr_hint: AddressType::P2tr,
             receive_template: Bip86(xprv, KeychainKind::External).build_account(network, account_index)?,
             change_template: Bip86(xprv, KeychainKind::Internal).build_account(network, account_index)?,
         },
         NgDescriptorTemplate {
             bip: String::from("48_1"),
+            export_addr_hint: AddressType::P2ShWsh,
             receive_template: Bip48Member(xprv, KeychainKind::External, 1).build_account(network, account_index)?,
             change_template: Bip48Member(xprv, KeychainKind::Internal, 1).build_account(network, account_index)?,
         },
         NgDescriptorTemplate {
             bip: String::from("48_2"),
+            export_addr_hint: AddressType::P2wsh,
             receive_template: Bip48Member(xprv, KeychainKind::External, 2).build_account(network, account_index)?,
             change_template: Bip48Member(xprv, KeychainKind::Internal, 2).build_account(network, account_index)?,
         },
         NgDescriptorTemplate {
             bip: String::from("48_3"),
+            export_addr_hint: AddressType::P2sh,
             receive_template: Bip48Member(xprv, KeychainKind::External, 3).build_account(network, account_index)?,
             change_template: Bip48Member(xprv, KeychainKind::Internal, 3).build_account(network, account_index)?,
         },
     ];
 
     for template in descriptor_templates {
-        let (bip, descriptor, key_map, change_descriptor, change_key_map) = (
+        let (bip, export_addr_hint, descriptor, key_map, change_descriptor, change_key_map) = (
             template.bip,
+            template.export_addr_hint,
             template.receive_template.0,
             template.receive_template.1,
             template.change_template.0,
@@ -219,6 +230,7 @@ pub fn get_descriptors(seed: &[u8], network: Network, account_index: u32) -> any
         descriptors.push(Descriptors {
             descriptor_type: descriptor.desc_type(),
             bip,
+            export_addr_hint,
             descriptor: (descriptor, key_map),
             change_descriptor: (change_descriptor, change_key_map),
         });

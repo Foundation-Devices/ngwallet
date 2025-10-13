@@ -523,6 +523,7 @@ impl MultiSigDetails {
         let descriptor_type = descriptor_xpub.desc_type();
         let descriptors = vec![Descriptors {
             bip: self.get_bip()?,
+            export_addr_hint: self.format,
             descriptor: (descriptor_xpub, BTreeMap::default()),
             change_descriptor: (change_descriptor_xpub, BTreeMap::default()),
             descriptor_type,
@@ -697,6 +698,10 @@ pub struct NgDescriptor {
     pub internal: String,
     pub external: Option<String>,
     pub address_type: AddressType,
+    // This is necessary for export and won't
+    // necessarily match the regular address_type
+    // for multisig-only descriptors
+    pub export_addr_hint: Option<AddressType>,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -907,6 +912,7 @@ impl<P: WalletPersister> NgAccountBuilder<P> {
                 external: d.external.clone(),
                 internal: d.internal.clone(),
                 address_type: get_address_type(&d.internal),
+                export_addr_hint: None,
             })
             .collect();
 

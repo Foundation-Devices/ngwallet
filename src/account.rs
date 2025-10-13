@@ -204,7 +204,7 @@ impl<P: WalletPersister> NgAccount<P> {
             .map_err(|e| anyhow::anyhow!(e))
     }
 
-    pub fn add_new_descriptor(&self, descriptor: &Descriptor<P>) -> Result<(), Error> {
+    pub fn add_new_descriptor(&self, descriptor: &Descriptor<P>, export_addr_hint: Option<AddressType>) -> Result<(), Error> {
         let address_type = get_address_type(&descriptor.internal);
         {
             let mut config = self.config.write().unwrap();
@@ -220,6 +220,7 @@ impl<P: WalletPersister> NgAccount<P> {
                 internal: descriptor.internal.clone(),
                 external: descriptor.external.clone(),
                 address_type,
+                export_addr_hint,
             });
             let wallet = NgWallet::new_from_descriptor(
                 descriptor.internal.clone(),
