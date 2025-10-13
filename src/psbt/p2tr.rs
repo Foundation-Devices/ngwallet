@@ -62,7 +62,7 @@ where
             // computed public key.
             if !account_path.matches(86, network) || !account_path.is_for_address() {
                 let pk = derive_full_descriptor_pubkey(secp, master_key, path);
-                return ExtendedDescriptor::new_pkh(pk).unwrap();
+                return ExtendedDescriptor::new_tr(pk, None).unwrap();
             }
 
             let xpub = derive_account_xpub(secp, master_key, path);
@@ -81,7 +81,7 @@ where
         // and the computed public key.
         _ => {
             let pk = derive_full_descriptor_pubkey(secp, master_key, path);
-            ExtendedDescriptor::new_pkh(pk).unwrap()
+            ExtendedDescriptor::new_tr(pk, None).unwrap()
         }
     }
 }
