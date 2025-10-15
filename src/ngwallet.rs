@@ -38,7 +38,7 @@ pub struct PsbtInfo {
 pub struct NgWallet<P: WalletPersister> {
     pub bdk_wallet: Arc<Mutex<PersistedWallet<P>>>,
     pub address_type: AddressType,
-    pub(crate) meta_storage: Arc<dyn MetaStorage + Send>,
+    pub(crate) meta_storage: Arc<dyn MetaStorage>,
     bdk_persister: Arc<Mutex<P>>,
 }
 

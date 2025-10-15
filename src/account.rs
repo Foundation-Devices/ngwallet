@@ -24,7 +24,7 @@ use serde::{Deserialize, Serialize};
 pub struct NgAccount<P: WalletPersister> {
     pub config: Arc<RwLock<NgAccountConfig>>,
     pub wallets: Arc<RwLock<Vec<NgWallet<P>>>>,
-    pub meta_storage: Arc<dyn MetaStorage + Send>,
+    pub meta_storage: Arc<dyn MetaStorage>,
 }
 
 impl<P: WalletPersister> Clone for NgAccount<P> {
