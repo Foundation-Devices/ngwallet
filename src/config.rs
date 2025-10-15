@@ -109,7 +109,7 @@ pub struct MultiSigDetails {
     pub policy_threshold: usize,  // aka M
     pub policy_total_keys: usize, // aka N
     pub format: AddressType,
-    pub network_kind: NetworkKind,
+    network_kind: NetworkKind,
     // Signers are sorted on creation
     signers: Vec<MultiSigSigner>,
 }
@@ -161,7 +161,7 @@ impl MultiSigDetails {
         policy_threshold: usize,
         policy_total_keys: usize,
         format: AddressType,
-        mut network_kind: Option<NetworkKind>,
+        mut network_kind: Option<bitcoin::NetworkKind>,
         mut signers: Vec<MultiSigSigner>,
     ) -> Result<Self, anyhow::Error> {
         // Sort by xpubs
@@ -198,7 +198,7 @@ impl MultiSigDetails {
         }
 
         for signer in &signers {
-            let signer_network: NetworkKind = signer.get_pubkey()?.network.into();
+            let signer_network = signer.get_pubkey()?.network.into();
 
             // Ensure that all pubkeys indicate the same network kind, also checks against the specified network_kind
             let n = network_kind.get_or_insert(signer_network);
@@ -221,9 +221,13 @@ impl MultiSigDetails {
             format,
             network_kind: network_kind.ok_or(anyhow::anyhow!(
                 "Network kind was neither specified nor infered from xpubs"
-            ))?,
+            ))?.into(),
             signers,
         })
+    }
+
+    pub fn network_kind(&self) -> bitcoin::NetworkKind {
+        self.network_kind.into()
     }
 
     pub fn get_signers(&self) -> &Vec<MultiSigSigner> {
@@ -1090,7 +1094,7 @@ Derivation: m/48'/1'/0'/2'
             2,
             3,
             AddressType::P2wsh,
-            Some(NetworkKind::Main),
+            Some(bitcoin::NetworkKind::Main),
             vec![
                 MultiSigSigner {
                     derivation: String::from("m/48'/0'/0'/2'"),
@@ -1124,7 +1128,7 @@ Derivation: m/48'/1'/0'/2'
             2,
             3,
             AddressType::P2ShWsh,
-            Some(NetworkKind::Main),
+            Some(bitcoin::NetworkKind::Main),
             vec![
                 MultiSigSigner {
                     derivation: String::from("m/48'/0'/0'/1'"),
@@ -1158,7 +1162,7 @@ Derivation: m/48'/1'/0'/2'
             2,
             3,
             AddressType::P2sh,
-            Some(NetworkKind::Main),
+            Some(bitcoin::NetworkKind::Main),
             vec![
                 MultiSigSigner {
                     derivation: String::from("m/48'/0'/0'/3'"),
