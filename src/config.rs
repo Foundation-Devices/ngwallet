@@ -26,8 +26,7 @@ use regex::Regex;
 use serde::{Deserialize, Serialize};
 
 pub const MULTI_SIG_SIGNER_LIMIT: usize = 20;
-pub const ACCEPTED_FORMATS: &[AddressType] =
-    &[AddressType::P2wsh, AddressType::P2ShWsh];
+pub const ACCEPTED_FORMATS: &[AddressType] = &[AddressType::P2wsh, AddressType::P2ShWsh];
 
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq)]
 #[cfg_attr(
