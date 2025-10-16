@@ -26,8 +26,7 @@ use regex::Regex;
 use serde::{Deserialize, Serialize};
 
 pub const MULTI_SIG_SIGNER_LIMIT: usize = 20;
-pub const ACCEPTED_FORMATS: &[AddressType] =
-    &[AddressType::P2sh, AddressType::P2wsh, AddressType::P2ShWsh];
+pub const ACCEPTED_FORMATS: &[AddressType] = &[AddressType::P2wsh, AddressType::P2ShWsh];
 
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq)]
 #[cfg_attr(
@@ -409,9 +408,8 @@ impl MultiSigDetails {
                         "Multisig descriptors should be wrapped by Sh(Wsh()) at most, other scripts are not currently accepted."
                     ),
                 },
-                ShInner::SortedMulti(ms) => Self::from_sorted_multi(AddressType::P2sh, ms),
                 _ => anyhow::bail!(
-                    "Multisig descriptors starting with Sh() should contain either a SortedMulti() or Wsh(SortedMulti()), other scripts are not currently accepted"
+                    "Multisig descriptors starting with Sh() should contain Wsh(SortedMulti()), other scripts are not currently accepted"
                 ),
             },
             BdkDescriptor::Wsh(desc) => match desc.into_inner() {
@@ -509,7 +507,6 @@ impl MultiSigDetails {
         Ok(match self.format {
             AddressType::P2ShWsh => String::from("48_1"),
             AddressType::P2wsh => String::from("48_2"),
-            AddressType::P2sh => String::from("48_3"),
             other => anyhow::bail!(
                 "Tried to get bip of a descriptor from an unsupported multisig format: {:?}",
                 other
@@ -1147,48 +1144,15 @@ Derivation: m/48'/1'/0'/2'
         assert_eq!(String::from("Multisig-2-of-3-Main"), name);
     }
 
-    #[test]
-    fn multisig_from_descriptor_3() {
-        let descriptor = String::from(
-            "sh(sortedmulti(2,[71C8BD85/48h/0h/0h/3h]xpub6ESpvmZa75rCQWKik2KoCZrjTi6xhSubZKJ25rbtgZRk2g9tZTJqubhaGD3dJeqruw9KMCaanoEfJ1PVtBXiwTuuqLVwk9ucqkRv1sKWiEC/<0;1>/*,[AB88DE89/48h/0h/0h/3h]xpub6EPJuK8Ejz82nKc7PsRgcYqdcQH9G1ZikCTasr9i79CbXxMMiPfxEyA14S6HPTHufmcQR7x8t5L3BP9tRfm9EBRBPic2xV892j9z4ePESae/<0;1>/*,[A9F9964A/48h/0h/0h/3h]xpub6FQY5W8WygMVYY2nTP188jFHNdZfH2t9qtcS8SPpFatUGiciqUsGZpNvEa1oABEyeAsrUL2XSnvuRUdrhf5LcMXcjhrUFBcneBYYZzky3Mc/<0;1>/*))",
-        );
-        println!("I am here!");
-        let (multisig, name) = MultiSigDetails::from_descriptor(&descriptor).unwrap();
-        let expected = MultiSigDetails::new(
-            2,
-            3,
-            AddressType::P2sh,
-            Some(NetworkKind::Main),
-            vec![
-                MultiSigSigner {
-                    derivation: String::from("m/48'/0'/0'/3'"),
-                    fingerprint: [0x71, 0xC8, 0xBD, 0x85],
-                    pubkey: String::from("xpub6ESpvmZa75rCQWKik2KoCZrjTi6xhSubZKJ25rbtgZRk2g9tZTJqubhaGD3dJeqruw9KMCaanoEfJ1PVtBXiwTuuqLVwk9ucqkRv1sKWiEC"),
-                },
-                MultiSigSigner {
-                    derivation: String::from("m/48'/0'/0'/3'"),
-                    fingerprint: [0xAB, 0x88, 0xDE, 0x89],
-                    pubkey: String::from("xpub6EPJuK8Ejz82nKc7PsRgcYqdcQH9G1ZikCTasr9i79CbXxMMiPfxEyA14S6HPTHufmcQR7x8t5L3BP9tRfm9EBRBPic2xV892j9z4ePESae"),
-                },
-                MultiSigSigner {
-                    derivation: String::from("m/48'/0'/0'/3'"),
-                    fingerprint: [0xA9, 0xF9, 0x96, 0x4A],
-                    pubkey: String::from("xpub6FQY5W8WygMVYY2nTP188jFHNdZfH2t9qtcS8SPpFatUGiciqUsGZpNvEa1oABEyeAsrUL2XSnvuRUdrhf5LcMXcjhrUFBcneBYYZzky3Mc"),
-                }
-            ],
-        ).unwrap();
-        assert_eq!(multisig, expected);
-        assert_eq!(String::from("Multisig-2-of-3-Main"), name);
-    }
-
     #[cfg(feature = "sha2")]
     #[test]
     fn deterministic_equation_and_hashes() {
+        // These xpubs may not match their paths for real-world use, since they were derived from script type 3 before it was removed
         let descriptor_a = String::from(
-            "sh(sortedmulti(2,[71C8BD85/48h/0h/0h/3h]xpub6ESpvmZa75rCQWKik2KoCZrjTi6xhSubZKJ25rbtgZRk2g9tZTJqubhaGD3dJeqruw9KMCaanoEfJ1PVtBXiwTuuqLVwk9ucqkRv1sKWiEC/<0;1>/*,[AB88DE89/48h/0h/0h/3h]xpub6EPJuK8Ejz82nKc7PsRgcYqdcQH9G1ZikCTasr9i79CbXxMMiPfxEyA14S6HPTHufmcQR7x8t5L3BP9tRfm9EBRBPic2xV892j9z4ePESae/<0;1>/*,[A9F9964A/48h/0h/0h/3h]xpub6FQY5W8WygMVYY2nTP188jFHNdZfH2t9qtcS8SPpFatUGiciqUsGZpNvEa1oABEyeAsrUL2XSnvuRUdrhf5LcMXcjhrUFBcneBYYZzky3Mc/<0;1>/*))",
+            "wsh(sortedmulti(2,[71C8BD85/48h/0h/0h/2h]xpub6ESpvmZa75rCQWKik2KoCZrjTi6xhSubZKJ25rbtgZRk2g9tZTJqubhaGD3dJeqruw9KMCaanoEfJ1PVtBXiwTuuqLVwk9ucqkRv1sKWiEC/<0;1>/*,[AB88DE89/48h/0h/0h/2h]xpub6EPJuK8Ejz82nKc7PsRgcYqdcQH9G1ZikCTasr9i79CbXxMMiPfxEyA14S6HPTHufmcQR7x8t5L3BP9tRfm9EBRBPic2xV892j9z4ePESae/<0;1>/*,[A9F9964A/48h/0h/0h/2h]xpub6FQY5W8WygMVYY2nTP188jFHNdZfH2t9qtcS8SPpFatUGiciqUsGZpNvEa1oABEyeAsrUL2XSnvuRUdrhf5LcMXcjhrUFBcneBYYZzky3Mc/<0;1>/*))",
         );
         let descriptor_b = String::from(
-            "sh(sortedmulti(2,[AB88DE89/48h/0h/0h/3h]xpub6EPJuK8Ejz82nKc7PsRgcYqdcQH9G1ZikCTasr9i79CbXxMMiPfxEyA14S6HPTHufmcQR7x8t5L3BP9tRfm9EBRBPic2xV892j9z4ePESae/<0;1>/*,[71C8BD85/48h/0h/0h/3h]xpub6ESpvmZa75rCQWKik2KoCZrjTi6xhSubZKJ25rbtgZRk2g9tZTJqubhaGD3dJeqruw9KMCaanoEfJ1PVtBXiwTuuqLVwk9ucqkRv1sKWiEC/<0;1>/*,[A9F9964A/48h/0h/0h/3h]xpub6FQY5W8WygMVYY2nTP188jFHNdZfH2t9qtcS8SPpFatUGiciqUsGZpNvEa1oABEyeAsrUL2XSnvuRUdrhf5LcMXcjhrUFBcneBYYZzky3Mc/<0;1>/*))",
+            "wsh(sortedmulti(2,[AB88DE89/48h/0h/0h/2h]xpub6EPJuK8Ejz82nKc7PsRgcYqdcQH9G1ZikCTasr9i79CbXxMMiPfxEyA14S6HPTHufmcQR7x8t5L3BP9tRfm9EBRBPic2xV892j9z4ePESae/<0;1>/*,[71C8BD85/48h/0h/0h/2h]xpub6ESpvmZa75rCQWKik2KoCZrjTi6xhSubZKJ25rbtgZRk2g9tZTJqubhaGD3dJeqruw9KMCaanoEfJ1PVtBXiwTuuqLVwk9ucqkRv1sKWiEC/<0;1>/*,[A9F9964A/48h/0h/0h/2h]xpub6FQY5W8WygMVYY2nTP188jFHNdZfH2t9qtcS8SPpFatUGiciqUsGZpNvEa1oABEyeAsrUL2XSnvuRUdrhf5LcMXcjhrUFBcneBYYZzky3Mc/<0;1>/*))",
         );
         let (multisig_a, _) = MultiSigDetails::from_descriptor(&descriptor_a).unwrap();
         let (multisig_b, _) = MultiSigDetails::from_descriptor(&descriptor_b).unwrap();
