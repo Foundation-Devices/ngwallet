@@ -223,14 +223,6 @@ pub fn get_descriptors(
             change_template: Bip48Member(xprv, KeychainKind::Internal, 2)
                 .build_account(network, account_index)?,
         },
-        NgDescriptorTemplate {
-            bip: String::from("48_3"),
-            export_addr_hint: AddressType::P2sh,
-            receive_template: Bip48Member(xprv, KeychainKind::External, 3)
-                .build_account(network, account_index)?,
-            change_template: Bip48Member(xprv, KeychainKind::Internal, 3)
-                .build_account(network, account_index)?,
-        },
     ];
 
     for template in descriptor_templates {
