@@ -554,11 +554,12 @@ impl<P: WalletPersister> NgAccount<P> {
                     if let Ok(wallet_lock) = wallet.bdk_wallet.lock() {
                         derivation = wallet_lock.derivation_of_spk(script.clone());
                         if let Some(path) = derivation
-                            && path.0 == KeychainKind::Internal {
-                                out_put_tag = change_tag.clone();
-                                out_put_do_not_spend_change = do_not_spend_change;
-                                break; // Found the wallet, no need to continue
-                            }
+                            && path.0 == KeychainKind::Internal
+                        {
+                            out_put_tag = change_tag.clone();
+                            out_put_do_not_spend_change = do_not_spend_change;
+                            break; // Found the wallet, no need to continue
+                        }
                     }
                 }
             }
