@@ -528,7 +528,9 @@ where
                         amount: funding_utxo.value,
                         address,
                     });
-                    descriptors.insert(p2sh::p2shwpkh_descriptor(secp, master_key, &source.1, network));
+                    descriptors.insert(p2sh::p2shwpkh_descriptor(
+                        secp, master_key, &source.1, network,
+                    ));
                 } else {
                     return Err(Error::Unimplemented);
                 }

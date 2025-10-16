@@ -1,3 +1,4 @@
+use crate::config::AddressType;
 use bdk_wallet::KeychainKind;
 use bdk_wallet::bitcoin::Network;
 use bdk_wallet::bitcoin::bip32;
@@ -8,13 +9,10 @@ use bdk_wallet::keys::KeyMap;
 use bdk_wallet::keys::bip39;
 use bdk_wallet::keys::bip39::{Language, Mnemonic};
 use bdk_wallet::miniscript::descriptor::DescriptorType;
-use bdk_wallet::template::{
-    Bip44, Bip48Member, Bip49, Bip84, Bip86, DescriptorTemplateOut,
-};
+use bdk_wallet::template::{Bip44, Bip48Member, Bip49, Bip84, Bip86, DescriptorTemplateOut};
 use std::cmp::min;
 use thiserror::Error;
 use zeroize::ZeroizeOnDrop;
-use crate::config::AddressType;
 
 /// A master key for a given BIP-0039 mnemonic seed.
 #[derive(Debug, Clone, ZeroizeOnDrop)]
@@ -167,7 +165,11 @@ pub fn get_seed_string(prime_master_seed: [u8; 72]) -> anyhow::Result<String> {
     Ok(mnemonic.to_string())
 }
 
-pub fn get_descriptors(seed: &[u8], network: Network, account_index: u32) -> anyhow::Result<Vec<Descriptors>> {
+pub fn get_descriptors(
+    seed: &[u8],
+    network: Network,
+    account_index: u32,
+) -> anyhow::Result<Vec<Descriptors>> {
     let xprv: Xpriv = Xpriv::new_master(network, seed)?;
 
     let mut descriptors = vec![];
@@ -176,44 +178,58 @@ pub fn get_descriptors(seed: &[u8], network: Network, account_index: u32) -> any
         NgDescriptorTemplate {
             bip: String::from("49"),
             export_addr_hint: AddressType::P2ShWpkh,
-            receive_template: Bip49(xprv, KeychainKind::External).build_account(network, account_index)?,
-            change_template: Bip49(xprv, KeychainKind::Internal).build_account(network, account_index)?,
+            receive_template: Bip49(xprv, KeychainKind::External)
+                .build_account(network, account_index)?,
+            change_template: Bip49(xprv, KeychainKind::Internal)
+                .build_account(network, account_index)?,
         },
         NgDescriptorTemplate {
             bip: String::from("44"),
             export_addr_hint: AddressType::P2pkh,
-            receive_template: Bip44(xprv, KeychainKind::External).build_account(network, account_index)?,
-            change_template: Bip44(xprv, KeychainKind::Internal).build_account(network, account_index)?,
+            receive_template: Bip44(xprv, KeychainKind::External)
+                .build_account(network, account_index)?,
+            change_template: Bip44(xprv, KeychainKind::Internal)
+                .build_account(network, account_index)?,
         },
         NgDescriptorTemplate {
             bip: String::from("84"),
             export_addr_hint: AddressType::P2wpkh,
-            receive_template: Bip84(xprv, KeychainKind::External).build_account(network, account_index)?,
-            change_template: Bip84(xprv, KeychainKind::Internal).build_account(network, account_index)?,
+            receive_template: Bip84(xprv, KeychainKind::External)
+                .build_account(network, account_index)?,
+            change_template: Bip84(xprv, KeychainKind::Internal)
+                .build_account(network, account_index)?,
         },
         NgDescriptorTemplate {
             bip: String::from("86"),
             export_addr_hint: AddressType::P2tr,
-            receive_template: Bip86(xprv, KeychainKind::External).build_account(network, account_index)?,
-            change_template: Bip86(xprv, KeychainKind::Internal).build_account(network, account_index)?,
+            receive_template: Bip86(xprv, KeychainKind::External)
+                .build_account(network, account_index)?,
+            change_template: Bip86(xprv, KeychainKind::Internal)
+                .build_account(network, account_index)?,
         },
         NgDescriptorTemplate {
             bip: String::from("48_1"),
             export_addr_hint: AddressType::P2ShWsh,
-            receive_template: Bip48Member(xprv, KeychainKind::External, 1).build_account(network, account_index)?,
-            change_template: Bip48Member(xprv, KeychainKind::Internal, 1).build_account(network, account_index)?,
+            receive_template: Bip48Member(xprv, KeychainKind::External, 1)
+                .build_account(network, account_index)?,
+            change_template: Bip48Member(xprv, KeychainKind::Internal, 1)
+                .build_account(network, account_index)?,
         },
         NgDescriptorTemplate {
             bip: String::from("48_2"),
             export_addr_hint: AddressType::P2wsh,
-            receive_template: Bip48Member(xprv, KeychainKind::External, 2).build_account(network, account_index)?,
-            change_template: Bip48Member(xprv, KeychainKind::Internal, 2).build_account(network, account_index)?,
+            receive_template: Bip48Member(xprv, KeychainKind::External, 2)
+                .build_account(network, account_index)?,
+            change_template: Bip48Member(xprv, KeychainKind::Internal, 2)
+                .build_account(network, account_index)?,
         },
         NgDescriptorTemplate {
             bip: String::from("48_3"),
             export_addr_hint: AddressType::P2sh,
-            receive_template: Bip48Member(xprv, KeychainKind::External, 3).build_account(network, account_index)?,
-            change_template: Bip48Member(xprv, KeychainKind::Internal, 3).build_account(network, account_index)?,
+            receive_template: Bip48Member(xprv, KeychainKind::External, 3)
+                .build_account(network, account_index)?,
+            change_template: Bip48Member(xprv, KeychainKind::Internal, 3)
+                .build_account(network, account_index)?,
         },
     ];
 

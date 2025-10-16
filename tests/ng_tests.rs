@@ -320,14 +320,20 @@ mod tests {
             .build_in_memory()
             .unwrap();
 
-        account.add_new_descriptor(&second_descriptor, None).unwrap();
+        account
+            .add_new_descriptor(&second_descriptor, None)
+            .unwrap();
 
         assert_eq!(account.wallets.read().unwrap().len(), 2);
 
         assert_eq!(account.config.read().unwrap().descriptors.len(), 2);
 
         //expect error when adding duplicate descriptor
-        assert!(account.add_new_descriptor(&second_descriptor, None).is_err());
+        assert!(
+            account
+                .add_new_descriptor(&second_descriptor, None)
+                .is_err()
+        );
     }
 
     //noinspection RsExternalLinter

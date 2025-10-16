@@ -493,7 +493,11 @@ impl<P: WalletPersister> NgAccount<P> {
                     trust_witness_utxo: true,
                     ..Default::default()
                 };
-                Self::sign_psbt(self.wallets.read().unwrap().clone(), &mut psbt, sign_options);
+                Self::sign_psbt(
+                    self.wallets.read().unwrap().clone(),
+                    &mut psbt,
+                    sign_options,
+                );
                 self.cancel_tx(psbt.clone()).unwrap();
                 Ok(psbt)
             }
