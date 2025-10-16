@@ -173,6 +173,10 @@ pub enum Error {
     #[error("PSBT error: {0}")]
     Psbt(#[from] psbt::Error),
 
+    /// An extended public key is missing.
+    #[error("missing global extended public key for derivation path: {0}")]
+    MissingGlobalXpub(DerivationPath),
+
     /// The network of the PSBT couldn't be determined because more than one
     /// network was used in xpubs or derivation paths.
     #[error("the Bitcoin network used in the PSBT is not consistent")]
@@ -186,7 +190,7 @@ pub enum Error {
     },
 
     /// One of the public keys in the PSBT doesn't match our derivation.
-    #[error("Fraudulent key")]
+    #[error("fraudulent key")]
     FraudulentKey,
 
     /// No inputs in the PSBT match the wallet fingerprint.
@@ -194,7 +198,7 @@ pub enum Error {
     CantSign,
 
     /// Failed to calculate taproot key
-    #[error("Failed to calculate taproot key")]
+    #[error("failed to calculate taproot key")]
     InvalidTaprootKey,
     // Input validation errors.
     /// Information missing for input.
@@ -223,7 +227,7 @@ pub enum Error {
     /// The script of the output is unknown and can't be validated or shown
     /// to the user if not a change address.
     #[error("the output number {index} script type is unknown")]
-    UnknownScript { index: usize },
+    UnknownOutputScript { index: usize },
 
     /// The PSBT specifies multiple keys for an output that belongs to us
     /// but the script type for the output is single-sig only, e.g. P2PKH,
@@ -244,6 +248,9 @@ pub enum Error {
 
     #[error("the output number {index} does not have a redeem script")]
     MissingRedeemScript { index: usize },
+
+    #[error("the output number {index} does not have a witness script")]
+    MissingWitnessScript { index: usize },
 
     // TODO(jeandudey): Remove this.
     #[error("not yet implemented")]
@@ -502,12 +509,12 @@ where
                         required_signers,
                         &psbt.xpub,
                         &input.bip32_derivation,
-                    ));
+                    )?);
                 } else {
                     return Err(Error::Unimplemented);
                 }
             } else {
-                return Err(Error::InvalidWitnessScript { index: i });
+                return Err(Error::MissingWitnessScript { index: i });
             }
         } else if funding_utxo.script_pubkey.is_p2sh() {
             if let Some(redeem_script) = input.redeem_script.as_ref() {
@@ -531,8 +538,24 @@ where
                     descriptors.insert(p2sh::p2shwpkh_descriptor(
                         secp, master_key, &source.1, network,
                     ));
+                } else if redeem_script.is_p2wsh() {
+                    if let Some(witness_script) = input.witness_script.as_ref() {
+                        if witness_script.is_multisig() {
+                            let required_signers = multisig::disassemble(witness_script).unwrap();
+                            descriptors.insert(p2sh::wsh_multisig_descriptor(
+                                required_signers,
+                                &psbt.xpub,
+                                &input.bip32_derivation,
+                            )?);
+                        } else {
+                            return Err(Error::Unimplemented);
+                        }
+                    } else {
+                        return Err(Error::MissingWitnessScript { index: i });
+                    }
                 } else {
-                    return Err(Error::Unimplemented);
+                    // TODO: Change to UnknownInputScript
+                    return Err(Error::UnknownOutputScript { index: i });
                 }
             } else {
                 return Err(Error::InvalidRedeemScript { index: i });
@@ -761,7 +784,7 @@ where
             op_return::parse(txout)
         } else {
             let address = Address::from_script(&txout.script_pubkey, network.params())
-                .map_err(|_| Error::UnknownScript { index })?;
+                .map_err(|_| Error::UnknownOutputScript { index })?;
 
             PsbtOutput {
                 amount: txout.value,
@@ -777,7 +800,7 @@ where
     } else if txout.script_pubkey.is_p2wpkh() {
         p2wpkh::validate_output(output, txout, network, index)
     } else if txout.script_pubkey.is_p2wsh() {
-        Err(Error::Unimplemented)
+        p2wsh::validate_output(output, txout, network, index)
     } else if txout.script_pubkey.is_p2pkh() {
         p2pkh::validate_output(output, txout, network, index)
     } else if txout.script_pubkey.is_p2sh() {
@@ -787,7 +810,7 @@ where
         // this output type.
         Err(Error::DeprecatedOutputType { index })
     } else {
-        Err(Error::UnknownScript { index })
+        Err(Error::UnknownOutputScript { index })
     }
 }
 
