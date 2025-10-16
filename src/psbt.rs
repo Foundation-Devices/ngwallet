@@ -173,6 +173,10 @@ pub enum Error {
     #[error("PSBT error: {0}")]
     Psbt(#[from] psbt::Error),
 
+    /// An extended public key is missing.
+    #[error("missing global extended public key for derivation path: {0}")]
+    MissingGlobalXpub(DerivationPath),
+
     /// The network of the PSBT couldn't be determined because more than one
     /// network was used in xpubs or derivation paths.
     #[error("the Bitcoin network used in the PSBT is not consistent")]
@@ -186,7 +190,7 @@ pub enum Error {
     },
 
     /// One of the public keys in the PSBT doesn't match our derivation.
-    #[error("Fraudulent key")]
+    #[error("fraudulent key")]
     FraudulentKey,
 
     /// No inputs in the PSBT match the wallet fingerprint.
@@ -194,7 +198,7 @@ pub enum Error {
     CantSign,
 
     /// Failed to calculate taproot key
-    #[error("Failed to calculate taproot key")]
+    #[error("failed to calculate taproot key")]
     InvalidTaprootKey,
     // Input validation errors.
     /// Information missing for input.
@@ -244,6 +248,9 @@ pub enum Error {
 
     #[error("the output number {index} does not have a redeem script")]
     MissingRedeemScript { index: usize },
+
+    #[error("the output number {index} does not have a witness script")]
+    MissingWitnessScript { index: usize },
 
     // TODO(jeandudey): Remove this.
     #[error("not yet implemented")]
@@ -502,7 +509,7 @@ where
                         required_signers,
                         &psbt.xpub,
                         &input.bip32_derivation,
-                    ));
+                    )?);
                 } else {
                     return Err(Error::Unimplemented);
                 }
@@ -777,7 +784,7 @@ where
     } else if txout.script_pubkey.is_p2wpkh() {
         p2wpkh::validate_output(output, txout, network, index)
     } else if txout.script_pubkey.is_p2wsh() {
-        Err(Error::Unimplemented)
+        p2wsh::validate_output(output, txout, network, index)
     } else if txout.script_pubkey.is_p2pkh() {
         p2pkh::validate_output(output, txout, network, index)
     } else if txout.script_pubkey.is_p2sh() {
