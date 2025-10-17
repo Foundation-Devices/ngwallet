@@ -757,13 +757,13 @@ impl NgAccountConfig {
     }
 
     pub fn from_storage(meta_storage: impl MetaStorage) -> Option<NgAccountConfig> {
-        match meta_storage.get_config() {
-            Ok(value) => value,
-            Err(e) => {
-                log::info!("Error reading config {e:?}");
-                None
-            }
-        }
+        meta_storage.get_config().unwrap_or_else(|e| {
+            log::info!("Error reading config {e:?}");
+            None
+        })
+    }
+    pub fn to_remote_update(self) -> Vec<u8> {
+        RemoteUpdate::new(Some(self), vec![]).serialize()
     }
 
     pub fn from_file(db_path: Option<String>) -> Option<NgAccountConfig> {
