@@ -515,19 +515,15 @@ impl MultiSigDetails {
         if let Some(master) = master_key {
             let secp = Secp256k1::new();
             let fp = master.fingerprint;
-
             let master_xprv = Xpriv::new_master(self.network_kind, &master.key.0)?;
-            let master_xpub = Xpub::from_priv(&secp, &master_xprv);
 
             descriptor.for_each_key(|pubkey| {
                 match pubkey {
                     DescriptorPublicKey::XPub(xkey) => {
                         if let Some(origin) = &xkey.origin {
                             if origin.0 == fp {
-                                if let (Ok(derived_xprv), Ok(derived_xpub)) = (
-                                    master_xprv.derive_priv(&secp, &origin.1),
-                                    master_xpub.derive_pub(&secp, &origin.1)
-                                ) {
+                                if let Ok(derived_xprv) = master_xprv.derive_priv(&secp, &origin.1) {
+                                    let derived_xpub = Xpub::from_priv(&secp, &derived_xprv);
                                     let desc_xkey = DescriptorXKey {
                                         origin: Some(origin.clone()),
                                         xkey: derived_xprv,
@@ -550,10 +546,8 @@ impl MultiSigDetails {
                     DescriptorPublicKey::MultiXPub(xkey) => {
                         if let Some(origin) = &xkey.origin {
                             if origin.0 == fp {
-                                if let (Ok(derived_xprv), Ok(derived_xpub)) = (
-                                    master_xprv.derive_priv(&secp, &origin.1),
-                                    master_xpub.derive_pub(&secp, &origin.1)
-                                ) {
+                                if let Ok(derived_xprv) = master_xprv.derive_priv(&secp, &origin.1) {
+                                    let derived_xpub = Xpub::from_priv(&secp, &derived_xprv);
                                     // For MultiXPub, we need to create individual XPub entries for each derivation path
                                     for derivation_path in xkey.derivation_paths.paths() {
                                         let desc_xkey = DescriptorXKey {
@@ -581,7 +575,6 @@ impl MultiSigDetails {
                 true
             });
         }
-
         Ok((descriptor, keymap))
     }
 
