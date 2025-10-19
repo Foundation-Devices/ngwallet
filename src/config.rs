@@ -15,14 +15,16 @@ use crate::store::MetaStorage;
 use crate::utils::get_address_type;
 use bdk_wallet::KeychainKind;
 use bdk_wallet::WalletPersister;
-use bdk_wallet::bitcoin::bip32::{self, ChildNumber, DerivationPath, Fingerprint, Xpub, Xpriv};
+use bdk_wallet::bitcoin::bip32::{self, ChildNumber, DerivationPath, Fingerprint, Xpriv, Xpub};
+use bdk_wallet::bitcoin::secp256k1::Secp256k1;
 use bdk_wallet::bitcoin::{self, Network};
-use bdk_wallet::bitcoin::secp256k1::{Secp256k1};
 use bdk_wallet::descriptor::Descriptor as BdkDescriptor;
-use bdk_wallet::miniscript::{ForEachKey, descriptor::{
-        DerivPaths, DescriptorMultiXKey, DescriptorPublicKey, DescriptorXKey, ShInner, SortedMultiVec,
-        Wildcard, WshInner, DescriptorSecretKey,
-    }
+use bdk_wallet::miniscript::{
+    ForEachKey,
+    descriptor::{
+        DerivPaths, DescriptorMultiXKey, DescriptorPublicKey, DescriptorSecretKey, DescriptorXKey,
+        ShInner, SortedMultiVec, Wildcard, WshInner,
+    },
 };
 use regex::Regex;
 use serde::{Deserialize, Serialize};
@@ -485,7 +487,13 @@ impl MultiSigDetails {
         &self,
         keychain: Option<KeychainKind>,
         master_key: Option<&MasterKey>,
-    ) -> Result<(BdkDescriptor<DescriptorPublicKey>, BTreeMap<DescriptorPublicKey, DescriptorSecretKey>), anyhow::Error> {
+    ) -> Result<
+        (
+            BdkDescriptor<DescriptorPublicKey>,
+            BTreeMap<DescriptorPublicKey, DescriptorSecretKey>,
+        ),
+        anyhow::Error,
+    > {
         let signers = self
             .signers
             .iter()
@@ -520,56 +528,50 @@ impl MultiSigDetails {
             descriptor.for_each_key(|pubkey| {
                 match pubkey {
                     DescriptorPublicKey::XPub(xkey) => {
-                        if let Some(origin) = &xkey.origin {
-                            if origin.0 == fp {
-                                if let Ok(derived_xprv) = master_xprv.derive_priv(&secp, &origin.1) {
-                                    let derived_xpub = Xpub::from_priv(&secp, &derived_xprv);
-                                    let desc_xkey = DescriptorXKey {
-                                        origin: Some(origin.clone()),
-                                        xkey: derived_xprv,
-                                        derivation_path: xkey.derivation_path.clone(),
-                                        wildcard: xkey.wildcard,
-                                    };
-                                    keymap.insert(
-                                        DescriptorPublicKey::XPub(DescriptorXKey {
-                                            origin: Some(origin.clone()),
-                                            xkey: derived_xpub,
-                                            derivation_path: xkey.derivation_path.clone(),
-                                            wildcard: xkey.wildcard,
-                                        }),
-                                        DescriptorSecretKey::XPrv(desc_xkey),
-                                    );
-                                }
-                            }
+                        if let Some(origin) = &xkey.origin && origin.0 == fp && let Ok(derived_xprv) = master_xprv.derive_priv(&secp, &origin.1)
+                        {
+                            let derived_xpub = Xpub::from_priv(&secp, &derived_xprv);
+                            let desc_xkey = DescriptorXKey {
+                                origin: Some(origin.clone()),
+                                xkey: derived_xprv,
+                                derivation_path: xkey.derivation_path.clone(),
+                                wildcard: xkey.wildcard,
+                            };
+                            keymap.insert(
+                                DescriptorPublicKey::XPub(DescriptorXKey {
+                                    origin: Some(origin.clone()),
+                                    xkey: derived_xpub,
+                                    derivation_path: xkey.derivation_path.clone(),
+                                    wildcard: xkey.wildcard,
+                                }),
+                                DescriptorSecretKey::XPrv(desc_xkey),
+                            );
                         }
-                    },
+                    }
                     DescriptorPublicKey::MultiXPub(xkey) => {
-                        if let Some(origin) = &xkey.origin {
-                            if origin.0 == fp {
-                                if let Ok(derived_xprv) = master_xprv.derive_priv(&secp, &origin.1) {
-                                    let derived_xpub = Xpub::from_priv(&secp, &derived_xprv);
-                                    // For MultiXPub, we need to create individual XPub entries for each derivation path
-                                    for derivation_path in xkey.derivation_paths.paths() {
-                                        let desc_xkey = DescriptorXKey {
-                                            origin: Some(origin.clone()),
-                                            xkey: derived_xprv,
-                                            derivation_path: derivation_path.clone(),
-                                            wildcard: xkey.wildcard,
-                                        };
-                                        keymap.insert(
-                                            DescriptorPublicKey::XPub(DescriptorXKey {
-                                                origin: Some(origin.clone()),
-                                                xkey: derived_xpub,
-                                                derivation_path: derivation_path.clone(),
-                                                wildcard: xkey.wildcard,
-                                            }),
-                                            DescriptorSecretKey::XPrv(desc_xkey),
-                                        );
-                                    }
-                                }
+                        if let Some(origin) = &xkey.origin && origin.0 == fp && let Ok(derived_xprv) = master_xprv.derive_priv(&secp, &origin.1)
+                        {
+                            let derived_xpub = Xpub::from_priv(&secp, &derived_xprv);
+                            // For MultiXPub, we need to create individual XPub entries for each derivation path
+                            for derivation_path in xkey.derivation_paths.paths() {
+                                let desc_xkey = DescriptorXKey {
+                                    origin: Some(origin.clone()),
+                                    xkey: derived_xprv,
+                                    derivation_path: derivation_path.clone(),
+                                    wildcard: xkey.wildcard,
+                                };
+                                keymap.insert(
+                                    DescriptorPublicKey::XPub(DescriptorXKey {
+                                        origin: Some(origin.clone()),
+                                        xkey: derived_xpub,
+                                        derivation_path: derivation_path.clone(),
+                                        wildcard: xkey.wildcard,
+                                    }),
+                                    DescriptorSecretKey::XPrv(desc_xkey),
+                                );
                             }
                         }
-                    },
+                    }
                     _ => {}
                 }
                 true
@@ -607,7 +609,6 @@ impl MultiSigDetails {
             descriptor_type,
         }])
     }
-
 
     pub fn to_config(&self, mut name: String) -> String {
         name.insert_str(0, "Name: ");
@@ -1072,7 +1073,8 @@ AB88DE89: tpubDFUc8ddWCzA8kC195Zn6UitBcBGXbPbtjktU2dk2Deprnf6sR15GAyHLQKUjAPa3gq
 
         let receive_descriptor = multisig
             .to_descriptor(Some(KeychainKind::External), None)
-            .unwrap().0;
+            .unwrap()
+            .0;
         let expected_receive_descriptor = String::from(
             "wsh(sortedmulti(2,[ab88de89/48'/1'/0'/2']tpubDFUc8ddWCzA8kC195Zn6UitBcBGXbPbtjktU2dk2Deprnf6sR15GAyHLQKUjAPa3gqD74g7Eea3NSqkb9FfYRZzEm2MTbCtTDZAKSHezJwb/0/*,[662a42e4/48'/1'/0'/2']tpubDFGqX4Ge633XixPNo4uF5h6sPkv32bwJrknDmmPGMq8Tn3Pu9QgWfk5hUiDe7gvv2eaFeaHXgjiZwKvnP3AhusoaWBK3qTv8cznyHxxGoSF/0/*))#7atlaq2g",
         );
@@ -1081,7 +1083,8 @@ AB88DE89: tpubDFUc8ddWCzA8kC195Zn6UitBcBGXbPbtjktU2dk2Deprnf6sR15GAyHLQKUjAPa3gq
 
         let change_descriptor = multisig
             .to_descriptor(Some(KeychainKind::Internal), None)
-            .unwrap().0;
+            .unwrap()
+            .0;
         let expected_change_descriptor = String::from(
             "wsh(sortedmulti(2,[ab88de89/48'/1'/0'/2']tpubDFUc8ddWCzA8kC195Zn6UitBcBGXbPbtjktU2dk2Deprnf6sR15GAyHLQKUjAPa3gqD74g7Eea3NSqkb9FfYRZzEm2MTbCtTDZAKSHezJwb/1/*,[662a42e4/48'/1'/0'/2']tpubDFGqX4Ge633XixPNo4uF5h6sPkv32bwJrknDmmPGMq8Tn3Pu9QgWfk5hUiDe7gvv2eaFeaHXgjiZwKvnP3AhusoaWBK3qTv8cznyHxxGoSF/1/*))#8wcmnnla",
         );
