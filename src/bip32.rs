@@ -13,6 +13,8 @@ pub struct NgAccountPath {
     pub coin_type: u32,
     /// The account number.
     pub account: u32,
+    /// The script type for BIP-0048 derivation paths.
+    pub script_type: Option<u32>,
     /// If equal to one, indicates that this derivation path
     /// is for a change address.
     pub change: Option<u32>,
@@ -26,6 +28,8 @@ pub enum ParsePathError {
     ExpectedCoinType,
     #[error("expected account in the derivation path")]
     ExpectedAccount,
+    #[error("expected script type in the derivation path")]
+    ExpectedScriptType,
     #[error("expected a hardened child number in the derivation path")]
     ExpectedHardened,
 }
@@ -41,7 +45,7 @@ impl NgAccountPath {
             return Ok(None);
         };
 
-        if !matches!(purpose, 44 | 49 | 84 | 86) {
+        if !matches!(purpose, 44 | 48 | 49 | 84 | 86) {
             return Ok(None);
         }
 
@@ -50,6 +54,12 @@ impl NgAccountPath {
         let coin_type =
             Self::expect_hardened(&mut iter)?.ok_or(ParsePathError::ExpectedCoinType)?;
         let account = Self::expect_hardened(&mut iter)?.ok_or(ParsePathError::ExpectedAccount)?;
+
+        let script_type = if purpose == 48 {
+            Some(Self::expect_hardened(&mut iter)?.ok_or(ParsePathError::ExpectedScriptType)?)
+        } else {
+            None
+        };
 
         // Change and address index are optional, but should still be valid.
         let change = Self::expect_normal(&mut iter)?;
@@ -64,6 +74,7 @@ impl NgAccountPath {
             purpose,
             coin_type,
             account,
+            script_type,
             change,
             address_index,
         }))
