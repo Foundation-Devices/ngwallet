@@ -49,7 +49,16 @@ impl PartialOrd for MultiSigSigner {
 
 impl Ord for MultiSigSigner {
     fn cmp(&self, other: &Self) -> Ordering {
-        self.pubkey.cmp(&other.pubkey)
+        // Sort by serialized public key bytes to match sortedmulti() behavior
+        let self_pubkey = match self.get_pubkey() {
+            Ok(pk) => pk.public_key.serialize(),
+            Err(_) => return Ordering::Equal,
+        };
+        let other_pubkey = match other.get_pubkey() {
+            Ok(pk) => pk.public_key.serialize(),
+            Err(_) => return Ordering::Equal,
+        };
+        self_pubkey.cmp(&other_pubkey)
     }
 }
 
@@ -1063,7 +1072,7 @@ AB88DE89: tpubDFUc8ddWCzA8kC195Zn6UitBcBGXbPbtjktU2dk2Deprnf6sR15GAyHLQKUjAPa3gq
 
         let descriptor = multisig.to_descriptor(None, None).unwrap().0;
         let expected_descriptor = String::from(
-            "wsh(sortedmulti(2,[662a42e4/48'/1'/0'/2']tpubDFGqX4Ge633XixPNo4uF5h6sPkv32bwJrknDmmPGMq8Tn3Pu9QgWfk5hUiDe7gvv2eaFeaHXgjiZwKvnP3AhusoaWBK3qTv8cznyHxxGoSF/<0;1>/*,[ab88de89/48'/1'/0'/2']tpubDFUc8ddWCzA8kC195Zn6UitBcBGXbPbtjktU2dk2Deprnf6sR15GAyHLQKUjAPa3gqD74g7Eea3NSqkb9FfYRZzEm2MTbCtTDZAKSHezJwb/<0;1>/*))#x8077u0d",
+            "wsh(sortedmulti(2,[ab88de89/48'/1'/0'/2']tpubDFUc8ddWCzA8kC195Zn6UitBcBGXbPbtjktU2dk2Deprnf6sR15GAyHLQKUjAPa3gqD74g7Eea3NSqkb9FfYRZzEm2MTbCtTDZAKSHezJwb/<0;1>/*,[662a42e4/48'/1'/0'/2']tpubDFGqX4Ge633XixPNo4uF5h6sPkv32bwJrknDmmPGMq8Tn3Pu9QgWfk5hUiDe7gvv2eaFeaHXgjiZwKvnP3AhusoaWBK3qTv8cznyHxxGoSF/<0;1>/*))#wn2wpcz6",
         );
 
         assert_eq!(descriptor.to_string(), expected_descriptor);
@@ -1072,7 +1081,7 @@ AB88DE89: tpubDFUc8ddWCzA8kC195Zn6UitBcBGXbPbtjktU2dk2Deprnf6sR15GAyHLQKUjAPa3gq
             .to_descriptor(Some(KeychainKind::External), None)
             .unwrap().0;
         let expected_receive_descriptor = String::from(
-            "wsh(sortedmulti(2,[662a42e4/48'/1'/0'/2']tpubDFGqX4Ge633XixPNo4uF5h6sPkv32bwJrknDmmPGMq8Tn3Pu9QgWfk5hUiDe7gvv2eaFeaHXgjiZwKvnP3AhusoaWBK3qTv8cznyHxxGoSF/0/*,[ab88de89/48'/1'/0'/2']tpubDFUc8ddWCzA8kC195Zn6UitBcBGXbPbtjktU2dk2Deprnf6sR15GAyHLQKUjAPa3gqD74g7Eea3NSqkb9FfYRZzEm2MTbCtTDZAKSHezJwb/0/*))#s2fk4w38",
+            "wsh(sortedmulti(2,[ab88de89/48'/1'/0'/2']tpubDFUc8ddWCzA8kC195Zn6UitBcBGXbPbtjktU2dk2Deprnf6sR15GAyHLQKUjAPa3gqD74g7Eea3NSqkb9FfYRZzEm2MTbCtTDZAKSHezJwb/0/*,[662a42e4/48'/1'/0'/2']tpubDFGqX4Ge633XixPNo4uF5h6sPkv32bwJrknDmmPGMq8Tn3Pu9QgWfk5hUiDe7gvv2eaFeaHXgjiZwKvnP3AhusoaWBK3qTv8cznyHxxGoSF/0/*))#7atlaq2g",
         );
 
         assert_eq!(receive_descriptor.to_string(), expected_receive_descriptor);
@@ -1081,7 +1090,7 @@ AB88DE89: tpubDFUc8ddWCzA8kC195Zn6UitBcBGXbPbtjktU2dk2Deprnf6sR15GAyHLQKUjAPa3gq
             .to_descriptor(Some(KeychainKind::Internal), None)
             .unwrap().0;
         let expected_change_descriptor = String::from(
-            "wsh(sortedmulti(2,[662a42e4/48'/1'/0'/2']tpubDFGqX4Ge633XixPNo4uF5h6sPkv32bwJrknDmmPGMq8Tn3Pu9QgWfk5hUiDe7gvv2eaFeaHXgjiZwKvnP3AhusoaWBK3qTv8cznyHxxGoSF/1/*,[ab88de89/48'/1'/0'/2']tpubDFUc8ddWCzA8kC195Zn6UitBcBGXbPbtjktU2dk2Deprnf6sR15GAyHLQKUjAPa3gqD74g7Eea3NSqkb9FfYRZzEm2MTbCtTDZAKSHezJwb/1/*))#fe6jmayj",
+            "wsh(sortedmulti(2,[ab88de89/48'/1'/0'/2']tpubDFUc8ddWCzA8kC195Zn6UitBcBGXbPbtjktU2dk2Deprnf6sR15GAyHLQKUjAPa3gqD74g7Eea3NSqkb9FfYRZzEm2MTbCtTDZAKSHezJwb/1/*,[662a42e4/48'/1'/0'/2']tpubDFGqX4Ge633XixPNo4uF5h6sPkv32bwJrknDmmPGMq8Tn3Pu9QgWfk5hUiDe7gvv2eaFeaHXgjiZwKvnP3AhusoaWBK3qTv8cznyHxxGoSF/1/*))#8wcmnnla",
         );
 
         assert_eq!(change_descriptor.to_string(), expected_change_descriptor);
@@ -1105,10 +1114,10 @@ Policy: 2 of 2
 Format: P2WSH
 
 Derivation: m/48'/1'/0'/2'
-662A42E4: tpubDFGqX4Ge633XixPNo4uF5h6sPkv32bwJrknDmmPGMq8Tn3Pu9QgWfk5hUiDe7gvv2eaFeaHXgjiZwKvnP3AhusoaWBK3qTv8cznyHxxGoSF
+AB88DE89: tpubDFUc8ddWCzA8kC195Zn6UitBcBGXbPbtjktU2dk2Deprnf6sR15GAyHLQKUjAPa3gqD74g7Eea3NSqkb9FfYRZzEm2MTbCtTDZAKSHezJwb
 
 Derivation: m/48'/1'/0'/2'
-AB88DE89: tpubDFUc8ddWCzA8kC195Zn6UitBcBGXbPbtjktU2dk2Deprnf6sR15GAyHLQKUjAPa3gqD74g7Eea3NSqkb9FfYRZzEm2MTbCtTDZAKSHezJwb");
+662A42E4: tpubDFGqX4Ge633XixPNo4uF5h6sPkv32bwJrknDmmPGMq8Tn3Pu9QgWfk5hUiDe7gvv2eaFeaHXgjiZwKvnP3AhusoaWBK3qTv8cznyHxxGoSF");
 
         assert_eq!(
             multisig.to_config(String::from("Multisig 2-of-2 Test")),
