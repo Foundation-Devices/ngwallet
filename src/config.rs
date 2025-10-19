@@ -476,7 +476,6 @@ impl MultiSigDetails {
         &self,
         keychain: Option<KeychainKind>,
         master_key: Option<&MasterKey>,
-        network: Network,
     ) -> Result<(BdkDescriptor<DescriptorPublicKey>, BTreeMap<DescriptorPublicKey, DescriptorSecretKey>), anyhow::Error> {
         let signers = self
             .signers
@@ -508,7 +507,7 @@ impl MultiSigDetails {
             let secp = Secp256k1::new();
             let fp = master.fingerprint;
 
-            let master_xprv = Xpriv::new_master(network, &master.key.0)?;
+            let master_xprv = Xpriv::new_master(self.network_kind, &master.key.0)?;
             let master_xpub = Xpub::from_priv(&secp, &master_xprv);
 
             descriptor.for_each_key(|pubkey| {
@@ -588,12 +587,11 @@ impl MultiSigDetails {
     pub fn get_descriptors(
         &self,
         master_key: Option<&MasterKey>,
-        network: Network,
     ) -> anyhow::Result<Vec<Descriptors>> {
         let (external_desc, external_keymap) =
-            self.to_descriptor(Some(KeychainKind::External), master_key, network)?;
+            self.to_descriptor(Some(KeychainKind::External), master_key)?;
         let (internal_desc, internal_keymap) =
-            self.to_descriptor(Some(KeychainKind::Internal), master_key, network)?;
+            self.to_descriptor(Some(KeychainKind::Internal), master_key)?;
         let descriptor_type = external_desc.desc_type();
 
         Ok(vec![Descriptors {
@@ -1060,7 +1058,7 @@ AB88DE89: tpubDFUc8ddWCzA8kC195Zn6UitBcBGXbPbtjktU2dk2Deprnf6sR15GAyHLQKUjAPa3gq
         assert_eq!(expected, multisig);
         assert_eq!(String::from("Multisig 2-of-2 Test"), name);
 
-        let descriptor = multisig.to_descriptor(None, None, Network::Testnet4).unwrap().0;
+        let descriptor = multisig.to_descriptor(None, None).unwrap().0;
         let expected_descriptor = String::from(
             "wsh(sortedmulti(2,[662a42e4/48'/1'/0'/2']tpubDFGqX4Ge633XixPNo4uF5h6sPkv32bwJrknDmmPGMq8Tn3Pu9QgWfk5hUiDe7gvv2eaFeaHXgjiZwKvnP3AhusoaWBK3qTv8cznyHxxGoSF/<0;1>/*,[ab88de89/48'/1'/0'/2']tpubDFUc8ddWCzA8kC195Zn6UitBcBGXbPbtjktU2dk2Deprnf6sR15GAyHLQKUjAPa3gqD74g7Eea3NSqkb9FfYRZzEm2MTbCtTDZAKSHezJwb/<0;1>/*))#x8077u0d",
         );
@@ -1068,7 +1066,7 @@ AB88DE89: tpubDFUc8ddWCzA8kC195Zn6UitBcBGXbPbtjktU2dk2Deprnf6sR15GAyHLQKUjAPa3gq
         assert_eq!(descriptor.to_string(), expected_descriptor);
 
         let receive_descriptor = multisig
-            .to_descriptor(Some(KeychainKind::External), None, Network::Testnet4)
+            .to_descriptor(Some(KeychainKind::External), None)
             .unwrap().0;
         let expected_receive_descriptor = String::from(
             "wsh(sortedmulti(2,[662a42e4/48'/1'/0'/2']tpubDFGqX4Ge633XixPNo4uF5h6sPkv32bwJrknDmmPGMq8Tn3Pu9QgWfk5hUiDe7gvv2eaFeaHXgjiZwKvnP3AhusoaWBK3qTv8cznyHxxGoSF/0/*,[ab88de89/48'/1'/0'/2']tpubDFUc8ddWCzA8kC195Zn6UitBcBGXbPbtjktU2dk2Deprnf6sR15GAyHLQKUjAPa3gqD74g7Eea3NSqkb9FfYRZzEm2MTbCtTDZAKSHezJwb/0/*))#s2fk4w38",
@@ -1077,7 +1075,7 @@ AB88DE89: tpubDFUc8ddWCzA8kC195Zn6UitBcBGXbPbtjktU2dk2Deprnf6sR15GAyHLQKUjAPa3gq
         assert_eq!(receive_descriptor.to_string(), expected_receive_descriptor);
 
         let change_descriptor = multisig
-            .to_descriptor(Some(KeychainKind::Internal), None, Network::Testnet4)
+            .to_descriptor(Some(KeychainKind::Internal), None)
             .unwrap().0;
         let expected_change_descriptor = String::from(
             "wsh(sortedmulti(2,[662a42e4/48'/1'/0'/2']tpubDFGqX4Ge633XixPNo4uF5h6sPkv32bwJrknDmmPGMq8Tn3Pu9QgWfk5hUiDe7gvv2eaFeaHXgjiZwKvnP3AhusoaWBK3qTv8cznyHxxGoSF/1/*,[ab88de89/48'/1'/0'/2']tpubDFUc8ddWCzA8kC195Zn6UitBcBGXbPbtjktU2dk2Deprnf6sR15GAyHLQKUjAPa3gqD74g7Eea3NSqkb9FfYRZzEm2MTbCtTDZAKSHezJwb/1/*))#fe6jmayj",
@@ -1085,7 +1083,7 @@ AB88DE89: tpubDFUc8ddWCzA8kC195Zn6UitBcBGXbPbtjktU2dk2Deprnf6sR15GAyHLQKUjAPa3gq
 
         assert_eq!(change_descriptor.to_string(), expected_change_descriptor);
 
-        let descriptors = multisig.get_descriptors(None, Network::Testnet4).unwrap();
+        let descriptors = multisig.get_descriptors(None).unwrap();
 
         let descriptor = &descriptors[0];
         assert_eq!(String::from("48_2"), descriptor.bip);
