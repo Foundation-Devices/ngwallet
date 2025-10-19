@@ -545,21 +545,24 @@ impl MultiSigDetails {
                                     master_xprv.derive_priv(&secp, &origin.1),
                                     master_xpub.derive_pub(&secp, &origin.1)
                                 ) {
-                                    let desc_xkey = DescriptorXKey {
-                                        origin: Some(origin.clone()),
-                                        xkey: derived_xprv,
-                                        derivation_path: DerivationPath::master(), // placeholder for MultiXPub
-                                        wildcard: xkey.wildcard,
-                                    };
-                                    keymap.insert(
-                                        DescriptorPublicKey::MultiXPub(DescriptorMultiXKey {
+                                    // For MultiXPub, we need to create individual XPub entries for each derivation path
+                                    for derivation_path in xkey.derivation_paths.paths() {
+                                        let desc_xkey = DescriptorXKey {
                                             origin: Some(origin.clone()),
-                                            xkey: derived_xpub,
-                                            derivation_paths: xkey.derivation_paths.clone(),
+                                            xkey: derived_xprv,
+                                            derivation_path: derivation_path.clone(),
                                             wildcard: xkey.wildcard,
-                                        }),
-                                        DescriptorSecretKey::XPrv(desc_xkey),
-                                    );
+                                        };
+                                        keymap.insert(
+                                            DescriptorPublicKey::XPub(DescriptorXKey {
+                                                origin: Some(origin.clone()),
+                                                xkey: derived_xpub,
+                                                derivation_path: derivation_path.clone(),
+                                                wildcard: xkey.wildcard,
+                                            }),
+                                            DescriptorSecretKey::XPrv(desc_xkey),
+                                        );
+                                    }
                                 }
                             }
                         }
