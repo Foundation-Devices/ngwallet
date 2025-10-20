@@ -505,11 +505,15 @@ where
             if let Some(witness_script) = input.witness_script.as_ref() {
                 if witness_script.is_multisig() {
                     let required_signers = multisig::disassemble(witness_script).unwrap();
-                    descriptors.insert(p2wsh::multisig_descriptor(
+                    let multisig_descriptors = p2wsh::multisig_descriptor(
                         required_signers,
                         &psbt.xpub,
                         &input.bip32_derivation,
-                    )?);
+                    )?;
+
+                    for descriptor in multisig_descriptors {
+                        descriptors.insert(descriptor);
+                    }
                 } else {
                     return Err(Error::Unimplemented);
                 }
@@ -542,11 +546,15 @@ where
                     if let Some(witness_script) = input.witness_script.as_ref() {
                         if witness_script.is_multisig() {
                             let required_signers = multisig::disassemble(witness_script).unwrap();
-                            descriptors.insert(p2sh::wsh_multisig_descriptor(
+                            let multisig_descriptors = p2sh::wsh_multisig_descriptor(
                                 required_signers,
                                 &psbt.xpub,
                                 &input.bip32_derivation,
-                            )?);
+                            )?;
+
+                            for descriptor in multisig_descriptors {
+                                descriptors.insert(descriptor);
+                            }
                         } else {
                             return Err(Error::Unimplemented);
                         }

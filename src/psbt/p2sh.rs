@@ -8,7 +8,7 @@ use bdk_wallet::bitcoin::secp256k1::{PublicKey, Secp256k1, Signing};
 use bdk_wallet::bitcoin::{Address, CompressedPublicKey, Network, TxOut};
 use bdk_wallet::descriptor::{Descriptor, ExtendedDescriptor, Segwitv0};
 use bdk_wallet::keys::DescriptorPublicKey;
-use bdk_wallet::miniscript::descriptor::{DerivPaths, DescriptorMultiXKey, Wildcard};
+use bdk_wallet::miniscript::descriptor::{DescriptorXKey, Wildcard};
 use bdk_wallet::miniscript::descriptor::{Sh, Wpkh};
 use bdk_wallet::miniscript::{ForEachKey, Miniscript};
 use bdk_wallet::template::{Bip49Public, DescriptorTemplate};
@@ -187,7 +187,7 @@ pub fn wsh_multisig_descriptor(
     required_signers: u8,
     global_xpubs: &BTreeMap<Xpub, KeySource>,
     bip32_derivations: &BTreeMap<PublicKey, KeySource>,
-) -> Result<ExtendedDescriptor, Error> {
+) -> Result<[ExtendedDescriptor; 2], Error> {
     // Find the account Xpubs in the global Xpub map of the PSBT.
     let xpubs = bip32_derivations
         .iter()
@@ -201,26 +201,35 @@ pub fn wsh_multisig_descriptor(
                 .ok_or_else(|| Error::MissingGlobalXpub(subpath.clone()))
         });
 
-    let mut descriptor_pubkeys = Vec::new();
+    let mut external_keys = Vec::new();
+    let mut internal_keys = Vec::new();
     for maybe_xpub in xpubs {
         let (xpub, source) = maybe_xpub?;
 
-        let descriptor_pubkey = DescriptorPublicKey::MultiXPub(DescriptorMultiXKey {
+        let external_key = DescriptorPublicKey::XPub(DescriptorXKey {
             origin: Some(source.clone()),
             xkey: *xpub,
-            derivation_paths: DerivPaths::new(vec![
-                DerivationPath::from(vec![ChildNumber::Normal { index: 0 }]),
-                DerivationPath::from(vec![ChildNumber::Normal { index: 1 }]),
-            ])
-            .expect("the vector passed should not be empty"),
+            derivation_path: DerivationPath::from(vec![ChildNumber::Normal { index: 0 }]),
             wildcard: Wildcard::Unhardened,
         });
-        descriptor_pubkeys.push(descriptor_pubkey);
+
+        let internal_key = DescriptorPublicKey::XPub(DescriptorXKey {
+            origin: Some(source.clone()),
+            xkey: *xpub,
+            derivation_path: DerivationPath::from(vec![ChildNumber::Normal { index: 1 }]),
+            wildcard: Wildcard::Unhardened,
+        });
+
+        external_keys.push(external_key);
+        internal_keys.push(internal_key);
     }
 
-    Ok(ExtendedDescriptor::new_sh_wsh_sortedmulti(
-        usize::from(required_signers),
-        descriptor_pubkeys,
-    )
-    .unwrap())
+    let external_descriptor =
+        ExtendedDescriptor::new_sh_wsh_sortedmulti(usize::from(required_signers), external_keys)
+            .unwrap();
+    let internal_descriptor =
+        ExtendedDescriptor::new_sh_wsh_sortedmulti(usize::from(required_signers), internal_keys)
+            .unwrap();
+
+    Ok([external_descriptor, internal_descriptor])
 }
