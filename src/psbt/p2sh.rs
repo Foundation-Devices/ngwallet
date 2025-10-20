@@ -8,7 +8,7 @@ use bdk_wallet::bitcoin::secp256k1::{PublicKey, Secp256k1, Signing};
 use bdk_wallet::bitcoin::{Address, CompressedPublicKey, Network, TxOut};
 use bdk_wallet::descriptor::{Descriptor, ExtendedDescriptor, Segwitv0};
 use bdk_wallet::keys::DescriptorPublicKey;
-use bdk_wallet::miniscript::descriptor::{DerivPaths, DescriptorMultiXKey, Wildcard, Wsh};
+use bdk_wallet::miniscript::descriptor::{DerivPaths, DescriptorMultiXKey, Wildcard};
 use bdk_wallet::miniscript::descriptor::{Sh, Wpkh};
 use bdk_wallet::miniscript::{ForEachKey, Miniscript};
 use bdk_wallet::template::{Bip49Public, DescriptorTemplate};
