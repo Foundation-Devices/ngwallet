@@ -504,9 +504,9 @@ impl MultiSigDetails {
                     DescriptorPublicKey::XPub(xkey) => {
                         if let Some(origin) = &xkey.origin
                             && origin.0 == fp
-                            && let Ok(derived_xprv) = master_xprv.derive_priv(&secp, &origin.1)
+                            && let Ok(derived_xprv) = master_xprv.derive_priv(secp, &origin.1)
                         {
-                            let derived_xpub = Xpub::from_priv(&secp, &derived_xprv);
+                            let derived_xpub = Xpub::from_priv(secp, &derived_xprv);
                             let desc_xkey = DescriptorXKey {
                                 origin: Some(origin.clone()),
                                 xkey: derived_xprv,
