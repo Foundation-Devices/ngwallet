@@ -3,7 +3,7 @@ use bdk_core::bitcoin::hex::DisplayHex;
 #[cfg(feature = "sha2")]
 use sha2::{Digest, Sha256};
 use std::cmp::Ordering;
-use std::collections::{BTreeMap, HashMap};
+use std::collections::HashMap;
 use std::fmt;
 use std::str::FromStr;
 use std::sync::Arc;
@@ -15,16 +15,14 @@ use crate::store::MetaStorage;
 use crate::utils::get_address_type;
 use bdk_wallet::KeychainKind;
 use bdk_wallet::WalletPersister;
-use bdk_wallet::bitcoin::bip32::{self, ChildNumber, DerivationPath, Fingerprint, Xpriv, Xpub};
-use bdk_wallet::bitcoin::secp256k1::Secp256k1;
+use bdk_wallet::bitcoin::bip32::{self, DerivationPath, Fingerprint, Xpriv, Xpub};
 use bdk_wallet::bitcoin::{self, Network};
 use bdk_wallet::descriptor::Descriptor as BdkDescriptor;
-use bdk_wallet::miniscript::{
-    ForEachKey,
-    descriptor::{
-        DerivPaths, DescriptorMultiXKey, DescriptorPublicKey, DescriptorSecretKey, DescriptorXKey,
-        ShInner, SortedMultiVec, Wildcard, WshInner,
-    },
+use bdk_wallet::miniscript::descriptor::{
+    DescriptorPublicKey, ShInner, SortedMultiVec, WshInner,
+};
+use bdk_wallet::template::{
+    Bip48Multisig, Bip48MultisigPublic, Bip48ScriptType, DescriptorTemplate, DescriptorTemplateOut,
 };
 use regex::Regex;
 use serde::{Deserialize, Serialize};
@@ -435,149 +433,92 @@ impl MultiSigDetails {
         }
     }
 
-    fn signer_to_multi_xpub(&self, signer: &MultiSigSigner) -> Option<DescriptorPublicKey> {
-        let (fingerprint, derivation_path, pubkey) = match (
-            signer.get_fingerprint(),
-            signer.get_derivation(),
-            signer.get_pubkey(),
-        ) {
-            (f, Ok(d), Ok(p)) => (f, d, p),
-            _ => return None,
-        };
-        let master_path = DerivationPath::master();
-        let derivation_paths = DerivPaths::new(vec![
-            master_path.child(ChildNumber::Normal { index: 0 }),
-            master_path.child(ChildNumber::Normal { index: 1 }),
-        ])?;
-        let descriptor_x_key: DescriptorMultiXKey<Xpub> = DescriptorMultiXKey {
-            origin: Some((fingerprint, derivation_path)),
-            xkey: pubkey,
-            derivation_paths,
-            wildcard: Wildcard::Unhardened,
-        };
-        Some(DescriptorPublicKey::MultiXPub(descriptor_x_key))
-    }
-
-    fn signer_to_xpub(
-        &self,
-        signer: &MultiSigSigner,
-        keychain: KeychainKind,
-    ) -> Option<DescriptorPublicKey> {
-        let (fingerprint, derivation_path, pubkey) = match (
-            signer.get_fingerprint(),
-            signer.get_derivation(),
-            signer.get_pubkey(),
-        ) {
-            (f, Ok(d), Ok(p)) => (f, d, p),
-            _ => return None,
-        };
-        let path = DerivationPath::master().child(ChildNumber::Normal {
-            index: keychain as u32,
-        });
-        let descriptor_x_key: DescriptorXKey<Xpub> = DescriptorXKey {
-            origin: Some((fingerprint, derivation_path)),
-            xkey: pubkey,
-            derivation_path: path,
-            wildcard: Wildcard::Unhardened,
-        };
-        Some(DescriptorPublicKey::XPub(descriptor_x_key))
-    }
-
     pub fn to_descriptor(
         &self,
-        keychain: Option<KeychainKind>,
+        keychain: KeychainKind,
         master_key: Option<&MasterKey>,
-    ) -> Result<
-        (
-            BdkDescriptor<DescriptorPublicKey>,
-            BTreeMap<DescriptorPublicKey, DescriptorSecretKey>,
-        ),
-        anyhow::Error,
-    > {
-        let signers = self
-            .signers
-            .iter()
-            .filter_map(|s| match keychain {
-                Some(k) => self.signer_to_xpub(s, k),
-                None => self.signer_to_multi_xpub(s),
-            })
-            .collect::<Vec<DescriptorPublicKey>>();
-
-        let descriptor = match self.format {
-            AddressType::P2ShWsh => BdkDescriptor::<DescriptorPublicKey>::new_sh_wsh_sortedmulti(
-                self.policy_threshold,
-                signers,
-            )?,
-            AddressType::P2wsh => BdkDescriptor::<DescriptorPublicKey>::new_wsh_sortedmulti(
-                self.policy_threshold,
-                signers,
-            )?,
+    ) -> Result<DescriptorTemplateOut, anyhow::Error> {
+        // Determine the script type from the address format
+        let script_type = match self.format {
+            AddressType::P2ShWsh => Bip48ScriptType::P2shP2wsh,
+            AddressType::P2wsh => Bip48ScriptType::P2wsh,
             other => anyhow::bail!(
                 "Tried to make a descriptor from an unsupported multisig format: {:?}",
                 other
             ),
         };
 
-        let mut keymap = BTreeMap::<DescriptorPublicKey, DescriptorSecretKey>::new();
+        // Convert network kind to bdk_wallet Network
+        let network: Network = match self.network_kind {
+            NetworkKind::Main => Network::Bitcoin,
+            NetworkKind::Test => Network::Testnet,
+        };
 
-        if let Some(master) = master_key {
-            let secp = Secp256k1::new();
-            let fp = master.fingerprint;
-            let master_xprv = Xpriv::new_master(self.network_kind, &master.key.0)?;
+        match master_key {
+            Some(master) => {
+                // Check which signers have our master key fingerprint
+                let master_fp = master.fingerprint;
+                let master_xprv = Xpriv::new_master(self.network_kind, &master.key.0)?;
 
-            descriptor.for_each_key(|pubkey| {
-                match pubkey {
-                    DescriptorPublicKey::XPub(xkey) => {
-                        if let Some(origin) = &xkey.origin && origin.0 == fp && let Ok(derived_xprv) = master_xprv.derive_priv(&secp, &origin.1)
-                        {
-                            let derived_xpub = Xpub::from_priv(&secp, &derived_xprv);
-                            let desc_xkey = DescriptorXKey {
-                                origin: Some(origin.clone()),
-                                xkey: derived_xprv,
-                                derivation_path: xkey.derivation_path.clone(),
-                                wildcard: xkey.wildcard,
-                            };
-                            keymap.insert(
-                                DescriptorPublicKey::XPub(DescriptorXKey {
-                                    origin: Some(origin.clone()),
-                                    xkey: derived_xpub,
-                                    derivation_path: xkey.derivation_path.clone(),
-                                    wildcard: xkey.wildcard,
-                                }),
-                                DescriptorSecretKey::XPrv(desc_xkey),
-                            );
-                        }
+                // Build signers as (Key, KeySource) pairs, using master xprv for matching fingerprints
+                let mut signers = Vec::new();
+
+                for signer in &self.signers {
+                    let signer_fp = signer.get_fingerprint();
+                    let derivation_path = signer.get_derivation()?;
+                    let key_source = (signer_fp, derivation_path);
+
+                    if signer_fp == master_fp {
+                        // This signer can use our master private key
+                        signers.push((master_xprv, key_source));
+                    } else {
+                        // This signer doesn't match our master key, we can't use it with the private template
+                        // Fall back to public-only template for mixed scenarios
+                        return self.build_public_descriptor(script_type, keychain, network);
                     }
-                    DescriptorPublicKey::MultiXPub(xkey) => {
-                        if let Some(origin) = &xkey.origin && origin.0 == fp && let Ok(derived_xprv) = master_xprv.derive_priv(&secp, &origin.1)
-                        {
-                            let derived_xpub = Xpub::from_priv(&secp, &derived_xprv);
-                            // For MultiXPub, we need to create individual XPub entries for each derivation path
-                            for derivation_path in xkey.derivation_paths.paths() {
-                                let desc_xkey = DescriptorXKey {
-                                    origin: Some(origin.clone()),
-                                    xkey: derived_xprv,
-                                    derivation_path: derivation_path.clone(),
-                                    wildcard: xkey.wildcard,
-                                };
-                                keymap.insert(
-                                    DescriptorPublicKey::XPub(DescriptorXKey {
-                                        origin: Some(origin.clone()),
-                                        xkey: derived_xpub,
-                                        derivation_path: derivation_path.clone(),
-                                        wildcard: xkey.wildcard,
-                                    }),
-                                    DescriptorSecretKey::XPrv(desc_xkey),
-                                );
-                            }
-                        }
-                    }
-                    _ => {}
                 }
-                true
-            });
+
+                // Use private template (it accepts mixed key types through DerivableKey trait)
+                let template =
+                    Bip48Multisig::new(self.policy_threshold, signers, script_type, keychain);
+
+                template
+                    .build(network)
+                    .map_err(|e| anyhow::anyhow!("Failed to build descriptor: {}", e))
+            }
+            None => {
+                // Use Bip48MultisigPublic with public keys only
+                self.build_public_descriptor(script_type, keychain, network)
+            }
         }
-        Ok((descriptor, keymap))
+    }
+
+    fn build_public_descriptor(
+        &self,
+        script_type: Bip48ScriptType,
+        keychain: KeychainKind,
+        network: Network,
+    ) -> Result<DescriptorTemplateOut, anyhow::Error> {
+        // Build signers as (Xpub, KeySource) pairs
+        let signers = self
+            .signers
+            .iter()
+            .filter_map(|s| {
+                let fingerprint = s.get_fingerprint();
+                let derivation_path = s.get_derivation().ok()?;
+                let pubkey = s.get_pubkey().ok()?;
+                let key_source = (fingerprint, derivation_path);
+                Some((pubkey, key_source))
+            })
+            .collect::<Vec<_>>();
+
+        // Create the BIP48 multisig public template
+        let template =
+            Bip48MultisigPublic::new(self.policy_threshold, signers, script_type, keychain);
+
+        template
+            .build(network)
+            .map_err(|e| anyhow::anyhow!("Failed to build public descriptor: {}", e))
     }
 
     pub fn get_bip(&self) -> Result<String, anyhow::Error> {
@@ -595,10 +536,10 @@ impl MultiSigDetails {
         &self,
         master_key: Option<&MasterKey>,
     ) -> anyhow::Result<Vec<Descriptors>> {
-        let (external_desc, external_keymap) =
-            self.to_descriptor(Some(KeychainKind::External), master_key)?;
-        let (internal_desc, internal_keymap) =
-            self.to_descriptor(Some(KeychainKind::Internal), master_key)?;
+        let (external_desc, external_keymap, _) =
+            self.to_descriptor(KeychainKind::External, master_key)?;
+        let (internal_desc, internal_keymap, _) =
+            self.to_descriptor(KeychainKind::Internal, master_key)?;
         let descriptor_type = external_desc.desc_type();
 
         Ok(vec![Descriptors {
@@ -1064,27 +1005,27 @@ AB88DE89: tpubDFUc8ddWCzA8kC195Zn6UitBcBGXbPbtjktU2dk2Deprnf6sR15GAyHLQKUjAPa3gq
         assert_eq!(expected, multisig);
         assert_eq!(String::from("Multisig 2-of-2 Test"), name);
 
-        let descriptor = multisig.to_descriptor(None, None).unwrap().0;
+        let (descriptor, _, _) = multisig
+            .to_descriptor(KeychainKind::External, None)
+            .unwrap();
         let expected_descriptor = String::from(
-            "wsh(sortedmulti(2,[ab88de89/48'/1'/0'/2']tpubDFUc8ddWCzA8kC195Zn6UitBcBGXbPbtjktU2dk2Deprnf6sR15GAyHLQKUjAPa3gqD74g7Eea3NSqkb9FfYRZzEm2MTbCtTDZAKSHezJwb/<0;1>/*,[662a42e4/48'/1'/0'/2']tpubDFGqX4Ge633XixPNo4uF5h6sPkv32bwJrknDmmPGMq8Tn3Pu9QgWfk5hUiDe7gvv2eaFeaHXgjiZwKvnP3AhusoaWBK3qTv8cznyHxxGoSF/<0;1>/*))#wn2wpcz6",
+            "wsh(sortedmulti(2,[ab88de89/48'/1'/0'/2']tpubDFUc8ddWCzA8kC195Zn6UitBcBGXbPbtjktU2dk2Deprnf6sR15GAyHLQKUjAPa3gqD74g7Eea3NSqkb9FfYRZzEm2MTbCtTDZAKSHezJwb/0/*,[662a42e4/48'/1'/0'/2']tpubDFGqX4Ge633XixPNo4uF5h6sPkv32bwJrknDmmPGMq8Tn3Pu9QgWfk5hUiDe7gvv2eaFeaHXgjiZwKvnP3AhusoaWBK3qTv8cznyHxxGoSF/0/*))#7atlaq2g",
         );
 
         assert_eq!(descriptor.to_string(), expected_descriptor);
 
-        let receive_descriptor = multisig
-            .to_descriptor(Some(KeychainKind::External), None)
-            .unwrap()
-            .0;
+        let (receive_descriptor, _, _) = multisig
+            .to_descriptor(KeychainKind::External, None)
+            .unwrap();
         let expected_receive_descriptor = String::from(
             "wsh(sortedmulti(2,[ab88de89/48'/1'/0'/2']tpubDFUc8ddWCzA8kC195Zn6UitBcBGXbPbtjktU2dk2Deprnf6sR15GAyHLQKUjAPa3gqD74g7Eea3NSqkb9FfYRZzEm2MTbCtTDZAKSHezJwb/0/*,[662a42e4/48'/1'/0'/2']tpubDFGqX4Ge633XixPNo4uF5h6sPkv32bwJrknDmmPGMq8Tn3Pu9QgWfk5hUiDe7gvv2eaFeaHXgjiZwKvnP3AhusoaWBK3qTv8cznyHxxGoSF/0/*))#7atlaq2g",
         );
 
         assert_eq!(receive_descriptor.to_string(), expected_receive_descriptor);
 
-        let change_descriptor = multisig
-            .to_descriptor(Some(KeychainKind::Internal), None)
-            .unwrap()
-            .0;
+        let (change_descriptor, _, _) = multisig
+            .to_descriptor(KeychainKind::Internal, None)
+            .unwrap();
         let expected_change_descriptor = String::from(
             "wsh(sortedmulti(2,[ab88de89/48'/1'/0'/2']tpubDFUc8ddWCzA8kC195Zn6UitBcBGXbPbtjktU2dk2Deprnf6sR15GAyHLQKUjAPa3gqD74g7Eea3NSqkb9FfYRZzEm2MTbCtTDZAKSHezJwb/1/*,[662a42e4/48'/1'/0'/2']tpubDFGqX4Ge633XixPNo4uF5h6sPkv32bwJrknDmmPGMq8Tn3Pu9QgWfk5hUiDe7gvv2eaFeaHXgjiZwKvnP3AhusoaWBK3qTv8cznyHxxGoSF/1/*))#8wcmnnla",
         );
