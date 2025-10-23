@@ -505,22 +505,22 @@ impl MultiSigDetails {
                     && origin.0 == fp
                     && let Ok(derived_xprv) = master_xprv.derive_priv(secp, &origin.1)
                 {
-                        let derived_xpub = Xpub::from_priv(secp, &derived_xprv);
-                        let desc_xkey = DescriptorXKey {
+                    let derived_xpub = Xpub::from_priv(secp, &derived_xprv);
+                    let desc_xkey = DescriptorXKey {
+                        origin: Some(origin.clone()),
+                        xkey: derived_xprv,
+                        derivation_path: xkey.derivation_path.clone(),
+                        wildcard: xkey.wildcard,
+                    };
+                    keymap.insert(
+                        DescriptorPublicKey::XPub(DescriptorXKey {
                             origin: Some(origin.clone()),
-                            xkey: derived_xprv,
+                            xkey: derived_xpub,
                             derivation_path: xkey.derivation_path.clone(),
                             wildcard: xkey.wildcard,
-                        };
-                        keymap.insert(
-                            DescriptorPublicKey::XPub(DescriptorXKey {
-                                origin: Some(origin.clone()),
-                                xkey: derived_xpub,
-                                derivation_path: xkey.derivation_path.clone(),
-                                wildcard: xkey.wildcard,
-                            }),
-                            DescriptorSecretKey::XPrv(desc_xkey),
-                        );
+                        }),
+                        DescriptorSecretKey::XPrv(desc_xkey),
+                    );
                 }
                 true
             });
