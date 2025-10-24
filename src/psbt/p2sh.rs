@@ -1,6 +1,6 @@
 use crate::bip32::NgAccountPath;
 use crate::psbt::{
-    Error, OutputKind, PsbtOutput, derive_account_xpub, derive_full_descriptor_pubkey,
+    Error, OutputKind, PsbtOutput, derive_account_xpub, derive_full_descriptor_pubkey, sort_keys,
 };
 use bdk_wallet::bitcoin::bip32::{ChildNumber, DerivationPath, KeySource, Xpriv, Xpub};
 use bdk_wallet::bitcoin::psbt;
@@ -223,6 +223,9 @@ pub fn wsh_multisig_descriptor(
         external_keys.push(external_key);
         internal_keys.push(internal_key);
     }
+
+    sort_keys(&mut external_keys);
+    sort_keys(&mut internal_keys);
 
     let external_descriptor =
         ExtendedDescriptor::new_sh_wsh_sortedmulti(usize::from(required_signers), external_keys)

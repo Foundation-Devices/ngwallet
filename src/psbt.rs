@@ -19,6 +19,7 @@ use bdk_wallet::bitcoin::{
 };
 use bdk_wallet::descriptor::ExtendedDescriptor;
 use bdk_wallet::keys::{DescriptorPublicKey, SinglePub, SinglePubKey};
+use std::cmp::Ordering;
 use std::collections::{BTreeMap, HashSet};
 use thiserror::Error;
 
@@ -849,4 +850,20 @@ where
         origin: Some((master_key.fingerprint(secp), path.as_ref().into())),
         key: SinglePubKey::FullKey(derived_xpub.to_pub().into()),
     })
+}
+
+pub(crate) fn sort_keys(keys: &mut [DescriptorPublicKey]) {
+    fn to_public_key(pk: &DescriptorPublicKey) -> Option<PublicKey> {
+        match pk {
+            DescriptorPublicKey::XPub(xpub) => Some(xpub.xkey.public_key),
+            _ => None,
+        }
+    }
+
+    keys.sort_by(|a, b| {
+        to_public_key(a)
+            .and_then(|a| to_public_key(b).map(|b| (a.serialize(), b.serialize())))
+            .map(|(a, b)| a.cmp(&b))
+            .unwrap_or(Ordering::Equal)
+    });
 }
