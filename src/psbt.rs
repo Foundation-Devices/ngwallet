@@ -30,6 +30,8 @@ pub struct TransactionDetails {
     pub total_with_self_send: Amount,
     /// The total self send amount, including change and transfers.
     pub total_self_send: Amount,
+    /// Non-change self-send, displayed as the total in case of self-sends
+    pub total_non_change_self_send: Amount,
     /// The fee of this transaction.
     pub fee: Amount,
     /// The descriptors discovered in the PSBT.
@@ -51,6 +53,14 @@ impl TransactionDetails {
     /// Returns true if the entire transaction is a self-send.
     pub fn is_self_send(&self) -> bool {
         self.total() == Amount::ZERO
+    }
+
+    pub fn display_total(&self) -> Amount {
+        if self.is_self_send() {
+            self.total_non_change_self_send
+        } else {
+            self.total()
+        }
     }
 }
 
@@ -85,6 +95,10 @@ impl PsbtOutput {
     /// Returns true if the output is a self-send.
     pub fn is_self_send(&self) -> bool {
         self.kind.is_self_send()
+    }
+
+    pub fn is_non_change_self_send(&self) -> bool {
+        self.kind.is_non_change_self_send()
     }
 }
 
@@ -150,6 +164,13 @@ impl OutputKind {
         match self {
             OutputKind::Change(_) | OutputKind::Transfer { .. } | OutputKind::Suspicious(_) => true,
             OutputKind::External(_) | OutputKind::OpReturn(_) => false,
+        }
+    }
+
+    pub fn is_non_change_self_send(&self) -> bool {
+        match self {
+            OutputKind::Transfer { .. } => true,
+            OutputKind::Change(_) | OutputKind::External(_) | OutputKind::OpReturn(_) | OutputKind::Suspicious(_) => false,
         }
     }
 }
@@ -574,6 +595,7 @@ where
 
     let mut total_with_self_send = Amount::ZERO;
     let mut total_self_send = Amount::ZERO;
+    let mut total_non_change_self_send = Amount::ZERO;
     for (i, output) in psbt.outputs.iter().enumerate() {
         let Some(txout) = psbt.unsigned_tx.output.get(i) else {
             return Err(Error::MissingOutput { index: i });
@@ -606,12 +628,17 @@ where
             total_self_send += output_details.amount;
         }
 
+        if output_details.is_non_change_self_send() {
+            total_non_change_self_send += output_details.amount;
+        }
+
         outputs.push(output_details);
     }
 
     Ok(TransactionDetails {
         total_with_self_send,
         total_self_send,
+        total_non_change_self_send,
         fee: psbt.fee()?,
         descriptors,
         inputs,
