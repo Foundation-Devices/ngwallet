@@ -432,11 +432,11 @@ where
         let mut fingerprints = HashSet::<Fingerprint>::new();
         for input in psbt.inputs.iter() {
             for bip32_fingerprint in input.bip32_derivation.iter().map(|(_, (v, _))| v) {
-                fingerprints.insert(bip32_fingerprint.clone());
+                fingerprints.insert(*bip32_fingerprint);
             }
 
             for tap_fingerprint in input.tap_key_origins.iter().map(|(_, (_, (v, _)))| v) {
-                fingerprints.insert(tap_fingerprint.clone());
+                fingerprints.insert(*tap_fingerprint);
             }
         }
         return Err(Error::CantSign(fingerprints));
