@@ -170,7 +170,10 @@ impl OutputKind {
     pub fn is_non_change_self_send(&self) -> bool {
         match self {
             OutputKind::Transfer { .. } => true,
-            OutputKind::Change(_) | OutputKind::External(_) | OutputKind::OpReturn(_) | OutputKind::Suspicious(_) => false,
+            OutputKind::Change(_)
+            | OutputKind::External(_)
+            | OutputKind::OpReturn(_)
+            | OutputKind::Suspicious(_) => false,
         }
     }
 }
@@ -217,7 +220,7 @@ pub enum Error {
 
     /// No inputs in the PSBT match the wallet fingerprint.
     #[error("transaction cannot be signed, no input matches the wallet fingerprint")]
-    CantSign,
+    CantSign(HashSet<Fingerprint>),
 
     /// Failed to calculate taproot key
     #[error("failed to calculate taproot key")]
@@ -426,7 +429,17 @@ where
     });
 
     if !is_fingerprint_present {
-        return Err(Error::CantSign);
+        let mut fingerprints = HashSet::<Fingerprint>::new();
+        for input in psbt.inputs.iter() {
+            for bip32_fingerprint in input.bip32_derivation.iter().map(|(_, (v, _))| v) {
+                fingerprints.insert(*bip32_fingerprint);
+            }
+
+            for tap_fingerprint in input.tap_key_origins.iter().map(|(_, (_, (v, _)))| v) {
+                fingerprints.insert(*tap_fingerprint);
+            }
+        }
+        return Err(Error::CantSign(fingerprints));
     }
 
     for (i, input) in psbt.inputs.iter().enumerate() {
