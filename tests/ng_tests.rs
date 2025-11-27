@@ -74,7 +74,8 @@ mod tests {
 
         for wallet in account.wallets.read().unwrap().iter() {
             let (address_type, request) = account.full_scan_request(wallet.address_type).unwrap();
-            let update = NgWallet::<Connection>::scan(request, ELECTRUM_SERVER, None).unwrap();
+            let update =
+                NgWallet::<Connection>::scan(request, ELECTRUM_SERVER, None, None).unwrap();
             updates.push((address_type, Update::from(update)));
         }
 
@@ -244,7 +245,8 @@ mod tests {
 
         for wallet in account.wallets.read().unwrap().iter() {
             let (address_type, request) = account.full_scan_request(wallet.address_type).unwrap();
-            let update = NgWallet::<Connection>::scan(request, ELECTRUM_SERVER_T4, None).unwrap();
+            let update =
+                NgWallet::<Connection>::scan(request, ELECTRUM_SERVER_T4, None, None).unwrap();
             updates.push((address_type, Update::from(update)));
         }
 
@@ -354,7 +356,7 @@ mod tests {
     //     //
     //
     //     for request in account.full_scan_request().into_iter() {
-    //         let update = NgWallet::<Connection>::scan(request, ELECTRUM_SERVER, None).unwrap();
+    //         let update = NgWallet::<Connection>::scan(request, ELECTRUM_SERVER, None, None).unwrap();
     //         account.apply(Update::from(update)).unwrap();
     //     }
     //

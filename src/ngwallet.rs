@@ -22,7 +22,7 @@ pub const FEE_UNKNOWN: u64 = i64::MAX as u64; // flutter max intiger for fee
 
 use crate::config::AddressType;
 #[cfg(feature = "envoy")]
-use crate::{BATCH_SIZE, STOP_GAP};
+use crate::{BATCH_SIZE, DEFAULT_STOP_GAP};
 
 use crate::store::MetaStorage;
 use crate::transaction::{BitcoinTransaction, Input, KeyChain, Output};
@@ -411,9 +411,11 @@ impl<P: WalletPersister> NgWallet<P> {
         request: FullScanRequest<KeychainKind>,
         electrum_server: &str,
         socks_proxy: Option<&str>,
+        stop_gap: Option<usize>,
     ) -> Result<FullScanResponse<KeychainKind>> {
+        let stop_gap = stop_gap.unwrap_or(DEFAULT_STOP_GAP);
         let client = utils::build_electrum_client(electrum_server, socks_proxy);
-        let update = client.full_scan(request, STOP_GAP, BATCH_SIZE, true)?;
+        let update = client.full_scan(request, stop_gap, BATCH_SIZE, true)?;
         Ok(update)
     }
 
