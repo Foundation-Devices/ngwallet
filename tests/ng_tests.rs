@@ -74,7 +74,8 @@ mod tests {
 
         for wallet in account.wallets.read().unwrap().iter() {
             let (address_type, request) = account.full_scan_request(wallet.address_type).unwrap();
-            let update = NgWallet::<Connection>::scan(request, ELECTRUM_SERVER, None).unwrap();
+            let update =
+                NgWallet::<Connection>::scan(request, ELECTRUM_SERVER, None, None).unwrap();
             updates.push((address_type, Update::from(update)));
         }
 
@@ -244,7 +245,8 @@ mod tests {
 
         for wallet in account.wallets.read().unwrap().iter() {
             let (address_type, request) = account.full_scan_request(wallet.address_type).unwrap();
-            let update = NgWallet::<Connection>::scan(request, ELECTRUM_SERVER_T4, None).unwrap();
+            let update =
+                NgWallet::<Connection>::scan(request, ELECTRUM_SERVER_T4, None, None).unwrap();
             updates.push((address_type, Update::from(update)));
         }
 
@@ -320,14 +322,20 @@ mod tests {
             .build_in_memory()
             .unwrap();
 
-        account.add_new_descriptor(&second_descriptor, None).unwrap();
+        account
+            .add_new_descriptor(&second_descriptor, None)
+            .unwrap();
 
         assert_eq!(account.wallets.read().unwrap().len(), 2);
 
         assert_eq!(account.config.read().unwrap().descriptors.len(), 2);
 
         //expect error when adding duplicate descriptor
-        assert!(account.add_new_descriptor(&second_descriptor, None).is_err());
+        assert!(
+            account
+                .add_new_descriptor(&second_descriptor, None)
+                .is_err()
+        );
     }
 
     //noinspection RsExternalLinter
@@ -348,7 +356,7 @@ mod tests {
     //     //
     //
     //     for request in account.full_scan_request().into_iter() {
-    //         let update = NgWallet::<Connection>::scan(request, ELECTRUM_SERVER, None).unwrap();
+    //         let update = NgWallet::<Connection>::scan(request, ELECTRUM_SERVER, None, None).unwrap();
     //         account.apply(Update::from(update)).unwrap();
     //     }
     //
