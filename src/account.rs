@@ -580,6 +580,11 @@ impl<P: WalletPersister> NgAccount<P> {
     pub fn remove_tag(&self, target_tag: &str, rename_to: Option<&str>) -> anyhow::Result<()> {
         self.meta_storage.remove_tag(target_tag)?;
         let utxos = self.utxos()?;
+        if let Some(new_tag) = rename_to
+            && !new_tag.is_empty()
+        {
+            self.meta_storage.add_tag(new_tag)?;
+        }
         for output in utxos {
             match &output.tag {
                 None => {}
