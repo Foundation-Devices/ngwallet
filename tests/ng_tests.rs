@@ -17,21 +17,21 @@ mod utils;
 
 #[cfg(test)]
 mod tests {
-    use bdk_wallet::bitcoin::Psbt;
-    use bdk_wallet::bitcoin::key::Secp256k1;
-    use bdk_wallet::keys::bip39::Mnemonic;
-    use bdk_wallet::miniscript::psbt::PsbtExt;
-    use bdk_wallet::{KeychainKind, SignOptions};
-    use ngwallet::account::NgAccount;
-    use ngwallet::account::RemoteUpdate;
     use ngwallet::bip39;
-    use ngwallet::bip39::get_descriptors;
-    use ngwallet::config::{AddressType, NgAccountBackup, NgAccountBuilder};
-    use ngwallet::send::TransactionParams;
-    use std::sync::{Arc, Mutex};
 
     #[cfg(feature = "envoy")]
     use {
+        bdk_wallet::bitcoin::Psbt,
+        bdk_wallet::bitcoin::key::Secp256k1,
+        bdk_wallet::keys::bip39::Mnemonic,
+        bdk_wallet::miniscript::psbt::PsbtExt,
+        bdk_wallet::{KeychainKind, SignOptions},
+        ngwallet::account::NgAccount,
+        ngwallet::account::RemoteUpdate,
+        ngwallet::bip39::get_descriptors,
+        ngwallet::config::{AddressType, NgAccountBackup, NgAccountBuilder},
+        ngwallet::send::TransactionParams,
+        std::sync::{Arc, Mutex},
         crate::*, bdk_wallet::Update, bdk_wallet::bitcoin::Network,
         bdk_wallet::rusqlite::Connection, ngwallet::account::Descriptor,
         ngwallet::ngwallet::NgWallet,
