@@ -14,6 +14,7 @@ pub use redb;
 pub mod bip32;
 pub mod bip39;
 pub mod db;
+pub mod sign_message;
 pub mod utils;
 
 #[cfg(feature = "envoy")]

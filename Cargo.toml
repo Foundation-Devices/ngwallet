@@ -20,6 +20,7 @@ regex = "1.11.1"
 sha2 = { version = "0.10.9", optional = true }
 thiserror = "2.0"
 zeroize = { version = "1.8", features = ["zeroize_derive"] }
+bitcoin = { version = "0.32", features = ["secp-recovery"], default-features = false }
 
 [lints.rust]
 unexpected_cfgs = { level = "warn", check-cfg = ['cfg(frb_expand)'] }

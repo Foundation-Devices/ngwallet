@@ -530,6 +530,7 @@ dependencies = [
  "bdk_wallet",
  "bip39",
  "bip85",
+ "bitcoin",
  "log",
  "minicbor-serde",
  "redb",
