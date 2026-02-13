@@ -12,18 +12,24 @@ use bdk_wallet::miniscript::descriptor::DescriptorType;
 use bdk_wallet::template::{Bip44, Bip48Member, Bip49, Bip84, Bip86, DescriptorTemplateOut};
 use std::cmp::min;
 use thiserror::Error;
-use zeroize::ZeroizeOnDrop;
+use zeroize::{Zeroize, ZeroizeOnDrop};
 
 /// A master key for a given BIP-0039 mnemonic seed.
-#[derive(Debug, Clone, ZeroizeOnDrop)]
+#[derive(Debug, Clone)]
 pub struct MasterKey {
     /// The mnemonic itself.
     pub mnemonic: String,
     /// The BIP-0032 master key.
     pub key: Key,
     /// The computed fingerprint from `xpriv`.
-    #[zeroize(skip)]
     pub fingerprint: Fingerprint,
+}
+
+impl Drop for MasterKey {
+    fn drop(&mut self) {
+        self.mnemonic.zeroize();
+        self.key.0.zeroize();
+    }
 }
 
 impl MasterKey {
@@ -42,7 +48,6 @@ impl MasterKey {
         let mnemonic = Mnemonic::from_entropy(entropy)?;
         let key = mnemonic.to_seed(passphrase);
         let xpriv = Xpriv::new_master(network, &key)?;
-        let fingerprint = xpriv.fingerprint(secp);
 
         if let Some((word_count, index)) = bip85 {
             // Once the bip85 crate implements std::error::Error add
@@ -51,14 +56,15 @@ impl MasterKey {
                 .map_err(|_| Error::Bip85)?;
             let bip85_key = bip85_mnemonic.to_seed("");
             let bip85_xpriv = Xpriv::new_master(network, &bip85_key)?;
-            let bip85_fingerprint = bip85_xpriv.fingerprint(secp);
+            let fingerprint = bip85_xpriv.fingerprint(secp);
 
             Ok(Self {
                 mnemonic: bip85_mnemonic.to_string(),
                 key: Key(bip85_key),
-                fingerprint: bip85_fingerprint,
+                fingerprint,
             })
         } else {
+            let fingerprint = xpriv.fingerprint(secp);
             Ok(Self {
                 mnemonic: mnemonic.to_string(),
                 key: Key(key),
