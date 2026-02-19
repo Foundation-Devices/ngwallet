@@ -269,7 +269,7 @@ mod tests {
             .compose_psbt(TransactionParams {
                 address: "tb1qydjtc47ru9c055gv7adpfs8uzw8dhy0p52fj3y".to_string(),
                 amount: 1000,
-                fee_rate: 1,
+                fee_rate: 1.0,
                 selected_outputs: vec![],
                 note: None,
                 tag: None,
@@ -454,7 +454,7 @@ mod tests {
         let params = TransactionParams {
             address: "tb1pspfcrvz538vvj9f9gfkd85nu5ty98zw9y5e302kha6zurv6vg07s8z7a8w".to_string(),
             amount: 4000,
-            fee_rate: 2,
+            fee_rate: 2.0, // sat/vB
             selected_outputs: vec![],
             note: Some("not a note".to_string()),
             tag: Some("hello".to_string()),
@@ -468,7 +468,7 @@ mod tests {
             assert_eq!(parsed.address, params.clone().address);
             assert_eq!(parsed.fee, transaction.transaction.fee);
             assert_eq!(parsed.amount as u64, params.amount);
-            assert_eq!(parsed.fee_rate, params.fee_rate);
+            assert_eq!(parsed.fee_rate, params.fee_rate as u64);
         } else {
             panic!("Failed to compose transaction: {compose_transaction:?}");
         }
