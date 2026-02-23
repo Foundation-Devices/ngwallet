@@ -54,7 +54,7 @@ pub struct TransactionFeeResult {
 pub struct TransactionParams {
     pub address: String,
     pub amount: u64,
-    pub fee_rate: f64,
+    pub fee_rate: MsatPerVb,
     pub selected_outputs: Vec<Output>,
     pub note: Option<String>,
     pub tag: Option<String>,
@@ -263,11 +263,12 @@ impl<P: WalletPersister> NgAccount<P> {
             }
         }
 
-        // default_fee is in sat/vB (f64); convert to sat/kwu for BDK (×250).
-        // max_fee_rate is also in sat/vB (u64 floor).
-        let default_fee_kwu = ((default_fee * 250.0) as u64).max(1);
+        // default_fee is in msat/vB; convert to sat/kwu for BDK by dividing by 4
+        // (1 sat/vB = 250 sat/kwu, so 1 msat/vB = 0.25 sat/kwu = 1/4 sat/kwu).
+        // max_fee_rate is in sat/vB (u64 floor from BDK).
+        let default_fee_kwu = (default_fee / 4).max(1);
 
-        let default_fee_rate = if max_fee_rate > default_fee as u64 {
+        let default_fee_rate = if max_fee_rate * 1000 > default_fee {
             FeeRate::from_sat_per_kwu(default_fee_kwu)
         } else {
             FeeRate::from_sat_per_kwu(250) // fall back to 1 sat/vB
@@ -366,9 +367,10 @@ impl<P: WalletPersister> NgAccount<P> {
         }
 
         let sweep = amount == spendable_balance;
-        // fee_rate is in sat/vB (f64); convert to sat/kwu (×250).
+        // fee_rate is in msat/vB; convert to sat/kwu by dividing by 4
+        // (1 sat/vB = 250 sat/kwu, so 1 msat/vB = 0.25 sat/kwu = 1/4 sat/kwu).
         // Minimum 1 sat/kwu to avoid 0-fee transactions.
-        let fee_rate = FeeRate::from_sat_per_kwu(((fee_rate * 250.0) as u64).max(1));
+        let fee_rate = FeeRate::from_sat_per_kwu((fee_rate / 4).max(1));
         let psbt = self.prepare_psbt(
             &mut coordinator_wallet,
             script.clone(),
