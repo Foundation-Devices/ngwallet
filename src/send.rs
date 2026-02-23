@@ -34,6 +34,11 @@ use bdk_electrum::electrum_client::Error;
 /// 1000 sats/vByte. 25k sats/vByte is obviously a mistake at this point.
 pub const DEFAULT_MAX_FEE_RATE: FeeRate = FeeRate::from_sat_per_vb_unchecked(25_000);
 
+/// Fee rate in millisatoshis per virtual byte (msat/vB).
+/// Using 1000 units per sat/vB enables sub-sat fee rates with integer arithmetic.
+/// Examples: 1 sat/vB = 1000, 0.5 sat/vB = 500, 0.25 sat/vB = 250.
+pub type MsatPerVb = u64;
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DraftTransaction {
     pub transaction: BitcoinTransaction,
