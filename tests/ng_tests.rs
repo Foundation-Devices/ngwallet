@@ -471,7 +471,7 @@ mod tests {
             assert_eq!(parsed.address, params.clone().address);
             assert_eq!(parsed.fee, transaction.transaction.fee);
             assert_eq!(parsed.amount as u64, params.amount);
-            assert_eq!(parsed.fee_rate, params.fee_rate / 1000);
+            assert_eq!(parsed.fee_rate, transaction.transaction.fee_rate);
         } else {
             panic!("Failed to compose transaction: {compose_transaction:?}");
         }

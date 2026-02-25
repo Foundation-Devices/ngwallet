@@ -34,10 +34,9 @@ use bdk_electrum::electrum_client::Error;
 /// 1000 sats/vByte. 25k sats/vByte is obviously a mistake at this point.
 pub const DEFAULT_MAX_FEE_RATE: FeeRate = FeeRate::from_sat_per_vb_unchecked(25_000);
 
-/// Fee rate in millisatoshis per virtual byte (msat/vB).
-/// Using 1000 units per sat/vB enables sub-sat fee rates with integer arithmetic.
-/// Examples: 1 sat/vB = 1000, 0.5 sat/vB = 500, 0.25 sat/vB = 250.
-pub type MsatPerVb = u64;
+/// Fee rate in satoshis per kilovirtual byte (sat/kvB).
+/// Equivalent to msat/vB: 1 sat/vB = 1000, 0.5 sat/vB = 500, 0.25 sat/vB = 250.
+pub type SatPerKvb = u64;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DraftTransaction {
@@ -59,7 +58,7 @@ pub struct TransactionFeeResult {
 pub struct TransactionParams {
     pub address: String,
     pub amount: u64,
-    pub fee_rate: MsatPerVb,
+    pub fee_rate: SatPerKvb,
     pub selected_outputs: Vec<Output>,
     pub note: Option<String>,
     pub tag: Option<String>,
@@ -143,7 +142,7 @@ impl<P: WalletPersister> NgAccount<P> {
 
         //clippy is wrong about  max_fee_rate unused_assignments
         #[allow(unused_assignments)]
-        let mut max_fee_rate = 1;
+        let mut max_fee_rate = 1000_u64; // sat/kvB, i.e. 1 sat/vB
 
         let mut receive_amount = amount;
         //if user is trying to sweep in order to find the max fee we set receive to min spend…
@@ -206,29 +205,32 @@ impl<P: WalletPersister> NgAccount<P> {
                             max_fee_rate = psbt
                                 .fee_rate()
                                 .unwrap_or(FeeRate::from_sat_per_vb_unchecked(1))
-                                .to_sat_per_vb_floor();
-                            if max_fee_rate < 1 {
-                                max_fee_rate = 1;
+                                .to_sat_per_kwu()
+                                * 4;
+                            if max_fee_rate < 1000 {
+                                max_fee_rate = 1000;
                             }
                             break;
                         }
                         Err(error) => match error {
                             ExtractTxError::AbsurdFeeRate { .. } => {
-                                max_fee_rate = DEFAULT_MAX_FEE_RATE.to_sat_per_vb_floor();
+                                max_fee_rate = DEFAULT_MAX_FEE_RATE.to_sat_per_kwu() * 4;
                                 break;
                             }
                             ExtractTxError::MissingInputValue { .. } => {
                                 max_fee_rate = psbt
                                     .fee_rate()
                                     .unwrap_or(FeeRate::from_sat_per_vb_unchecked(1))
-                                    .to_sat_per_vb_floor();
+                                    .to_sat_per_kwu()
+                                    * 4;
                                 break;
                             }
                             ExtractTxError::SendingTooMuch { psbt } => {
                                 max_fee_rate = psbt
                                     .fee_rate()
                                     .unwrap_or(FeeRate::from_sat_per_vb_unchecked(1))
-                                    .to_sat_per_vb_floor();
+                                    .to_sat_per_kwu()
+                                    * 4;
                                 break;
                             }
                             _er => {
@@ -243,10 +245,9 @@ impl<P: WalletPersister> NgAccount<P> {
                         },
                     }
                     if let Some(r) = psbt.fee_rate() {
-                        max_fee_rate = r.to_sat_per_vb_floor();
-                        // Fix 6: Ensure max_fee_rate is at least 1
-                        if max_fee_rate < 1 {
-                            max_fee_rate = 1;
+                        max_fee_rate = r.to_sat_per_kwu() * 4;
+                        if max_fee_rate < 1000 {
+                            max_fee_rate = 1000;
                         }
                         break;
                     }
@@ -268,12 +269,11 @@ impl<P: WalletPersister> NgAccount<P> {
             }
         }
 
-        // default_fee is in msat/vB; convert to sat/kwu for BDK by dividing by 4
-        // (1 sat/vB = 250 sat/kwu, so 1 msat/vB = 0.25 sat/kwu = 1/4 sat/kwu).
-        // max_fee_rate is in sat/vB (u64 floor from BDK).
+        // default_fee and max_fee_rate are both in sat/kvB; convert to sat/kwu by dividing by 4
+        // (1 sat/vB = 250 sat/kwu, so 1 sat/kvB = 0.25 sat/kwu = 1/4 sat/kwu).
         let default_fee_kwu = (default_fee / 4).max(1);
 
-        let default_fee_rate = if max_fee_rate * 1000 > default_fee {
+        let default_fee_rate = if max_fee_rate > default_fee {
             FeeRate::from_sat_per_kwu(default_fee_kwu)
         } else {
             FeeRate::from_sat_per_kwu(250) // fall back to 1 sat/vB
@@ -297,12 +297,11 @@ impl<P: WalletPersister> NgAccount<P> {
                     &mut coordinator_wallet,
                     utxos.clone(),
                     transaction_params.clone(),
-                    default_fee_rate,
                 );
 
                 Ok(TransactionFeeResult {
                     max_fee_rate,
-                    min_fee_rate: 1,
+                    min_fee_rate: 1000,
                     draft_transaction,
                 })
             }
@@ -372,8 +371,8 @@ impl<P: WalletPersister> NgAccount<P> {
         }
 
         let sweep = amount == spendable_balance;
-        // fee_rate is in msat/vB; convert to sat/kwu by dividing by 4
-        // (1 sat/vB = 250 sat/kwu, so 1 msat/vB = 0.25 sat/kwu = 1/4 sat/kwu).
+        // fee_rate is in sat/kvB; convert to sat/kwu by dividing by 4
+        // (1 sat/vB = 250 sat/kwu, so 1 sat/kvB = 0.25 sat/kwu = 1/4 sat/kwu).
         // Minimum 1 sat/kwu to avoid 0-fee transactions.
         let fee_rate = FeeRate::from_sat_per_kwu((fee_rate / 4).max(1));
         let psbt = self.prepare_psbt(
@@ -393,7 +392,6 @@ impl<P: WalletPersister> NgAccount<P> {
                 &mut coordinator_wallet,
                 utxos.clone(),
                 spend_params,
-                fee_rate,
             )),
             Err(e) => Err(TransactionComposeError::CreateTxError(e)),
         }
@@ -464,7 +462,6 @@ impl<P: WalletPersister> NgAccount<P> {
     pub(crate) fn transform_psbt_to_bitcointx(
         psbt: Psbt,
         address: String,
-        fee_rate: FeeRate,
         outputs: Vec<Output>,
         inputs: Vec<Input>,
         note: Option<String>,
@@ -490,7 +487,11 @@ impl<P: WalletPersister> NgAccount<P> {
             confirmations: 0,
             is_confirmed: false,
             fee: psbt.fee().unwrap_or(Amount::from_sat(0)).to_sat(),
-            fee_rate: fee_rate.to_sat_per_vb_floor(),
+            fee_rate: psbt
+                .fee_rate()
+                .unwrap_or(FeeRate::from_sat_per_vb_unchecked(1))
+                .to_sat_per_kwu()
+                * 4,
             amount,
             inputs,
             address,
@@ -819,7 +820,8 @@ impl<P: WalletPersister> NgAccount<P> {
             fee_rate: psbt
                 .fee_rate()
                 .unwrap_or(FeeRate::from_sat_per_vb_unchecked(1))
-                .to_sat_per_vb_floor(),
+                .to_sat_per_kwu()
+                * 4,
             amount: amount as i64,
             inputs: vec![],
             address,
@@ -837,7 +839,6 @@ impl<P: WalletPersister> NgAccount<P> {
         coordinator_wallet: &mut MutexGuard<PersistedWallet<P>>,
         utxos: Vec<Output>,
         transaction_params: TransactionParams,
-        fee_rate: FeeRate,
     ) -> DraftTransaction {
         // Always try signing
         let sign_options = SignOptions {
@@ -873,7 +874,6 @@ impl<P: WalletPersister> NgAccount<P> {
         let transaction = Self::transform_psbt_to_bitcointx(
             psbt.clone(),
             transaction_params.address,
-            fee_rate,
             outputs.clone(),
             inputs.clone(),
             transaction_params.note,

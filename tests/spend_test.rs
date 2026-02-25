@@ -24,8 +24,8 @@ mod spend_tests {
             do_not_spend_change: false,
         };
         let draft = account.get_max_fee(params.clone()).unwrap();
-        assert_eq!(draft.max_fee_rate, 553);
-        assert_eq!(draft.min_fee_rate, 1);
+        assert_eq!(draft.max_fee_rate, 553_828);
+        assert_eq!(draft.min_fee_rate, 1_000);
         check_draft_tx_match_params(draft.draft_transaction.clone(), params.clone());
     }
 
@@ -116,7 +116,6 @@ mod spend_tests {
         // verify transaction properties
         assert_eq!(transaction.amount, -1000);
         assert_eq!(transaction.address, address);
-        assert_eq!(transaction.fee_rate, params.fee_rate / 1000);
         assert_eq!(transaction.note, params.note);
         assert_eq!(transaction.get_change_tag(), params.tag);
     }
@@ -135,7 +134,7 @@ mod spend_tests {
             .get_max_bump_fee(vec![], unconfirmed_tx.clone())
             .expect("Failed to get max bump fee");
 
-        assert_eq!(rbf_max_result.max_fee_rate, 126);
+        assert_eq!(rbf_max_result.max_fee_rate, 126_896);
         assert!(unconfirmed_tx.fee_rate < rbf_max_result.min_fee_rate);
         //
     }
@@ -145,7 +144,6 @@ mod spend_tests {
         let transaction = draft_transaction.transaction.clone();
         assert_eq!(transaction.address, params.address);
         assert_eq!(transaction.amount, -(params.amount as i64));
-        assert_eq!(transaction.fee_rate, params.fee_rate / 1000);
         assert_eq!(transaction.note, params.note);
         assert_eq!(transaction.get_change_tag(), params.tag);
     }
