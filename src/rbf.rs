@@ -143,7 +143,7 @@ impl<P: WalletPersister> NgAccount<P> {
                             return Err(BumpFeeError::ChangeOutputLocked);
                         }
                         Some(r) => {
-                            max_fee_rate = r.to_sat_per_kwu() as u64 * 4;
+                            max_fee_rate = r.to_sat_per_kwu() * 4;
                             break;
                         }
                     },
@@ -188,7 +188,7 @@ impl<P: WalletPersister> NgAccount<P> {
                             return Err(BumpFeeError::ChangeOutputLocked);
                         }
                         Some(r) => {
-                            max_fee_rate = r.to_sat_per_kwu() as u64 * 4;
+                            max_fee_rate = r.to_sat_per_kwu() * 4;
                             break;
                         }
                     },
