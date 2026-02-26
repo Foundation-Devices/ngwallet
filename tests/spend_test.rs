@@ -17,15 +17,15 @@ mod spend_tests {
         let params = TransactionParams {
             address: "tb1pspfcrvz538vvj9f9gfkd85nu5ty98zw9y5e302kha6zurv6vg07s8z7a8w".to_string(),
             amount: 2003,
-            fee_rate: 1000, // 1 sat/vB in msat/vB
+            fee_rate: 250, // 1 sat/vB in sat/kwu
             selected_outputs: vec![],
             note: Some("not a note".to_string()),
             tag: Some("hello".to_string()),
             do_not_spend_change: false,
         };
         let draft = account.get_max_fee(params.clone()).unwrap();
-        assert_eq!(draft.max_fee_rate, 553_828);
-        assert_eq!(draft.min_fee_rate, 1_000);
+        assert_eq!(draft.max_fee_rate, 138_457);
+        assert_eq!(draft.min_fee_rate, 250);
         check_draft_tx_match_params(draft.draft_transaction.clone(), params.clone());
     }
 
@@ -36,7 +36,7 @@ mod spend_tests {
         let params = TransactionParams {
             address: "tb1pspfcrvz538vvj9f9gfkd85nu5ty98zw9y5e302kha6zurv6vg07s8z7a8w".to_string(),
             amount: 4000,
-            fee_rate: 2000, // 2 sat/vB in msat/vB
+            fee_rate: 500, // 2 sat/vB in sat/kwu
             selected_outputs: vec![],
             note: Some("not a note".to_string()),
             tag: Some("hello".to_string()),
@@ -55,7 +55,7 @@ mod spend_tests {
         let params = TransactionParams {
             address: "tb1pspfcrvz538vvj9f9gfkd85nu5ty98zw9y5e302kha6zurv6vg07s8z7a8w".to_string(),
             amount: 1000,
-            fee_rate: 2000, // 2 sat/vB in msat/vB
+            fee_rate: 500, // 2 sat/vB in sat/kwu
             selected_outputs: vec![],
             note: Some("not a note".to_string()),
             tag: Some("hello".to_string()),
@@ -93,7 +93,7 @@ mod spend_tests {
         let params = TransactionParams {
             address: address.to_string(),
             amount: 1000,
-            fee_rate: 2000, // 2 sat/vB in msat/vB
+            fee_rate: 500, // 2 sat/vB in sat/kwu
             selected_outputs: vec![],
             note: Some("not a note".to_string()),
             tag: Some("hello".to_string()),
@@ -134,7 +134,7 @@ mod spend_tests {
             .get_max_bump_fee(vec![], unconfirmed_tx.clone())
             .expect("Failed to get max bump fee");
 
-        assert_eq!(rbf_max_result.max_fee_rate, 126_896);
+        assert_eq!(rbf_max_result.max_fee_rate, 31_724);
         assert!(unconfirmed_tx.fee_rate < rbf_max_result.min_fee_rate);
         //
     }
