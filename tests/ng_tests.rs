@@ -21,20 +21,23 @@ mod tests {
 
     #[cfg(feature = "envoy")]
     use {
+        crate::*,
+        bdk_wallet::Update,
+        bdk_wallet::bitcoin::Network,
         bdk_wallet::bitcoin::Psbt,
         bdk_wallet::bitcoin::key::Secp256k1,
         bdk_wallet::keys::bip39::Mnemonic,
         bdk_wallet::miniscript::psbt::PsbtExt,
+        bdk_wallet::rusqlite::Connection,
         bdk_wallet::{KeychainKind, SignOptions},
+        ngwallet::account::Descriptor,
         ngwallet::account::NgAccount,
         ngwallet::account::RemoteUpdate,
         ngwallet::bip39::get_descriptors,
         ngwallet::config::{AddressType, NgAccountBackup, NgAccountBuilder},
+        ngwallet::ngwallet::NgWallet,
         ngwallet::send::TransactionParams,
         std::sync::{Arc, Mutex},
-        crate::*, bdk_wallet::Update, bdk_wallet::bitcoin::Network,
-        bdk_wallet::rusqlite::Connection, ngwallet::account::Descriptor,
-        ngwallet::ngwallet::NgWallet,
     };
 
     #[test]
