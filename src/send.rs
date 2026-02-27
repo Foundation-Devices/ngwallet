@@ -34,9 +34,41 @@ use bdk_electrum::electrum_client::Error;
 /// 1000 sats/vByte. 25k sats/vByte is obviously a mistake at this point.
 pub const DEFAULT_MAX_FEE_RATE: FeeRate = FeeRate::from_sat_per_vb_unchecked(25_000);
 
-/// Fee rate in satoshis per kilo-weight-unit (sat/kwu).
-/// 1 sat/vB = 250 sat/kwu, 0.5 sat/vB = 125 sat/kwu.
-pub type SatPerKwu = u64;
+/// Fee rate in satoshis per kilo-virtual-byte (sat/kvB).
+/// 1 sat/vB = 1000 sat/kvB, 0.5 sat/vB = 500 sat/kvB.
+pub type SatPerKvb = u64;
+
+/// Type-safe sat/kvB wrapper for the external API boundary (Envoy and other callers).
+#[derive(Debug, Clone, Copy)]
+pub struct FeeRateSatPerKvb(pub u64);
+
+/// Type-safe sat/kwu wrapper for internal BDK calls.
+#[derive(Debug, Clone, Copy)]
+pub struct FeeRateSatPerKwu(pub u64);
+
+impl FeeRateSatPerKvb {
+    pub fn to_sat_per_kvb(self) -> u64 {
+        self.0
+    }
+}
+
+impl FeeRateSatPerKwu {
+    pub fn to_sat_per_kwu(self) -> u64 {
+        self.0
+    }
+}
+
+impl From<FeeRateSatPerKvb> for FeeRateSatPerKwu {
+    fn from(fee_rate: FeeRateSatPerKvb) -> Self {
+        FeeRateSatPerKwu(fee_rate.0 / 4) // 1 sat/kvB = 0.25 sat/kwu
+    }
+}
+
+impl From<FeeRateSatPerKwu> for FeeRateSatPerKvb {
+    fn from(fee_rate: FeeRateSatPerKwu) -> Self {
+        FeeRateSatPerKvb(fee_rate.0 * 4) // 1 sat/kwu = 4 sat/kvB
+    }
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DraftTransaction {
@@ -49,8 +81,8 @@ pub struct DraftTransaction {
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct TransactionFeeResult {
-    pub max_fee_rate: SatPerKwu,
-    pub min_fee_rate: SatPerKwu,
+    pub max_fee_rate: SatPerKvb,
+    pub min_fee_rate: SatPerKvb,
     pub draft_transaction: DraftTransaction,
 }
 
@@ -58,7 +90,7 @@ pub struct TransactionFeeResult {
 pub struct TransactionParams {
     pub address: String,
     pub amount: u64,
-    pub fee_rate: SatPerKwu,
+    pub fee_rate: SatPerKvb,
     pub selected_outputs: Vec<Output>,
     pub note: Option<String>,
     pub tag: Option<String>,
@@ -266,8 +298,10 @@ impl<P: WalletPersister> NgAccount<P> {
             }
         }
 
-        let default_fee_rate = if max_fee_rate > default_fee {
-            FeeRate::from_sat_per_kwu(default_fee.max(1))
+        // default_fee is sat/kvB from the caller; convert to sat/kwu for BDK comparison
+        let default_fee_kwu = FeeRateSatPerKwu::from(FeeRateSatPerKvb(default_fee)).to_sat_per_kwu().max(1);
+        let default_fee_rate = if max_fee_rate > default_fee_kwu {
+            FeeRate::from_sat_per_kwu(default_fee_kwu)
         } else {
             FeeRate::from_sat_per_kwu(250) // fall back to 1 sat/vB
         };
@@ -293,8 +327,8 @@ impl<P: WalletPersister> NgAccount<P> {
                 );
 
                 Ok(TransactionFeeResult {
-                    max_fee_rate,
-                    min_fee_rate: 250,
+                    max_fee_rate: FeeRateSatPerKvb::from(FeeRateSatPerKwu(max_fee_rate)).to_sat_per_kvb(),
+                    min_fee_rate: 1000,             // 1 sat/vB in sat/kvB
                     draft_transaction,
                 })
             }
@@ -364,7 +398,8 @@ impl<P: WalletPersister> NgAccount<P> {
         }
 
         let sweep = amount == spendable_balance;
-        let fee_rate = FeeRate::from_sat_per_kwu(fee_rate.max(1));
+        // fee_rate is sat/kvB from the caller; convert to sat/kwu for BDK
+        let fee_rate = FeeRate::from_sat_per_kwu(FeeRateSatPerKwu::from(FeeRateSatPerKvb(fee_rate)).to_sat_per_kwu().max(1));
         let psbt = self.prepare_psbt(
             &mut coordinator_wallet,
             script.clone(),
@@ -477,10 +512,11 @@ impl<P: WalletPersister> NgAccount<P> {
             confirmations: 0,
             is_confirmed: false,
             fee: psbt.fee().unwrap_or(Amount::from_sat(0)).to_sat(),
-            fee_rate: psbt
-                .fee_rate()
-                .unwrap_or(FeeRate::from_sat_per_vb_unchecked(1))
-                .to_sat_per_kwu(),
+            fee_rate: FeeRateSatPerKvb::from(FeeRateSatPerKwu(
+                psbt.fee_rate()
+                    .unwrap_or(FeeRate::from_sat_per_vb_unchecked(1))
+                    .to_sat_per_kwu(),
+            )).to_sat_per_kvb(),
             amount,
             inputs,
             address,
@@ -806,10 +842,11 @@ impl<P: WalletPersister> NgAccount<P> {
             confirmations: 0,
             is_confirmed: false,
             fee: psbt.fee().unwrap_or(Amount::from_sat(0)).to_sat(),
-            fee_rate: psbt
-                .fee_rate()
-                .unwrap_or(FeeRate::from_sat_per_vb_unchecked(1))
-                .to_sat_per_kwu(),
+            fee_rate: FeeRateSatPerKvb::from(FeeRateSatPerKwu(
+                psbt.fee_rate()
+                    .unwrap_or(FeeRate::from_sat_per_vb_unchecked(1))
+                    .to_sat_per_kwu(),
+            )).to_sat_per_kvb(),
             amount: amount as i64,
             inputs: vec![],
             address,

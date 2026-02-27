@@ -352,7 +352,7 @@ impl<P: WalletPersister> NgWallet<P> {
             }
 
             let fee_rate = if vsize > 0.0 && fee != FEE_UNKNOWN {
-                (fee as f32 * 250.0 / vsize) as u64
+                (fee as f64 * 1000.0 / vsize as f64) as u64 // sat/kvB
             } else {
                 0
             };

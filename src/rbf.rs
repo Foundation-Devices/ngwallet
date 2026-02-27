@@ -3,7 +3,7 @@ use crate::ngwallet::NgWallet;
 use crate::rbf::BumpFeeError::ComposeTxError;
 use crate::send::DraftTransaction;
 #[cfg(feature = "envoy")]
-use crate::send::TransactionFeeResult;
+use crate::send::{FeeRateSatPerKvb, FeeRateSatPerKwu, TransactionFeeResult};
 use crate::transaction::{BitcoinTransaction, Input, KeyChain, Output};
 use anyhow::Result;
 #[cfg(feature = "envoy")]
@@ -230,7 +230,7 @@ impl<P: WalletPersister> NgAccount<P> {
         )?;
 
         Ok(TransactionFeeResult {
-            max_fee_rate,
+            max_fee_rate: FeeRateSatPerKvb::from(FeeRateSatPerKwu(max_fee_rate)).to_sat_per_kvb(),
             min_fee_rate: tx.transaction.fee_rate,
             draft_transaction: tx,
         })
