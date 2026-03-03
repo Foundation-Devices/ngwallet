@@ -34,10 +34,6 @@ use bdk_electrum::electrum_client::Error;
 /// 1000 sats/vByte. 25k sats/vByte is obviously a mistake at this point.
 pub const DEFAULT_MAX_FEE_RATE: FeeRate = FeeRate::from_sat_per_vb_unchecked(25_000);
 
-/// Fee rate in satoshis per kilo-virtual-byte (sat/kvB).
-/// 1 sat/vB = 1000 sat/kvB, 0.5 sat/vB = 500 sat/kvB.
-pub type SatPerKvb = u64;
-
 /// Type-safe sat/kvB wrapper for the external API boundary (Envoy and other callers).
 #[derive(Debug, Clone, Copy)]
 pub struct FeeRateSatPerKvb(pub u64);
@@ -81,8 +77,8 @@ pub struct DraftTransaction {
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct TransactionFeeResult {
-    pub max_fee_rate: SatPerKvb,
-    pub min_fee_rate: SatPerKvb,
+    pub max_fee_rate: u64,
+    pub min_fee_rate: u64,
     pub draft_transaction: DraftTransaction,
 }
 
@@ -90,7 +86,7 @@ pub struct TransactionFeeResult {
 pub struct TransactionParams {
     pub address: String,
     pub amount: u64,
-    pub fee_rate: SatPerKvb,
+    pub fee_rate: u64,
     pub selected_outputs: Vec<Output>,
     pub note: Option<String>,
     pub tag: Option<String>,
@@ -328,7 +324,7 @@ impl<P: WalletPersister> NgAccount<P> {
 
                 Ok(TransactionFeeResult {
                     max_fee_rate: FeeRateSatPerKvb::from(FeeRateSatPerKwu(max_fee_rate)).to_sat_per_kvb(),
-                    min_fee_rate: 1000,             // 1 sat/vB in sat/kvB
+                    min_fee_rate: 1000, // 1 sat/vB in sat/kvB
                     draft_transaction,
                 })
             }
