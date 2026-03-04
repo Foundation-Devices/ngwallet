@@ -1,3 +1,4 @@
+use crate::fee_rate::FeeRateSatPerKvb;
 use bdk_wallet::bitcoin::{OutPoint, Txid};
 use serde::{Deserialize, Serialize};
 use std::str::FromStr;
@@ -74,7 +75,7 @@ pub struct BitcoinTransaction {
     pub confirmations: u32,
     pub is_confirmed: bool,
     pub fee: u64,
-    pub fee_rate: u64,
+    pub fee_rate: FeeRateSatPerKvb,
     pub amount: i64,
     pub inputs: Vec<Input>,
     pub address: String,

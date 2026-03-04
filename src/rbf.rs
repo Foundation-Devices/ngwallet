@@ -2,8 +2,11 @@ use crate::account::NgAccount;
 use crate::ngwallet::NgWallet;
 use crate::rbf::BumpFeeError::ComposeTxError;
 use crate::send::DraftTransaction;
+use crate::fee_rate::FeeRateSatPerKwu;
 #[cfg(feature = "envoy")]
-use crate::send::{FeeRateSatPerKvb, FeeRateSatPerKwu, TransactionFeeResult};
+use crate::fee_rate::FeeRateSatPerKvb;
+#[cfg(feature = "envoy")]
+use crate::send::TransactionFeeResult;
 use crate::transaction::{BitcoinTransaction, Input, KeyChain, Output};
 use anyhow::Result;
 #[cfg(feature = "envoy")]
@@ -12,7 +15,7 @@ use bdk_core::bitcoin::{Network, ScriptBuf};
 #[cfg(feature = "envoy")]
 use bdk_wallet::AddressInfo;
 use bdk_wallet::bitcoin::secp256k1::Secp256k1;
-use bdk_wallet::bitcoin::{Address, Amount, FeeRate, OutPoint, Psbt, Sequence, Txid};
+use bdk_wallet::bitcoin::{Address, Amount, OutPoint, Psbt, Sequence, Txid};
 #[cfg(feature = "envoy")]
 use bdk_wallet::error::CreateTxError::CoinSelection;
 use bdk_wallet::error::{BuildFeeBumpError, CreateTxError};
@@ -120,7 +123,7 @@ impl<P: WalletPersister> NgAccount<P> {
 
         // sets max fee rate to 1000 sat/vB = 250_000 sat/kwu.
         // this will eventually fail, and the error will reveal the available amount.
-        let mut max_fee_rate = 250_000_u64; // sat/kwu
+        let mut max_fee_rate = FeeRateSatPerKwu(250_000);
 
         let mut tries = 0;
         loop {
@@ -134,7 +137,7 @@ impl<P: WalletPersister> NgAccount<P> {
                     selected_outputs.clone(),
                     bitcoin_transaction.clone(),
                     //placeholder since max_fee will be used
-                    250,
+                    FeeRateSatPerKwu(250),
                     max_fee,
                     None,
                 ) {
@@ -143,7 +146,7 @@ impl<P: WalletPersister> NgAccount<P> {
                             return Err(BumpFeeError::ChangeOutputLocked);
                         }
                         Some(r) => {
-                            max_fee_rate = r.to_sat_per_kwu();
+                            max_fee_rate = FeeRateSatPerKwu::from_bdk(r);
                             break;
                         }
                     },
@@ -153,7 +156,7 @@ impl<P: WalletPersister> NgAccount<P> {
                                 max_fee = Some(required.to_sat());
                             }
                             CreateTxError::FeeRateTooLow { required } => {
-                                max_fee_rate = required.to_sat_per_kwu() + 250;
+                                max_fee_rate = FeeRateSatPerKwu::from_bdk(required) + FeeRateSatPerKwu(250);
                                 max_fee = None;
                             }
                             CoinSelection(error) => {
@@ -188,7 +191,7 @@ impl<P: WalletPersister> NgAccount<P> {
                             return Err(BumpFeeError::ChangeOutputLocked);
                         }
                         Some(r) => {
-                            max_fee_rate = r.to_sat_per_kwu();
+                            max_fee_rate = FeeRateSatPerKwu::from_bdk(r);
                             break;
                         }
                     },
@@ -198,7 +201,7 @@ impl<P: WalletPersister> NgAccount<P> {
                                 max_fee = Some(required.to_sat());
                             }
                             CreateTxError::FeeRateTooLow { required } => {
-                                max_fee_rate = required.to_sat_per_kwu() + 250;
+                                max_fee_rate = FeeRateSatPerKwu::from_bdk(required) + FeeRateSatPerKwu(250);
                                 max_fee = None;
                             }
                             CoinSelection(error) => {
@@ -230,7 +233,7 @@ impl<P: WalletPersister> NgAccount<P> {
         )?;
 
         Ok(TransactionFeeResult {
-            max_fee_rate: FeeRateSatPerKvb::from(FeeRateSatPerKwu(max_fee_rate)).to_sat_per_kvb(),
+            max_fee_rate: FeeRateSatPerKvb::from(max_fee_rate),
             min_fee_rate: tx.transaction.fee_rate,
             draft_transaction: tx,
         })
@@ -242,7 +245,7 @@ impl<P: WalletPersister> NgAccount<P> {
         &self,
         selected_outputs: Vec<Output>,
         current_transaction: BitcoinTransaction,
-        fee_rate: u64,
+        fee_rate: FeeRateSatPerKwu,
         fee_absolute: Option<u64>,
         drain_to: Option<Address>,
         tag: Option<String>,
@@ -389,7 +392,7 @@ impl<P: WalletPersister> NgAccount<P> {
         &self,
         selected_outputs: Vec<Output>,
         bitcoin_transaction: BitcoinTransaction,
-        fee_rate: u64,
+        fee_rate: FeeRateSatPerKwu,
         fee_absolute: Option<u64>,
         drain_to: Option<Address>,
     ) -> Result<Psbt, BumpFeeError> {
@@ -480,7 +483,7 @@ impl<P: WalletPersister> NgAccount<P> {
             if let Some(fee) = fee_absolute {
                 tx_builder.fee_absolute(Amount::from_sat(fee));
             } else {
-                tx_builder.fee_rate(FeeRate::from_sat_per_kwu(fee_rate.max(1)));
+                tx_builder.fee_rate(fee_rate.to_bdk());
             }
             tx_builder.finish()
         };
@@ -544,7 +547,7 @@ impl<P: WalletPersister> NgAccount<P> {
     }
 
     #[cfg(feature = "envoy")]
-    fn get_minimum_rbf_fee_rate(transaction: &BitcoinTransaction) -> u64 {
+    fn get_minimum_rbf_fee_rate(transaction: &BitcoinTransaction) -> FeeRateSatPerKwu {
         let original_fee = transaction.fee; // fee is sats
         let original_vsize = transaction.vsize as u64;
         let relay_fee_per_vb = (DEFAULT_INCREMENTAL_RELAY_FEE / 1000) as u64; // 1 sat/vB
@@ -563,6 +566,6 @@ impl<P: WalletPersister> NgAccount<P> {
         // very if the builder includes too many inputs to cover the RBF
         // min_sat_per_vb +=1;
 
-        min_sat_per_vb * 250 // convert to sat/kwu
+        FeeRateSatPerKwu(min_sat_per_vb * 250) // convert to sat/kwu
     }
 }

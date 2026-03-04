@@ -34,37 +34,7 @@ use bdk_electrum::electrum_client::Error;
 /// 1000 sats/vByte. 25k sats/vByte is obviously a mistake at this point.
 pub const DEFAULT_MAX_FEE_RATE: FeeRate = FeeRate::from_sat_per_vb_unchecked(25_000);
 
-/// Type-safe sat/kvB wrapper for the external API boundary (Envoy and other callers).
-#[derive(Debug, Clone, Copy)]
-pub struct FeeRateSatPerKvb(pub u64);
-
-/// Type-safe sat/kwu wrapper for internal BDK calls.
-#[derive(Debug, Clone, Copy)]
-pub struct FeeRateSatPerKwu(pub u64);
-
-impl FeeRateSatPerKvb {
-    pub fn to_sat_per_kvb(self) -> u64 {
-        self.0
-    }
-}
-
-impl FeeRateSatPerKwu {
-    pub fn to_sat_per_kwu(self) -> u64 {
-        self.0
-    }
-}
-
-impl From<FeeRateSatPerKvb> for FeeRateSatPerKwu {
-    fn from(fee_rate: FeeRateSatPerKvb) -> Self {
-        FeeRateSatPerKwu(fee_rate.0 / 4) // 1 sat/kvB = 0.25 sat/kwu
-    }
-}
-
-impl From<FeeRateSatPerKwu> for FeeRateSatPerKvb {
-    fn from(fee_rate: FeeRateSatPerKwu) -> Self {
-        FeeRateSatPerKvb(fee_rate.0 * 4) // 1 sat/kwu = 4 sat/kvB
-    }
-}
+pub use crate::fee_rate::{FeeRateSatPerKvb, FeeRateSatPerKwu};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DraftTransaction {
@@ -77,8 +47,8 @@ pub struct DraftTransaction {
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct TransactionFeeResult {
-    pub max_fee_rate: u64,
-    pub min_fee_rate: u64,
+    pub max_fee_rate: FeeRateSatPerKvb,
+    pub min_fee_rate: FeeRateSatPerKvb,
     pub draft_transaction: DraftTransaction,
 }
 
@@ -86,7 +56,7 @@ pub struct TransactionFeeResult {
 pub struct TransactionParams {
     pub address: String,
     pub amount: u64,
-    pub fee_rate: u64,
+    pub fee_rate: FeeRateSatPerKvb,
     pub selected_outputs: Vec<Output>,
     pub note: Option<String>,
     pub tag: Option<String>,
@@ -170,7 +140,7 @@ impl<P: WalletPersister> NgAccount<P> {
 
         //clippy is wrong about  max_fee_rate unused_assignments
         #[allow(unused_assignments)]
-        let mut max_fee_rate = 250_u64; // sat/kwu = 1 sat/vB
+        let mut max_fee_rate = FeeRateSatPerKwu(250); // 1 sat/vB
 
         let mut receive_amount = amount;
         //if user is trying to sweep in order to find the max fee we set receive to min spend…
@@ -230,32 +200,29 @@ impl<P: WalletPersister> NgAccount<P> {
 
                     match psbt.clone().extract_tx_fee_rate_limit() {
                         Ok(..) => {
-                            max_fee_rate = psbt
-                                .fee_rate()
-                                .unwrap_or(FeeRate::from_sat_per_vb_unchecked(1))
-                                .to_sat_per_kwu();
-                            if max_fee_rate < 250 {
-                                max_fee_rate = 250;
+                            max_fee_rate = FeeRateSatPerKwu::from_bdk(
+                                psbt.fee_rate().unwrap_or(FeeRate::from_sat_per_vb_unchecked(1)),
+                            );
+                            if max_fee_rate < FeeRateSatPerKwu(250) {
+                                max_fee_rate = FeeRateSatPerKwu(250);
                             }
                             break;
                         }
                         Err(error) => match error {
                             ExtractTxError::AbsurdFeeRate { .. } => {
-                                max_fee_rate = DEFAULT_MAX_FEE_RATE.to_sat_per_kwu();
+                                max_fee_rate = FeeRateSatPerKwu::from_bdk(DEFAULT_MAX_FEE_RATE);
                                 break;
                             }
                             ExtractTxError::MissingInputValue { .. } => {
-                                max_fee_rate = psbt
-                                    .fee_rate()
-                                    .unwrap_or(FeeRate::from_sat_per_vb_unchecked(1))
-                                    .to_sat_per_kwu();
+                                max_fee_rate = FeeRateSatPerKwu::from_bdk(
+                                    psbt.fee_rate().unwrap_or(FeeRate::from_sat_per_vb_unchecked(1)),
+                                );
                                 break;
                             }
                             ExtractTxError::SendingTooMuch { psbt } => {
-                                max_fee_rate = psbt
-                                    .fee_rate()
-                                    .unwrap_or(FeeRate::from_sat_per_vb_unchecked(1))
-                                    .to_sat_per_kwu();
+                                max_fee_rate = FeeRateSatPerKwu::from_bdk(
+                                    psbt.fee_rate().unwrap_or(FeeRate::from_sat_per_vb_unchecked(1)),
+                                );
                                 break;
                             }
                             _er => {
@@ -270,9 +237,9 @@ impl<P: WalletPersister> NgAccount<P> {
                         },
                     }
                     if let Some(r) = psbt.fee_rate() {
-                        max_fee_rate = r.to_sat_per_kwu();
-                        if max_fee_rate < 250 {
-                            max_fee_rate = 250;
+                        max_fee_rate = FeeRateSatPerKwu::from_bdk(r);
+                        if max_fee_rate < FeeRateSatPerKwu(250) {
+                            max_fee_rate = FeeRateSatPerKwu(250);
                         }
                         break;
                     }
@@ -295,11 +262,11 @@ impl<P: WalletPersister> NgAccount<P> {
         }
 
         // default_fee is sat/kvB from the caller; convert to sat/kwu for BDK comparison
-        let default_fee_kwu = FeeRateSatPerKwu::from(FeeRateSatPerKvb(default_fee)).to_sat_per_kwu().max(1);
+        let default_fee_kwu = FeeRateSatPerKwu::from(default_fee);
         let default_fee_rate = if max_fee_rate > default_fee_kwu {
-            FeeRate::from_sat_per_kwu(default_fee_kwu)
+            default_fee_kwu.to_bdk()
         } else {
-            FeeRate::from_sat_per_kwu(250) // fall back to 1 sat/vB
+            FeeRateSatPerKwu(250).to_bdk() // fall back to 1 sat/vB
         };
 
         let psbt = self.prepare_psbt(
@@ -323,8 +290,8 @@ impl<P: WalletPersister> NgAccount<P> {
                 );
 
                 Ok(TransactionFeeResult {
-                    max_fee_rate: FeeRateSatPerKvb::from(FeeRateSatPerKwu(max_fee_rate)).to_sat_per_kvb(),
-                    min_fee_rate: 1000, // 1 sat/vB in sat/kvB
+                    max_fee_rate: FeeRateSatPerKvb::from(max_fee_rate),
+                    min_fee_rate: FeeRateSatPerKvb(1000), // 1 sat/vB in sat/kvB
                     draft_transaction,
                 })
             }
@@ -395,7 +362,7 @@ impl<P: WalletPersister> NgAccount<P> {
 
         let sweep = amount == spendable_balance;
         // fee_rate is sat/kvB from the caller; convert to sat/kwu for BDK
-        let fee_rate = FeeRate::from_sat_per_kwu(FeeRateSatPerKwu::from(FeeRateSatPerKvb(fee_rate)).to_sat_per_kwu().max(1));
+        let fee_rate = fee_rate.to_bdk();
         let psbt = self.prepare_psbt(
             &mut coordinator_wallet,
             script.clone(),
@@ -508,11 +475,9 @@ impl<P: WalletPersister> NgAccount<P> {
             confirmations: 0,
             is_confirmed: false,
             fee: psbt.fee().unwrap_or(Amount::from_sat(0)).to_sat(),
-            fee_rate: FeeRateSatPerKvb::from(FeeRateSatPerKwu(
-                psbt.fee_rate()
-                    .unwrap_or(FeeRate::from_sat_per_vb_unchecked(1))
-                    .to_sat_per_kwu(),
-            )).to_sat_per_kvb(),
+            fee_rate: FeeRateSatPerKvb::from_bdk(
+                psbt.fee_rate().unwrap_or(FeeRate::from_sat_per_vb_unchecked(1)),
+            ),
             amount,
             inputs,
             address,
@@ -838,11 +803,9 @@ impl<P: WalletPersister> NgAccount<P> {
             confirmations: 0,
             is_confirmed: false,
             fee: psbt.fee().unwrap_or(Amount::from_sat(0)).to_sat(),
-            fee_rate: FeeRateSatPerKvb::from(FeeRateSatPerKwu(
-                psbt.fee_rate()
-                    .unwrap_or(FeeRate::from_sat_per_vb_unchecked(1))
-                    .to_sat_per_kwu(),
-            )).to_sat_per_kvb(),
+            fee_rate: FeeRateSatPerKvb::from_bdk(
+                psbt.fee_rate().unwrap_or(FeeRate::from_sat_per_vb_unchecked(1)),
+            ),
             amount: amount as i64,
             inputs: vec![],
             address,
