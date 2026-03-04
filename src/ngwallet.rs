@@ -24,6 +24,7 @@ use crate::config::AddressType;
 #[cfg(feature = "envoy")]
 use crate::{BATCH_SIZE, DEFAULT_STOP_GAP};
 
+use crate::fee_rate::FeeRateSatPerKvb;
 use crate::store::MetaStorage;
 use crate::transaction::{BitcoinTransaction, Input, KeyChain, Output};
 use crate::utils;
@@ -351,11 +352,11 @@ impl<P: WalletPersister> NgWallet<P> {
                 let _ = storage.set_fee(&tx_id, fee).ok();
             }
 
-            let fee_rate = if vsize > 0.0 && fee != FEE_UNKNOWN {
-                (fee as f32 / vsize) as u64
+            let fee_rate = FeeRateSatPerKvb(if vsize > 0.0 && fee != FEE_UNKNOWN {
+                (fee as f64 * 1000.0 / vsize as f64) as u64 // sat/kvB
             } else {
                 0
-            };
+            });
 
             storage.get_note(&tx_id).unwrap_or(None);
             transactions.push(BitcoinTransaction {
