@@ -30,7 +30,7 @@ struct Bip329Item {
 pub(crate) fn build_electrum_client(
     electrum_server: &str,
     socks_proxy: Option<&str>,
-    skip_cert_verification: bool,
+    skip_cert_verification: Option<bool>,
 ) -> BdkElectrumClient<Client> {
     let socks5_config = match socks_proxy {
         Some(socks_proxy) => {
@@ -40,7 +40,7 @@ pub(crate) fn build_electrum_client(
         None => None,
     };
 
-    let validate_domain = socks5_config.is_none() && !skip_cert_verification;
+    let validate_domain = socks5_config.is_none() && !skip_cert_verification.unwrap_or(false);
     let electrum_config = Config::builder()
         .timeout(Some(30))
         .retry(3)

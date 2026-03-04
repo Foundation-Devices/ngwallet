@@ -628,7 +628,7 @@ impl<P: WalletPersister> NgAccount<P> {
         txid: &str,
         electrum_server: &str,
         socks_proxy: Option<&str>,
-        skip_cert_verification: bool,
+        skip_cert_verification: Option<bool>,
     ) -> Option<u64> {
         use bdk_wallet::bitcoin::Txid;
         use std::str::FromStr;

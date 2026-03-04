@@ -390,7 +390,7 @@ impl<P: WalletPersister> NgAccount<P> {
         spend: DraftTransaction,
         electrum_server: &str,
         socks_proxy: Option<&str>,
-        skip_cert_verification: bool,
+        skip_cert_verification: Option<bool>,
     ) -> std::result::Result<Txid, Error> {
         let bdk_client =
             utils::build_electrum_client(electrum_server, socks_proxy, skip_cert_verification);
