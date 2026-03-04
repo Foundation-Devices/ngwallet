@@ -140,7 +140,7 @@ impl<P: WalletPersister> NgAccount<P> {
 
         //clippy is wrong about  max_fee_rate unused_assignments
         #[allow(unused_assignments)]
-        let mut max_fee_rate = FeeRateSatPerKwu(250); // 1 sat/vB
+        let mut max_fee_rate = FeeRateSatPerKwu::from_sat_per_vb(1); // 1 sat/vB
 
         let mut receive_amount = amount;
         //if user is trying to sweep in order to find the max fee we set receive to min spend…
@@ -203,8 +203,8 @@ impl<P: WalletPersister> NgAccount<P> {
                             max_fee_rate = FeeRateSatPerKwu::from_bdk(
                                 psbt.fee_rate().unwrap_or(FeeRate::from_sat_per_vb_unchecked(1)),
                             );
-                            if max_fee_rate < FeeRateSatPerKwu(250) {
-                                max_fee_rate = FeeRateSatPerKwu(250);
+                            if max_fee_rate < FeeRateSatPerKwu::from_sat_per_vb(1) {
+                                max_fee_rate = FeeRateSatPerKwu::from_sat_per_vb(1);
                             }
                             break;
                         }
@@ -238,8 +238,8 @@ impl<P: WalletPersister> NgAccount<P> {
                     }
                     if let Some(r) = psbt.fee_rate() {
                         max_fee_rate = FeeRateSatPerKwu::from_bdk(r);
-                        if max_fee_rate < FeeRateSatPerKwu(250) {
-                            max_fee_rate = FeeRateSatPerKwu(250);
+                        if max_fee_rate < FeeRateSatPerKwu::from_sat_per_vb(1) {
+                            max_fee_rate = FeeRateSatPerKwu::from_sat_per_vb(1);
                         }
                         break;
                     }
@@ -266,7 +266,7 @@ impl<P: WalletPersister> NgAccount<P> {
         let default_fee_rate = if max_fee_rate > default_fee_kwu {
             default_fee_kwu.to_bdk()
         } else {
-            FeeRateSatPerKwu(250).to_bdk() // fall back to 1 sat/vB
+            FeeRateSatPerKwu::from_sat_per_vb(1).to_bdk() // fall back to 1 sat/vB
         };
 
         let psbt = self.prepare_psbt(

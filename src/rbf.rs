@@ -121,9 +121,8 @@ impl<P: WalletPersister> NgAccount<P> {
         // will keep updating until the maximum fee boundary is found
         let mut max_fee: Option<u64> = None;
 
-        // sets max fee rate to 1000 sat/vB = 250_000 sat/kwu.
-        // this will eventually fail, and the error will reveal the available amount.
-        let mut max_fee_rate = FeeRateSatPerKwu(250_000);
+        // sets max fee rate to 1000 sat/vB; this will eventually fail, revealing the available amount.
+        let mut max_fee_rate = FeeRateSatPerKwu::from_sat_per_vb(1000);
 
         let mut tries = 0;
         loop {
@@ -137,7 +136,7 @@ impl<P: WalletPersister> NgAccount<P> {
                     selected_outputs.clone(),
                     bitcoin_transaction.clone(),
                     //placeholder since max_fee will be used
-                    FeeRateSatPerKwu(250),
+                    FeeRateSatPerKwu::from_sat_per_vb(1),
                     max_fee,
                     None,
                 ) {
@@ -156,7 +155,7 @@ impl<P: WalletPersister> NgAccount<P> {
                                 max_fee = Some(required.to_sat());
                             }
                             CreateTxError::FeeRateTooLow { required } => {
-                                max_fee_rate = FeeRateSatPerKwu::from_bdk(required) + FeeRateSatPerKwu(250);
+                                max_fee_rate = FeeRateSatPerKwu::from_bdk(required) + FeeRateSatPerKwu::from_sat_per_vb(1);
                                 max_fee = None;
                             }
                             CoinSelection(error) => {
@@ -201,7 +200,7 @@ impl<P: WalletPersister> NgAccount<P> {
                                 max_fee = Some(required.to_sat());
                             }
                             CreateTxError::FeeRateTooLow { required } => {
-                                max_fee_rate = FeeRateSatPerKwu::from_bdk(required) + FeeRateSatPerKwu(250);
+                                max_fee_rate = FeeRateSatPerKwu::from_bdk(required) + FeeRateSatPerKwu::from_sat_per_vb(1);
                                 max_fee = None;
                             }
                             CoinSelection(error) => {
@@ -566,6 +565,6 @@ impl<P: WalletPersister> NgAccount<P> {
         // very if the builder includes too many inputs to cover the RBF
         // min_sat_per_vb +=1;
 
-        FeeRateSatPerKwu(min_sat_per_vb * 250) // convert to sat/kwu
+        FeeRateSatPerKwu::from_sat_per_vb(min_sat_per_vb)
     }
 }

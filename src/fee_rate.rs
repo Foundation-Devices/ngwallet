@@ -29,6 +29,10 @@ impl FeeRateSatPerKwu {
         self.0
     }
 
+    pub fn from_sat_per_vb(sat_per_vb: u64) -> Self {
+        FeeRateSatPerKwu(sat_per_vb * 250)
+    }
+
     pub fn from_bdk(fee_rate: FeeRate) -> Self {
         FeeRateSatPerKwu(fee_rate.to_sat_per_kwu())
     }
