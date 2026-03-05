@@ -628,12 +628,12 @@ impl<P: WalletPersister> NgAccount<P> {
         txid: &str,
         electrum_server: &str,
         socks_proxy: Option<&str>,
-        skip_cert_verification: Option<bool>,
+        validate_domain: Option<bool>,
     ) -> Option<u64> {
         use bdk_wallet::bitcoin::Txid;
         use std::str::FromStr;
         let client =
-            utils::build_electrum_client(electrum_server, socks_proxy, skip_cert_verification);
+            utils::build_electrum_client(electrum_server, socks_proxy, validate_domain);
 
         let tx_id = Txid::from_str(txid).ok()?;
         let tx = client.fetch_tx(tx_id).ok()?;
