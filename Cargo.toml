@@ -22,6 +22,12 @@ thiserror = "2.0"
 zeroize = { version = "1.8", features = ["zeroize_derive"] }
 bitcoin = { version = "0.32", features = ["secp-recovery"], default-features = false }
 
+# Lightning wallet (behind "lightning" feature)
+ldk-node = { version = "0.5", optional = true }
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"], optional = true }
+tokio = { version = "1", features = ["rt", "macros", "time", "sync"], optional = true }
+hex = { version = "0.4", optional = true }
+
 [lints.rust]
 unexpected_cfgs = { level = "warn", check-cfg = ['cfg(frb_expand)'] }
 
@@ -29,3 +35,4 @@ unexpected_cfgs = { level = "warn", check-cfg = ['cfg(frb_expand)'] }
 envoy = ["dep:bdk_electrum", "dep:bip39", "bdk_wallet/rusqlite"]
 rkyv = ["dep:rkyv"]
 sha2 = ["dep:sha2"]
+lightning = ["dep:ldk-node", "dep:reqwest", "dep:tokio", "dep:hex"]

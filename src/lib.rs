@@ -24,3 +24,6 @@ const DEFAULT_STOP_GAP: usize = 300;
 
 #[cfg(feature = "envoy")]
 const BATCH_SIZE: usize = 5;
+
+#[cfg(feature = "lightning")]
+pub mod lightning;
