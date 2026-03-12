@@ -802,6 +802,12 @@ impl<P: WalletPersister> NgAccount<P> {
         Ok(result)
     }
 
+    /// Closes all wallet connections, releasing database file handles.
+    /// This should be called before deleting the account directory from disk.
+    pub fn close(&self) {
+        self.wallets.write().unwrap().clear();
+    }
+
     pub fn get_bip329_data(&self) -> anyhow::Result<Vec<String>> {
         let mut result = vec![];
         let mut seen_tx_refs = HashSet::new();
