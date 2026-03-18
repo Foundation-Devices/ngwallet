@@ -398,7 +398,7 @@ impl<P: WalletPersister> NgWallet<P> {
         validate_domain: Option<bool>,
     ) -> Result<SyncResponse> {
         let bdk_client =
-            utils::build_electrum_client(electrum_server, socks_proxy, validate_domain);
+            utils::build_electrum_client(electrum_server, socks_proxy, validate_domain)?;
 
         info!(
             "Syncing wallet with request: {:?}, {:?}",
@@ -419,7 +419,7 @@ impl<P: WalletPersister> NgWallet<P> {
     ) -> Result<FullScanResponse<KeychainKind>> {
         let stop_gap = stop_gap.unwrap_or(DEFAULT_STOP_GAP);
         let client =
-            utils::build_electrum_client(electrum_server, socks_proxy, validate_domain);
+            utils::build_electrum_client(electrum_server, socks_proxy, validate_domain)?;
         let update = client.full_scan(request, stop_gap, BATCH_SIZE, true)?;
         Ok(update)
     }

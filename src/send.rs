@@ -393,7 +393,7 @@ impl<P: WalletPersister> NgAccount<P> {
         validate_domain: Option<bool>,
     ) -> std::result::Result<Txid, Error> {
         let bdk_client =
-            utils::build_electrum_client(electrum_server, socks_proxy, validate_domain);
+            utils::build_electrum_client(electrum_server, socks_proxy, validate_domain)?;
         let psbt = Psbt::deserialize(&spend.psbt).expect("Failed to deserialize PSBT:");
 
         let transaction = psbt
