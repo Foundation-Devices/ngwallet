@@ -168,7 +168,7 @@ where
                     .keychain_kind()
                     .expect("is_for_address checks for this"),
             )
-            .build(network)
+            .build_account(network, account_path.account)
             .unwrap()
             .0
         }
