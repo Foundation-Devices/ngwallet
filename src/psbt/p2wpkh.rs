@@ -7,7 +7,7 @@ use bdk_wallet::bitcoin::psbt;
 use bdk_wallet::bitcoin::secp256k1::{Secp256k1, Signing};
 use bdk_wallet::bitcoin::{Address, CompressedPublicKey, Network, TxOut};
 use bdk_wallet::descriptor::ExtendedDescriptor;
-use bdk_wallet::template::{Bip84Public, DescriptorTemplate};
+use bdk_wallet::template::Bip84Public;
 
 /// Validate a Pay to Witness Public Key Hash (P2WPKH).
 ///

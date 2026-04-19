@@ -11,7 +11,7 @@ use bdk_wallet::keys::DescriptorPublicKey;
 use bdk_wallet::miniscript::descriptor::{DescriptorXKey, Wildcard};
 use bdk_wallet::miniscript::descriptor::{Sh, Wpkh};
 use bdk_wallet::miniscript::{ForEachKey, Miniscript};
-use bdk_wallet::template::{Bip49Public, DescriptorTemplate};
+use bdk_wallet::template::Bip49Public;
 use std::collections::BTreeMap;
 
 pub fn validate_output(
