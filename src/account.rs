@@ -407,7 +407,7 @@ impl<P: WalletPersister> NgAccount<P> {
     pub fn set_tag(&self, output_id: &str, tag: &str) -> anyhow::Result<bool> {
         if tag.is_empty() {
             self.meta_storage
-                .remove_tag(output_id)
+                .set_tag(output_id, "")
                 .with_context(|| "Could not set tag")?;
         } else {
             self.meta_storage
