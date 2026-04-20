@@ -7,7 +7,7 @@ use bdk_wallet::bitcoin::psbt;
 use bdk_wallet::bitcoin::secp256k1::{Secp256k1, Signing, Verification};
 use bdk_wallet::bitcoin::{Address, Network, TxOut};
 use bdk_wallet::descriptor::ExtendedDescriptor;
-use bdk_wallet::template::{Bip86Public, DescriptorTemplate};
+use bdk_wallet::template::Bip86Public;
 
 /// Validate a Pay to Taproot (P2TR) output.
 ///
@@ -73,7 +73,7 @@ where
                     .keychain_kind()
                     .expect("is_for_address checks for this"),
             )
-            .build(network)
+            .build_account(network, account_path.account)
             .unwrap()
             .0
         }
