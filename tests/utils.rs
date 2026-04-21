@@ -104,6 +104,14 @@ pub mod tests_util {
         fill_with_unconfirmed(&account.get_coordinator_wallet());
     }
 
+    pub fn add_funds_wallet_with_one_confirmation<P: WalletPersister>(
+        account: &mut NgAccount<P>,
+    ) {
+        for (index, ngwallet) in account.wallets.read().unwrap().iter().enumerate() {
+            fill_with_one_confirmation(index, &ngwallet)
+        }
+    }
+
     fn fill_with_unconfirmed<P: WalletPersister>(ngwallet: &NgWallet<P>) {
         let mut wallet = ngwallet.bdk_wallet.lock().unwrap();
         let to_address =
@@ -166,6 +174,48 @@ pub mod tests_util {
             &mut wallet,
             BlockId {
                 height: 2_000,
+                hash: BlockHash::all_zeros(),
+            },
+        );
+
+        bdk_wallet::test_utils::insert_tx(&mut wallet, tx0.clone());
+        bdk_wallet::test_utils::insert_anchor(
+            &mut wallet,
+            tx0.compute_txid(),
+            ConfirmationBlockTime {
+                block_id: BlockId {
+                    height: 1_000,
+                    hash: BlockHash::all_zeros(),
+                },
+                confirmation_time: 100,
+            },
+        );
+    }
+
+    // Anchors the tx at the tip so `tip_height - block_height + 1 == 1`.
+    fn fill_with_one_confirmation<P: WalletPersister>(index: usize, ngwallet: &&NgWallet<P>) {
+        let amounts = [76_000, 25_000];
+        let mut wallet = ngwallet.bdk_wallet.lock().unwrap();
+        let receive_address = wallet.next_unused_address(KeychainKind::External).address;
+
+        let tx0 = Transaction {
+            output: vec![TxOut {
+                value: Amount::from_sat(amounts[index]),
+                script_pubkey: receive_address.script_pubkey(),
+            }],
+            ..new_tx(0)
+        };
+        bdk_wallet::test_utils::insert_checkpoint(
+            &mut wallet,
+            BlockId {
+                height: 42,
+                hash: BlockHash::all_zeros(),
+            },
+        );
+        bdk_wallet::test_utils::insert_checkpoint(
+            &mut wallet,
+            BlockId {
+                height: 1_000,
                 hash: BlockHash::all_zeros(),
             },
         );
