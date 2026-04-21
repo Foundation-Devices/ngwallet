@@ -246,7 +246,7 @@ impl<P: WalletPersister> NgWallet<P> {
                                 }
                             }),
                         date,
-                        is_confirmed: confirmations >= 3,
+                        is_confirmed: confirmations >= 1,
                     }
                 })
                 .collect::<Vec<Output>>();
@@ -363,7 +363,7 @@ impl<P: WalletPersister> NgWallet<P> {
                 tx_id: tx_id.clone(),
                 block_height,
                 confirmations,
-                is_confirmed: confirmations >= 3,
+                is_confirmed: confirmations >= 1,
                 fee,
                 fee_rate,
                 amount,
@@ -532,7 +532,7 @@ impl<P: WalletPersister> NgWallet<P> {
                     .unwrap_or(None),
                 do_not_spend,
                 date,
-                is_confirmed: confirmations >= 3,
+                is_confirmed: confirmations >= 1,
             });
         }
         Ok(unspents)
