@@ -32,6 +32,48 @@ use serde::{Deserialize, Serialize};
 pub const MULTI_SIG_SIGNER_LIMIT: usize = 20;
 pub const ACCEPTED_FORMATS: &[AddressType] = &[AddressType::P2wsh, AddressType::P2ShWsh];
 
+/// Rewrites a SLIP-132 prefixed multisig extended public key to its canonical
+/// `xpub`/`tpub` form so that `bip32::Xpub::from_str` will accept it.
+///
+/// Handles exactly the four multisig SLIP-132 encodings:
+///   * `Ypub` (mainnet P2SH-P2WSH)
+///   * `Zpub` (mainnet P2WSH)
+///   * `Upub` (testnet P2SH-P2WSH)
+///   * `Vpub` (testnet P2WSH)
+///
+/// The lowercase singlesig encodings (`ypub`/`zpub`/`upub`/`vpub`) are NOT
+/// normalized here — they belong to single-sig wallet formats and would never
+/// appear in a valid multisig config. Returning them unchanged causes
+/// `from_config` to reject them downstream, which is the correct behavior.
+/// Plain `xpub`/`tpub` and unparseable strings also pass through unchanged.
+//
+// BlueWallet emits `Zpub` whenever the multisig Format is P2WSH, which caused
+// `from_config` to fail on otherwise-valid imports — see SFT-6907.
+fn normalize_slip132(key: &str) -> String {
+    const XPUB: [u8; 4] = [0x04, 0x88, 0xB2, 0x1E];
+    const TPUB: [u8; 4] = [0x04, 0x35, 0x87, 0xCF];
+    const MAPPINGS: &[([u8; 4], [u8; 4])] = &[
+        ([0x02, 0x95, 0xB4, 0x3F], XPUB), // Ypub (mainnet P2SH-P2WSH)
+        ([0x02, 0xAA, 0x7E, 0xD3], XPUB), // Zpub (mainnet P2WSH)
+        ([0x02, 0x42, 0x89, 0xEF], TPUB), // Upub (testnet P2SH-P2WSH)
+        ([0x02, 0x57, 0x54, 0x83], TPUB), // Vpub (testnet P2WSH)
+    ];
+
+    let Ok(mut bytes) = bitcoin::base58::decode_check(key) else {
+        return key.to_string();
+    };
+    if bytes.len() < 4 {
+        return key.to_string();
+    }
+    for (from, to) in MAPPINGS {
+        if &bytes[..4] == from {
+            bytes[..4].copy_from_slice(to);
+            return bitcoin::base58::encode_check(&bytes);
+        }
+    }
+    key.to_string()
+}
+
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq)]
 #[cfg_attr(
     feature = "rkyv",
@@ -324,7 +366,7 @@ impl MultiSigDetails {
                     let fingerprint = Fingerprint::from_str(other).with_context(
                         || "Unnamed keys in a multisig format should be valid fingerprints",
                     )?;
-                    let pubkey = Xpub::from_str(&value)?;
+                    let pubkey = Xpub::from_str(&normalize_slip132(&value))?;
 
                     match derivation {
                         Some(ref d) => {
@@ -1168,6 +1210,120 @@ Derivation: m/48'/1'/0'/2'
         ).unwrap();
         assert_eq!(multisig, expected);
         assert_eq!(String::from("Multisig-2-of-3-Main"), name);
+    }
+
+    // Regression test for SFT-6907: BlueWallet emits P2WSH multisig exports
+    // with SLIP-132 `Zpub` extended keys. Before the SLIP-132 normalization
+    // step in `from_config`, `Xpub::from_str` rejected these prefixes and the
+    // import fell through to `from_descriptor`, which then reported a
+    // confusing "unprintable character 0x0a" error from the newline-laden
+    // config text.
+    #[test]
+    fn multisig_from_config_bluewallet_zpub() {
+        let config = String::from("# BlueWallet Multisig setup file
+# this file contains only public keys and is safe to
+# distribute among cosigners
+#
+Name: Multisig Vault
+Policy: 2 of 2
+Derivation: m/48'/0'/0'/2'
+Format: P2WSH
+
+441C5C1A: Zpub75VbUBtx3Mx8Z4vxYGGhwPPHnL6vYqGhyVq8iEbDbbZSwGw8uZQvhPuH2FnwoN2JGhvGqB4jBrHzhwfGk2Mui78RoYUXzCzGVutX9xea215
+
+6015C0F4: Zpub75WVDNjeAJrPuZkrgPQCxqf2QLNvkXtWYfosic2G2BvbvRwMRxc2P2kk6vabVRiN582SiuCE6ChZTXUSWeGMvcamVxMecL6Uc3zTWkYpXnG
+");
+        let (multisig, name) = MultiSigDetails::from_config(&config).unwrap();
+        assert_eq!(name, String::from("Multisig Vault"));
+        assert_eq!(multisig.policy_threshold, 2);
+        assert_eq!(multisig.policy_total_keys, 2);
+        assert_eq!(multisig.format, AddressType::P2wsh);
+        assert_eq!(multisig.network_kind, NetworkKind::Main);
+        assert_eq!(multisig.signers.len(), 2);
+        assert_eq!(multisig.signers[0].fingerprint, [0x44, 0x1C, 0x5C, 0x1A]);
+        assert_eq!(multisig.signers[1].fingerprint, [0x60, 0x15, 0xC0, 0xF4]);
+        assert_eq!(multisig.signers[0].derivation, String::from("m/48'/0'/0'/2'"));
+        // Normalization should rewrite Zpub → xpub so downstream consumers
+        // (descriptor building, signing, display) only ever see canonical
+        // extended keys.
+        assert!(multisig.signers[0].pubkey.starts_with("xpub"));
+        assert!(multisig.signers[1].pubkey.starts_with("xpub"));
+    }
+
+    #[test]
+    fn normalize_slip132_passes_xpub_through_unchanged() {
+        let xpub = "xpub6ESpvmZa75rCQWKik2KoCZrjTi6xhSubZKJ25rbtgZRk2g9tZTJqubhaGD3dJeqruw9KMCaanoEfJ1PVtBXiwTuuqLVwk9ucqkRv1sKWiEC";
+        assert_eq!(normalize_slip132(xpub), xpub);
+    }
+
+    #[test]
+    fn normalize_slip132_passes_tpub_through_unchanged() {
+        let tpub = "tpubDFUc8ddWCzA8kC195Zn6UitBcBGXbPbtjktU2dk2Deprnf6sR15GAyHLQKUjAPa3gqD74g7Eea3NSqkb9FfYRZzEm2MTbCtTDZAKSHezJwb";
+        assert_eq!(normalize_slip132(tpub), tpub);
+    }
+
+    #[test]
+    fn normalize_slip132_passes_garbage_through_unchanged() {
+        assert_eq!(normalize_slip132("not-a-real-xpub"), "not-a-real-xpub");
+        assert_eq!(normalize_slip132(""), "");
+    }
+
+    #[test]
+    fn normalize_slip132_zpub_yields_parseable_xpub() {
+        // Real BlueWallet-emitted P2WSH Zpub — after normalization it must
+        // parse as a standard extended public key.
+        let zpub = "Zpub75VbUBtx3Mx8Z4vxYGGhwPPHnL6vYqGhyVq8iEbDbbZSwGw8uZQvhPuH2FnwoN2JGhvGqB4jBrHzhwfGk2Mui78RoYUXzCzGVutX9xea215";
+        let normalized = normalize_slip132(zpub);
+        assert!(normalized.starts_with("xpub"));
+        assert!(Xpub::from_str(&normalized).is_ok());
+    }
+
+    // Round-trips the other three supported multisig encodings by taking a
+    // known-good xpub/tpub, rewriting the version bytes to the target prefix,
+    // running it back through normalize_slip132, and asserting we recover the
+    // original. This exercises each mapping without needing hand-crafted
+    // Ypub/Upub/Vpub fixtures.
+    fn roundtrip_through_prefix(canonical: &str, slip132_version: [u8; 4], prefix: &str) {
+        let mut bytes = bitcoin::base58::decode_check(canonical).unwrap();
+        bytes[..4].copy_from_slice(&slip132_version);
+        let slip132 = bitcoin::base58::encode_check(&bytes);
+        assert!(
+            slip132.starts_with(prefix),
+            "expected {prefix}…, got {slip132}"
+        );
+        assert_eq!(normalize_slip132(&slip132), canonical);
+    }
+
+    #[test]
+    fn normalize_slip132_ypub_roundtrips_to_xpub() {
+        let xpub = "xpub6ESpvmZa75rCQWKik2KoCZrjTi6xhSubZKJ25rbtgZRk2g9tZTJqubhaGD3dJeqruw9KMCaanoEfJ1PVtBXiwTuuqLVwk9ucqkRv1sKWiEC";
+        roundtrip_through_prefix(xpub, [0x02, 0x95, 0xB4, 0x3F], "Ypub");
+    }
+
+    #[test]
+    fn normalize_slip132_vpub_roundtrips_to_tpub() {
+        let tpub = "tpubDFUc8ddWCzA8kC195Zn6UitBcBGXbPbtjktU2dk2Deprnf6sR15GAyHLQKUjAPa3gqD74g7Eea3NSqkb9FfYRZzEm2MTbCtTDZAKSHezJwb";
+        roundtrip_through_prefix(tpub, [0x02, 0x57, 0x54, 0x83], "Vpub");
+    }
+
+    #[test]
+    fn normalize_slip132_upub_roundtrips_to_tpub() {
+        let tpub = "tpubDFUc8ddWCzA8kC195Zn6UitBcBGXbPbtjktU2dk2Deprnf6sR15GAyHLQKUjAPa3gqD74g7Eea3NSqkb9FfYRZzEm2MTbCtTDZAKSHezJwb";
+        roundtrip_through_prefix(tpub, [0x02, 0x42, 0x89, 0xEF], "Upub");
+    }
+
+    // Singlesig SLIP-132 encodings (lowercase zpub here) are deliberately NOT
+    // normalized — they belong to single-sig wallets and should never appear
+    // in a multisig config. normalize_slip132 should return them unchanged so
+    // that Xpub::from_str surfaces the error naturally.
+    #[test]
+    fn normalize_slip132_singlesig_zpub_passes_through_unchanged() {
+        let xpub = "xpub6ESpvmZa75rCQWKik2KoCZrjTi6xhSubZKJ25rbtgZRk2g9tZTJqubhaGD3dJeqruw9KMCaanoEfJ1PVtBXiwTuuqLVwk9ucqkRv1sKWiEC";
+        let mut bytes = bitcoin::base58::decode_check(xpub).unwrap();
+        bytes[..4].copy_from_slice(&[0x04, 0xB2, 0x47, 0x46]); // zpub (BIP84 singlesig)
+        let zpub = bitcoin::base58::encode_check(&bytes);
+        assert!(zpub.starts_with("zpub"));
+        assert_eq!(normalize_slip132(&zpub), zpub);
     }
 
     #[cfg(feature = "sha2")]
