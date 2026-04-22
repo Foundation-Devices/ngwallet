@@ -340,12 +340,12 @@ checksum = "a2a2b11eda1d40935b26cf18f6833c526845ae8c41e58d09af6adeb6f0269183"
 [[package]]
 name = "foundation-arena"
 version = "0.1.0"
-source = "git+https://github.com/Jacksper13/foundation-rs?branch=jack%2Fsft-6915-decode-crypto-output#b45065dba33ffd50a32e6186d2103c6a821c4dc3"
+source = "git+https://github.com/Jacksper13/foundation-rs?rev=3289111dac2d1cf50e8447d02cd703cf31eb5168#3289111dac2d1cf50e8447d02cd703cf31eb5168"
 
 [[package]]
 name = "foundation-urtypes"
 version = "0.5.0"
-source = "git+https://github.com/Jacksper13/foundation-rs?branch=jack%2Fsft-6915-decode-crypto-output#b45065dba33ffd50a32e6186d2103c6a821c4dc3"
+source = "git+https://github.com/Jacksper13/foundation-rs?rev=3289111dac2d1cf50e8447d02cd703cf31eb5168#3289111dac2d1cf50e8447d02cd703cf31eb5168"
 dependencies = [
  "faster-hex",
  "foundation-arena",

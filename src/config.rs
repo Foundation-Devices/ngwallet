@@ -506,11 +506,25 @@ impl MultiSigDetails {
             ),
         };
 
-        let signers: Vec<MultiSigSigner> = multikey
-            .keys
-            .iter()
-            .map(|k| hdkey_to_signer(&k))
-            .collect::<Result<Vec<_>, _>>()?;
+        // Reject duplicate cosigner keys up front. `from_descriptor` catches
+        // this via miniscript's `sanity_check()`; `from_config` checks full-
+        // tuple equality on each parsed `MultiSigSigner`. Neither applies on
+        // this path — `Self::new` does not dedupe and
+        // `wsh(sortedmulti(2, X, X))` would otherwise import as a nominal
+        // 2-of-2 that spends with a single signature from X, silently
+        // collapsing the effective threshold. Compare on the pubkey string
+        // (the encoded xpub) so repeats of the same key under a different
+        // derivation annotation are also rejected.
+        let mut signers: Vec<MultiSigSigner> = Vec::new();
+        for k in multikey.keys.iter() {
+            let signer = hdkey_to_signer(&k)?;
+            if signers.iter().any(|existing| existing.pubkey == signer.pubkey) {
+                anyhow::bail!(
+                    "crypto-output multisig contains duplicate cosigner keys"
+                );
+            }
+            signers.push(signer);
+        }
 
         let res = Self::new(
             multikey.threshold as usize,
@@ -1682,6 +1696,32 @@ Format: P2WSH
 
         let err = MultiSigDetails::from_crypto_output(&root).unwrap_err();
         assert!(err.to_string().contains("sortedmulti"), "err: {err}");
+    }
+
+    #[test]
+    fn multisig_from_crypto_output_rejects_duplicate_cosigners() {
+        use foundation_urtypes::registry::TerminalContext;
+        use foundation_urtypes::value::decode_output_descriptor;
+
+        // `wsh(sortedmulti(2, X, X))` — the reviewer's PR #115 repro. Two
+        // identical cosigner keys collapse to a single signature at
+        // consensus, silently turning a nominal 2-of-2 into a 1-of-1. The
+        // descriptor path catches this via miniscript's `sanity_check()`;
+        // this path must reject it explicitly.
+        let xpub = "xpub6ESpvmZa75rCQWKik2KoCZrjTi6xhSubZKJ25rbtgZRk2g9tZTJqubhaGD3dJeqruw9KMCaanoEfJ1PVtBXiwTuuqLVwk9ucqkRv1sKWiEC";
+        let entries: &[(&str, [u8; 4], &str)] = &[
+            (xpub, [0x71, 0xC8, 0xBD, 0x85], "m/48'/0'/0'/2'"),
+            (xpub, [0x71, 0xC8, 0xBD, 0x85], "m/48'/0'/0'/2'"),
+        ];
+        let cbor = encode_wsh_sortedmulti_cbor(2, entries);
+
+        let arena: TerminalContext<4> = TerminalContext::new();
+        let terminal = decode_output_descriptor("crypto-output", &cbor, &arena).unwrap();
+        let err = MultiSigDetails::from_crypto_output(&terminal).unwrap_err();
+        assert!(
+            err.to_string().contains("duplicate cosigner"),
+            "err: {err}"
+        );
     }
 
     #[cfg(feature = "sha2")]

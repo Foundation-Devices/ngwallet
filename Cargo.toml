@@ -21,12 +21,17 @@ sha2 = { version = "0.10.9", optional = true }
 thiserror = "2.0"
 zeroize = { version = "1.8", features = ["zeroize_derive"] }
 bitcoin = { version = "0.32", features = ["secp-recovery"], default-features = false }
-# SFT-6915: pin to the fork branch until foundation-rs PR #54 lands.
-foundation-urtypes = { git = "https://github.com/Jacksper13/foundation-rs", branch = "jack/sft-6915-decode-crypto-output", default-features = false, features = ["alloc"] }
-foundation-arena = { git = "https://github.com/Jacksper13/foundation-rs", branch = "jack/sft-6915-decode-crypto-output" }
+# SFT-6915: pin to a fixed rev on the fork until foundation-rs PR #54
+# lands (per reviewer request — keeps downstream builds reproducible
+# instead of floating with the branch tip).
+foundation-urtypes = { git = "https://github.com/Jacksper13/foundation-rs", rev = "3289111dac2d1cf50e8447d02cd703cf31eb5168", default-features = false, features = ["alloc"] }
 
 [dev-dependencies]
 minicbor = { version = "0.24", features = ["alloc"] }
+# Only used inside `#[cfg(test)]` helpers in `src/config.rs` (the
+# crypto-output CBOR encoder/decoder tests); keep it out of the
+# production dep graph.
+foundation-arena = { git = "https://github.com/Jacksper13/foundation-rs", rev = "3289111dac2d1cf50e8447d02cd703cf31eb5168" }
 
 [lints.rust]
 unexpected_cfgs = { level = "warn", check-cfg = ['cfg(frb_expand)'] }
