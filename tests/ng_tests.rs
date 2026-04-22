@@ -451,6 +451,41 @@ mod tests {
 
     #[test]
     #[cfg(feature = "envoy")]
+    fn one_confirmation_is_confirmed() {
+        // Regression guard for the is_confirmed contract (ENV-2275): a tx
+        // anchored at the tip has exactly 1 confirmation and must be
+        // reported as confirmed on both surfaces (transactions() and utxos()).
+        let mut account = utils::tests_util::get_ng_hot_wallet();
+        utils::tests_util::add_funds_wallet_with_one_confirmation(&mut account);
+
+        let txs = account.transactions().unwrap();
+        assert!(!txs.is_empty(), "expected at least one transaction");
+        for tx in &txs {
+            assert_eq!(
+                tx.confirmations, 1,
+                "tx {} should have exactly 1 confirmation",
+                tx.tx_id
+            );
+            assert!(
+                tx.is_confirmed,
+                "tx {} with 1 confirmation should have is_confirmed=true",
+                tx.tx_id
+            );
+        }
+
+        let utxos = account.utxos().unwrap();
+        assert!(!utxos.is_empty(), "expected at least one utxo");
+        for output in &utxos {
+            assert!(
+                output.is_confirmed,
+                "utxo {}:{} with 1 confirmation should have is_confirmed=true",
+                output.tx_id, output.vout
+            );
+        }
+    }
+
+    #[test]
+    #[cfg(feature = "envoy")]
     fn check_psbt_parsing() {
         let mut account = utils::tests_util::get_ng_watch_only_account();
         utils::tests_util::add_funds_to_wallet(&mut account);
