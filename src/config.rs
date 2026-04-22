@@ -15,9 +15,14 @@ use crate::store::MetaStorage;
 use crate::utils::get_address_type;
 use bdk_wallet::KeychainKind;
 use bdk_wallet::WalletPersister;
-use bdk_wallet::bitcoin::bip32::{self, ChildNumber, DerivationPath, Fingerprint, Xpriv, Xpub};
-use bdk_wallet::bitcoin::secp256k1::{Secp256k1, Signing};
-use bdk_wallet::bitcoin::{self, Network};
+use bdk_wallet::bitcoin::bip32::{
+    self, ChainCode, ChildNumber, DerivationPath, Fingerprint, Xpriv, Xpub,
+};
+use bdk_wallet::bitcoin::secp256k1::{PublicKey, Secp256k1, Signing};
+use bdk_wallet::bitcoin::{self, Network, NetworkKind as BtcNetworkKind};
+use foundation_urtypes::registry::{
+    ChildNumber as UrChildNumber, HDKeyRef, Key as UrKey, Terminal,
+};
 use bdk_wallet::descriptor::Descriptor as BdkDescriptor;
 use bdk_wallet::miniscript::{
     ForEachKey,
@@ -452,6 +457,72 @@ impl MultiSigDetails {
         Ok((res, name))
     }
 
+    /// Build a [`MultiSigDetails`] from a decoded `crypto-output`
+    /// ([`foundation_urtypes::registry::Terminal`]) descriptor tree.
+    ///
+    /// Callers obtain `terminal` from
+    /// `foundation_urtypes::value::decode_output_descriptor`. This path is
+    /// what lets Prime import animated multisig QRs from wallets like
+    /// Sparrow that emit `ur:crypto-output/...` frames rather than the
+    /// text-config or string-descriptor formats.
+    ///
+    /// Accepted shapes (mirroring [`Self::from_descriptor`]):
+    /// - `wsh(sortedmulti(M, xpub1, xpub2, ...))` → `P2wsh`
+    /// - `sh(wsh(sortedmulti(M, xpub1, xpub2, ...)))` → `P2ShWsh`
+    ///
+    /// Non-sorted `multisig`, taproot, bare addresses, raw scripts, and any
+    /// other descriptor shapes are rejected — Prime doesn't support them
+    /// today and accepting them here would let an import succeed that would
+    /// later fail at spend time.
+    pub fn from_crypto_output(
+        terminal: &Terminal<'_, '_>,
+    ) -> Result<(Self, String), anyhow::Error> {
+        let (format, multikey) = match terminal {
+            Terminal::WitnessScriptHash(inner) => match &**inner {
+                Terminal::SortedMultisig(mk) => (AddressType::P2wsh, mk),
+                Terminal::Multisig(_) => anyhow::bail!(
+                    "crypto-output multisig must be sorted (sortedmulti), got unsorted multi"
+                ),
+                _ => anyhow::bail!(
+                    "crypto-output wsh() must wrap sortedmulti, other scripts are not accepted"
+                ),
+            },
+            Terminal::ScriptHash(outer) => match &**outer {
+                Terminal::WitnessScriptHash(inner) => match &**inner {
+                    Terminal::SortedMultisig(mk) => (AddressType::P2ShWsh, mk),
+                    Terminal::Multisig(_) => anyhow::bail!(
+                        "crypto-output multisig must be sorted (sortedmulti), got unsorted multi"
+                    ),
+                    _ => anyhow::bail!(
+                        "crypto-output sh(wsh()) must wrap sortedmulti, other scripts are not accepted"
+                    ),
+                },
+                _ => anyhow::bail!(
+                    "crypto-output sh() must wrap wsh(sortedmulti), other scripts are not accepted"
+                ),
+            },
+            _ => anyhow::bail!(
+                "crypto-output descriptors must be wsh(sortedmulti) or sh(wsh(sortedmulti))"
+            ),
+        };
+
+        let signers: Vec<MultiSigSigner> = multikey
+            .keys
+            .iter()
+            .map(|k| hdkey_to_signer(&k))
+            .collect::<Result<Vec<_>, _>>()?;
+
+        let res = Self::new(
+            multikey.threshold as usize,
+            signers.len(),
+            format,
+            None,
+            signers,
+        )?;
+        let name = res.default_name();
+        Ok((res, name))
+    }
+
     pub fn from_descriptor(descriptor: &str) -> Result<(Self, String), anyhow::Error> {
         let descriptor = BdkDescriptor::<DescriptorPublicKey>::from_str(descriptor)?;
 
@@ -627,6 +698,100 @@ impl MultiSigDetails {
 
         hasher.finalize().into()
     }
+}
+
+/// Convert a `foundation-urtypes` key entry into a [`MultiSigSigner`].
+///
+/// We walk the CBOR-decoded view (`DerivedKeyRef` + `KeypathRef`) and
+/// reconstruct a `bitcoin::bip32::Xpub` from its raw bytes so downstream
+/// code can treat it identically to xpubs coming from text-config or
+/// string-descriptor imports.
+fn hdkey_to_signer(key: &UrKey<'_>) -> Result<MultiSigSigner, anyhow::Error> {
+    let hdkey = match key {
+        UrKey::HDKey(h) => h,
+        UrKey::ECKey(_) => {
+            anyhow::bail!("crypto-output multisig key is a bare EC pubkey; need an hdkey/xpub")
+        }
+    };
+    let derived = match hdkey {
+        HDKeyRef::DerivedKey(d) => d,
+        HDKeyRef::MasterKey(_) => {
+            anyhow::bail!("crypto-output multisig key is a master key; need a derived xpub")
+        }
+    };
+
+    let origin = derived
+        .origin
+        .as_ref()
+        .context("crypto-output hdkey is missing origin info (need master fingerprint + path)")?;
+
+    let src_fp = origin
+        .source_fingerprint
+        .context("crypto-output hdkey origin is missing source-fingerprint")?;
+    let master_fingerprint = Fingerprint::from(src_fp.get().to_be_bytes());
+
+    let mut path_components: Vec<ChildNumber> = Vec::with_capacity(origin.components.len());
+    for comp in origin.components.iter() {
+        let index = match comp.number {
+            UrChildNumber::Number(n) => n,
+            UrChildNumber::Range(_) => {
+                anyhow::bail!("crypto-output hdkey origin contains a wildcard path component")
+            }
+        };
+        path_components.push(if comp.is_hardened {
+            ChildNumber::Hardened { index }
+        } else {
+            ChildNumber::Normal { index }
+        });
+    }
+    let derivation_path = DerivationPath::from(path_components.clone());
+
+    let chain_code_bytes = derived
+        .chain_code
+        .context("crypto-output hdkey is missing chain code")?;
+
+    let public_key = PublicKey::from_slice(&derived.key_data)
+        .context("crypto-output hdkey has invalid compressed pubkey")?;
+
+    // CoinInfo network is the BIP44 SLIP-44-ish value: 0 = mainnet, 1 = testnet.
+    // Absent → default to mainnet (matches `from_sorted_multi` which also
+    // defers network inference to `Self::new`).
+    let network = match derived.use_info.as_ref().map(|ci| ci.network) {
+        Some(0) | None => BtcNetworkKind::Main,
+        Some(1) => BtcNetworkKind::Test,
+        Some(other) => {
+            anyhow::bail!("crypto-output hdkey has unsupported network index {other}")
+        }
+    };
+
+    let depth = origin
+        .depth
+        .unwrap_or_else(|| origin.components.len() as u8);
+
+    let parent_fingerprint = derived
+        .parent_fingerprint
+        .map(|fp| Fingerprint::from(fp.get().to_be_bytes()))
+        .unwrap_or_default();
+
+    let child_number = path_components
+        .last()
+        .copied()
+        .unwrap_or(ChildNumber::Normal { index: 0 });
+
+    let xpub = Xpub {
+        network,
+        depth,
+        parent_fingerprint,
+        child_number,
+        public_key,
+        chain_code: ChainCode::from(chain_code_bytes),
+    };
+
+    Ok(MultiSigSigner::new(
+        &derivation_path,
+        &master_fingerprint,
+        &xpub,
+    ))
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
@@ -1324,6 +1489,199 @@ Format: P2WSH
         let zpub = bitcoin::base58::encode_check(&bytes);
         assert!(zpub.starts_with("zpub"));
         assert_eq!(normalize_slip132(&zpub), zpub);
+    }
+
+    // Build a `Terminal::WitnessScriptHash(SortedMultisig(...))` tree from
+    // `(xpub_str, fingerprint_hex, derivation_str)` entries, encode it to
+    // CBOR, and return the bytes plus the byte-backing storage. Mirrors
+    // what `minicbor::to_vec(&Terminal)` gives us when the sender is
+    // e.g. Sparrow.
+    #[cfg(test)]
+    fn encode_wsh_sortedmulti_cbor(
+        threshold: u8,
+        entries: &[(&str, [u8; 4], &str)],
+    ) -> Vec<u8> {
+        use foundation_arena::boxed::Box as ArenaBox;
+        use foundation_urtypes::registry::{
+            CoinInfo, CoinType, DerivedKeyRef, HDKeyRef as UrHDKeyRef, Key, KeypathRef, Keys,
+            Multikey, PathComponents, Terminal, TerminalContext,
+        };
+        use std::num::NonZeroU32;
+
+        // Pre-decompose each entry into stable byte storage that outlives
+        // every borrow below.
+        struct Entry {
+            key_data: [u8; 33],
+            chain_code: [u8; 32],
+            path_raw: Vec<u32>,
+            source_fingerprint: NonZeroU32,
+            parent_fingerprint: Option<NonZeroU32>,
+            depth: u8,
+        }
+        let decomposed: Vec<Entry> = entries
+            .iter()
+            .map(|(xpub_str, xfp, deriv)| {
+                let xpub = Xpub::from_str(xpub_str).unwrap();
+                let deriv_path = DerivationPath::from_str(deriv).unwrap();
+                let path_raw: Vec<u32> = deriv_path
+                    .into_iter()
+                    .map(|cn| match cn {
+                        ChildNumber::Normal { index } => *index,
+                        ChildNumber::Hardened { index } => *index | (1 << 31),
+                    })
+                    .collect();
+                Entry {
+                    key_data: xpub.public_key.serialize(),
+                    chain_code: xpub.chain_code.to_bytes(),
+                    path_raw,
+                    source_fingerprint: NonZeroU32::new(u32::from_be_bytes(*xfp)).unwrap(),
+                    parent_fingerprint: NonZeroU32::new(u32::from_be_bytes(
+                        xpub.parent_fingerprint.to_bytes(),
+                    )),
+                    depth: xpub.depth,
+                }
+            })
+            .collect();
+
+        let arena: TerminalContext<4> = TerminalContext::new();
+        let keys_owned: Vec<Key> = decomposed
+            .iter()
+            .map(|e| {
+                Key::HDKey(UrHDKeyRef::DerivedKey(DerivedKeyRef {
+                    is_private: false,
+                    key_data: e.key_data,
+                    chain_code: Some(e.chain_code),
+                    use_info: Some(CoinInfo::new(CoinType::BTC, CoinInfo::NETWORK_MAINNET)),
+                    origin: Some(KeypathRef {
+                        components: PathComponents::from(e.path_raw.as_slice()),
+                        source_fingerprint: Some(e.source_fingerprint),
+                        depth: Some(e.depth),
+                    }),
+                    children: None,
+                    parent_fingerprint: e.parent_fingerprint,
+                    name: None,
+                    note: None,
+                }))
+            })
+            .collect();
+        let keys = Keys::from(keys_owned.as_slice());
+        let sortedmulti = ArenaBox::new_in(
+            Terminal::SortedMultisig(Multikey { threshold, keys }),
+            &arena,
+        )
+        .unwrap();
+        let root = Terminal::WitnessScriptHash(sortedmulti);
+        minicbor::to_vec(&root).unwrap()
+    }
+
+    #[test]
+    fn multisig_from_crypto_output_wsh_sortedmulti() {
+        use foundation_urtypes::registry::TerminalContext;
+        use foundation_urtypes::value::decode_output_descriptor;
+
+        // Same signer set as `multisig_from_descriptor_1`.
+        let entries: &[(&str, [u8; 4], &str)] = &[
+            (
+                "xpub6ESpvmZa75rCQWKik2KoCZrjTi6xhSubZKJ25rbtgZRk2g9tZTJqubhaGD3dJeqruw9KMCaanoEfJ1PVtBXiwTuuqLVwk9ucqkRv1sKWiEC",
+                [0x71, 0xC8, 0xBD, 0x85],
+                "m/48'/0'/0'/2'",
+            ),
+            (
+                "xpub6EPJuK8Ejz82nKc7PsRgcYqdcQH9G1ZikCTasr9i79CbXxMMiPfxEyA14S6HPTHufmcQR7x8t5L3BP9tRfm9EBRBPic2xV892j9z4ePESae",
+                [0xAB, 0x88, 0xDE, 0x89],
+                "m/48'/0'/0'/2'",
+            ),
+            (
+                "xpub6FQY5W8WygMVYY2nTP188jFHNdZfH2t9qtcS8SPpFatUGiciqUsGZpNvEa1oABEyeAsrUL2XSnvuRUdrhf5LcMXcjhrUFBcneBYYZzky3Mc",
+                [0xA9, 0xF9, 0x96, 0x4A],
+                "m/48'/0'/0'/2'",
+            ),
+        ];
+
+        let cbor = encode_wsh_sortedmulti_cbor(2, entries);
+
+        let arena: TerminalContext<4> = TerminalContext::new();
+        let terminal = decode_output_descriptor("crypto-output", &cbor, &arena).unwrap();
+        let (multisig, name) = MultiSigDetails::from_crypto_output(&terminal).unwrap();
+
+        let expected = MultiSigDetails::new(
+            2,
+            3,
+            AddressType::P2wsh,
+            Some(NetworkKind::Main),
+            vec![
+                MultiSigSigner {
+                    derivation: String::from("m/48'/0'/0'/2'"),
+                    fingerprint: [0x71, 0xC8, 0xBD, 0x85],
+                    pubkey: String::from("xpub6ESpvmZa75rCQWKik2KoCZrjTi6xhSubZKJ25rbtgZRk2g9tZTJqubhaGD3dJeqruw9KMCaanoEfJ1PVtBXiwTuuqLVwk9ucqkRv1sKWiEC"),
+                },
+                MultiSigSigner {
+                    derivation: String::from("m/48'/0'/0'/2'"),
+                    fingerprint: [0xAB, 0x88, 0xDE, 0x89],
+                    pubkey: String::from("xpub6EPJuK8Ejz82nKc7PsRgcYqdcQH9G1ZikCTasr9i79CbXxMMiPfxEyA14S6HPTHufmcQR7x8t5L3BP9tRfm9EBRBPic2xV892j9z4ePESae"),
+                },
+                MultiSigSigner {
+                    derivation: String::from("m/48'/0'/0'/2'"),
+                    fingerprint: [0xA9, 0xF9, 0x96, 0x4A],
+                    pubkey: String::from("xpub6FQY5W8WygMVYY2nTP188jFHNdZfH2t9qtcS8SPpFatUGiciqUsGZpNvEa1oABEyeAsrUL2XSnvuRUdrhf5LcMXcjhrUFBcneBYYZzky3Mc"),
+                },
+            ],
+        )
+        .unwrap();
+        assert_eq!(multisig, expected);
+        assert_eq!("Multisig-2-of-3-Main", name);
+    }
+
+    #[test]
+    fn multisig_from_crypto_output_rejects_unsorted_multi() {
+        use foundation_arena::boxed::Box as ArenaBox;
+        use foundation_urtypes::registry::{
+            CoinInfo, CoinType, DerivedKeyRef, HDKeyRef as UrHDKeyRef, Key, KeypathRef, Keys,
+            Multikey, PathComponents, Terminal, TerminalContext,
+        };
+        use std::num::NonZeroU32;
+
+        // Hand-roll an unsorted `multi(...)` — our validator must reject
+        // even if the rest of the shape is otherwise identical to a valid
+        // sortedmulti.
+        let xpub = Xpub::from_str(
+            "xpub6ESpvmZa75rCQWKik2KoCZrjTi6xhSubZKJ25rbtgZRk2g9tZTJqubhaGD3dJeqruw9KMCaanoEfJ1PVtBXiwTuuqLVwk9ucqkRv1sKWiEC"
+        )
+        .unwrap();
+        let key_data = xpub.public_key.serialize();
+        let chain_code = xpub.chain_code.to_bytes();
+        let path_raw: Vec<u32> = vec![48 | (1 << 31), 1 << 31, 1 << 31, 2 | (1 << 31)];
+        let source_fingerprint = NonZeroU32::new(u32::from_be_bytes([0x71, 0xC8, 0xBD, 0x85])).unwrap();
+
+        let arena: TerminalContext<4> = TerminalContext::new();
+        let k = Key::HDKey(UrHDKeyRef::DerivedKey(DerivedKeyRef {
+            is_private: false,
+            key_data,
+            chain_code: Some(chain_code),
+            use_info: Some(CoinInfo::new(CoinType::BTC, CoinInfo::NETWORK_MAINNET)),
+            origin: Some(KeypathRef {
+                components: PathComponents::from(path_raw.as_slice()),
+                source_fingerprint: Some(source_fingerprint),
+                depth: Some(4),
+            }),
+            children: None,
+            parent_fingerprint: NonZeroU32::new(u32::from_be_bytes(
+                xpub.parent_fingerprint.to_bytes(),
+            )),
+            name: None,
+            note: None,
+        }));
+        let keys_storage: &[Key] = &[k.clone(), k];
+        let keys = Keys::from(keys_storage);
+        let multi = ArenaBox::new_in(
+            Terminal::Multisig(Multikey { threshold: 2, keys }),
+            &arena,
+        )
+        .unwrap();
+        let root = Terminal::WitnessScriptHash(multi);
+
+        let err = MultiSigDetails::from_crypto_output(&root).unwrap_err();
+        assert!(err.to_string().contains("sortedmulti"), "err: {err}");
     }
 
     #[cfg(feature = "sha2")]
