@@ -537,6 +537,43 @@ impl MultiSigDetails {
         Ok((res, name))
     }
 
+    /// Parse a BSMS 1.0 (BIP 129) text file into a [`MultiSigDetails`].
+    ///
+    /// BSMS format:
+    /// ```text
+    /// BSMS 1.0
+    /// wsh(sortedmulti(M,[fp/path]xpub.../0/*,...))
+    /// /0/*,/1/*
+    /// Wallet name
+    /// ```
+    ///
+    /// Line 1 must be exactly `BSMS 1.0`. Line 2 is the output descriptor,
+    /// which is passed to [`Self::from_descriptor`]. Lines 3+ are ignored.
+    /// The wallet name from line 4, if present, is used as the label;
+    /// otherwise the default name from the descriptor is used.
+    pub fn from_bsms(bsms: &str) -> Result<(Self, String), anyhow::Error> {
+        let mut lines = bsms.lines();
+
+        let header = lines.next().ok_or_else(|| anyhow::anyhow!("BSMS input is empty"))?.trim();
+        anyhow::ensure!(header == "BSMS 1.0", "not a BSMS file: expected 'BSMS 1.0', got '{header}'");
+
+        let descriptor =
+            lines.next().ok_or_else(|| anyhow::anyhow!("BSMS file is missing descriptor on line 2"))?.trim();
+
+        let (details, default_name) = Self::from_descriptor(descriptor)?;
+
+        // Line 3 is allowed paths, line 4 is the wallet name.
+        let _allowed_paths = lines.next();
+        let name = lines
+            .next()
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .unwrap_or(&default_name)
+            .to_owned();
+
+        Ok((details, name))
+    }
+
     pub fn from_descriptor(descriptor: &str) -> Result<(Self, String), anyhow::Error> {
         let descriptor = BdkDescriptor::<DescriptorPublicKey>::from_str(descriptor)?;
 
@@ -1739,5 +1776,46 @@ Format: P2WSH
 
         assert_eq!(multisig_a, multisig_b);
         assert_eq!(multisig_a.sha256(), multisig_b.sha256())
+    }
+
+    #[test]
+    fn multisig_from_bsms_basic() {
+        // A well-formed BSMS 1.0 file using the same 3-of-3 signer set as
+        // `multisig_from_descriptor_1` so results are directly comparable.
+        let bsms = "BSMS 1.0\n\
+wsh(sortedmulti(2,[71C8BD85/48h/0h/0h/2h]xpub6ESpvmZa75rCQWKik2KoCZrjTi6xhSubZKJ25rbtgZRk2g9tZTJqubhaGD3dJeqruw9KMCaanoEfJ1PVtBXiwTuuqLVwk9ucqkRv1sKWiEC/<0;1>/*,[AB88DE89/48h/0h/0h/2h]xpub6EPJuK8Ejz82nKc7PsRgcYqdcQH9G1ZikCTasr9i79CbXxMMiPfxEyA14S6HPTHufmcQR7x8t5L3BP9tRfm9EBRBPic2xV892j9z4ePESae/<0;1>/*,[A9F9964A/48h/0h/0h/2h]xpub6FQY5W8WygMVYY2nTP188jFHNdZfH2t9qtcS8SPpFatUGiciqUsGZpNvEa1oABEyeAsrUL2XSnvuRUdrhf5LcMXcjhrUFBcneBYYZzky3Mc/<0;1>/*))\n\
+/0/*,/1/*\n\
+My Test Wallet";
+
+        let (multisig, name) = MultiSigDetails::from_bsms(bsms).unwrap();
+        assert_eq!(name, "My Test Wallet");
+        assert_eq!(multisig.policy_threshold, 2);
+        assert_eq!(multisig.policy_total_keys, 3);
+        assert_eq!(multisig.format, AddressType::P2wsh);
+        assert_eq!(multisig.network_kind, NetworkKind::Main);
+        assert_eq!(multisig.signers.len(), 3);
+    }
+
+    #[test]
+    fn multisig_from_bsms_uses_default_name_when_absent() {
+        // BSMS file with only 3 lines (no name line).
+        let bsms = "BSMS 1.0\n\
+wsh(sortedmulti(2,[71C8BD85/48h/0h/0h/2h]xpub6ESpvmZa75rCQWKik2KoCZrjTi6xhSubZKJ25rbtgZRk2g9tZTJqubhaGD3dJeqruw9KMCaanoEfJ1PVtBXiwTuuqLVwk9ucqkRv1sKWiEC/<0;1>/*,[AB88DE89/48h/0h/0h/2h]xpub6EPJuK8Ejz82nKc7PsRgcYqdcQH9G1ZikCTasr9i79CbXxMMiPfxEyA14S6HPTHufmcQR7x8t5L3BP9tRfm9EBRBPic2xV892j9z4ePESae/<0;1>/*,[A9F9964A/48h/0h/0h/2h]xpub6FQY5W8WygMVYY2nTP188jFHNdZfH2t9qtcS8SPpFatUGiciqUsGZpNvEa1oABEyeAsrUL2XSnvuRUdrhf5LcMXcjhrUFBcneBYYZzky3Mc/<0;1>/*))\n\
+/0/*,/1/*";
+
+        let (multisig, name) = MultiSigDetails::from_bsms(bsms).unwrap();
+        // Falls back to the default name produced by `from_descriptor`.
+        assert_eq!(name, multisig.default_name());
+    }
+
+    #[test]
+    fn multisig_from_bsms_rejects_wrong_header() {
+        let bsms = "BSMS 2.0\nwsh(sortedmulti(...))\n/0/*,/1/*\nName";
+        assert!(MultiSigDetails::from_bsms(bsms).is_err());
+    }
+
+    #[test]
+    fn multisig_from_bsms_rejects_empty_input() {
+        assert!(MultiSigDetails::from_bsms("").is_err());
     }
 }
