@@ -340,12 +340,12 @@ checksum = "a2a2b11eda1d40935b26cf18f6833c526845ae8c41e58d09af6adeb6f0269183"
 [[package]]
 name = "foundation-arena"
 version = "0.1.0"
-source = "git+https://github.com/Foundation-Devices/foundation-rs.git?rev=311c83e1647842f10ee7e92bbf9950d4d17b1a3f#311c83e1647842f10ee7e92bbf9950d4d17b1a3f"
+source = "git+https://github.com/Foundation-Devices/foundation-rs.git?tag=0.6.0#99b00a3d62043391416b5ea438a50e598b1fb1dd"
 
 [[package]]
 name = "foundation-urtypes"
 version = "0.5.0"
-source = "git+https://github.com/Foundation-Devices/foundation-rs.git?rev=311c83e1647842f10ee7e92bbf9950d4d17b1a3f#311c83e1647842f10ee7e92bbf9950d4d17b1a3f"
+source = "git+https://github.com/Foundation-Devices/foundation-rs.git?tag=0.6.0#99b00a3d62043391416b5ea438a50e598b1fb1dd"
 dependencies = [
  "faster-hex",
  "foundation-arena",
