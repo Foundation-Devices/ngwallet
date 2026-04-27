@@ -506,7 +506,7 @@ impl MultiSigDetails {
         &self,
         keychain: KeychainKind,
         secp: &Secp256k1<C>,
-        master_key: Option<&MasterKey>,
+        master_keys: &[&MasterKey],
     ) -> Result<
         (
             BdkDescriptor<DescriptorPublicKey>,
@@ -537,7 +537,7 @@ impl MultiSigDetails {
 
         let mut keymap = BTreeMap::<DescriptorPublicKey, DescriptorSecretKey>::new();
 
-        if let Some(master) = master_key {
+        for master in master_keys {
             let fp = master.fingerprint;
             let master_xprv = Xpriv::new_master(self.network_kind, &master.key.0)?;
 
@@ -584,12 +584,12 @@ impl MultiSigDetails {
     pub fn get_descriptors<C: Signing>(
         &self,
         secp: &Secp256k1<C>,
-        master_key: Option<&MasterKey>,
+        master_keys: &[&MasterKey],
     ) -> anyhow::Result<Vec<Descriptors>> {
         let (external_desc, external_keymap) =
-            self.to_descriptor(KeychainKind::External, secp, master_key)?;
+            self.to_descriptor(KeychainKind::External, secp, master_keys)?;
         let (internal_desc, internal_keymap) =
-            self.to_descriptor(KeychainKind::Internal, secp, master_key)?;
+            self.to_descriptor(KeychainKind::Internal, secp, master_keys)?;
         let descriptor_type = external_desc.desc_type();
 
         Ok(vec![Descriptors {
@@ -789,6 +789,8 @@ pub struct NgAccountConfig {
     pub multisig: Option<MultiSigDetails>,
     #[serde(default)]
     pub archived: bool,
+    #[serde(default)]
+    pub temporary: bool,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -868,6 +870,7 @@ impl<P: WalletPersister> Default for NgAccountBuilder<P> {
             seed_has_passphrase: None,
             multisig: None,
             archived: None,
+            temporary: None,
         }
     }
 }
@@ -887,6 +890,7 @@ pub struct NgAccountBuilder<P: WalletPersister> {
     seed_has_passphrase: Option<bool>,
     multisig: Option<MultiSigDetails>,
     archived: Option<bool>,
+    temporary: Option<bool>,
 }
 
 impl<P: WalletPersister> NgAccountBuilder<P> {
@@ -955,6 +959,16 @@ impl<P: WalletPersister> NgAccountBuilder<P> {
         self
     }
 
+    pub fn archived(mut self, archived: bool) -> Self {
+        self.archived = Some(archived);
+        self
+    }
+
+    pub fn temporary(mut self, temporary: bool) -> Self {
+        self.temporary = Some(temporary);
+        self
+    }
+
     pub fn build_in_memory(self) -> anyhow::Result<NgAccount<P>> {
         let meta_storage = Arc::new(crate::store::InMemoryMetaStorage::default());
         self.build(meta_storage)
@@ -1008,6 +1022,7 @@ impl<P: WalletPersister> NgAccountBuilder<P> {
             seed_has_passphrase: self.seed_has_passphrase.unwrap_or(false),
             multisig: self.multisig,
             archived: self.archived.unwrap_or_default(),
+            temporary: self.temporary.unwrap_or_default(),
         };
 
         NgAccount::new_from_descriptors(ng_account_config, storage, descriptors)
