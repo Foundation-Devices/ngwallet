@@ -1,5 +1,5 @@
 use std::collections::{HashMap, HashSet};
-use std::fmt::Debug;
+use std::fmt::{self, Debug};
 use std::str::FromStr;
 use std::sync::{Arc, Mutex, RwLock};
 
@@ -37,11 +37,24 @@ impl<P: WalletPersister> Clone for NgAccount<P> {
     }
 }
 
-#[derive(Serialize, Deserialize, Debug, Clone)]
+#[derive(Serialize, Deserialize, Clone)]
 pub struct Descriptor<P: WalletPersister> {
     pub internal: String,
     pub external: Option<String>,
     pub bdk_persister: Arc<Mutex<P>>,
+}
+
+impl<P: WalletPersister> fmt::Debug for Descriptor<P> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("Descriptor")
+            .field("internal", &"<redacted descriptor>")
+            .field(
+                "external",
+                &self.external.as_ref().map(|_| "<redacted descriptor>"),
+            )
+            .field("bdk_persister", &"<redacted>")
+            .finish()
+    }
 }
 
 #[derive(Serialize, Deserialize)]
@@ -246,6 +259,7 @@ impl<P: WalletPersister> NgAccount<P> {
             if self.is_hot() {
                 config.descriptors = vec![];
             }
+            config.clear_private_descriptors();
             let last_used_index = self.get_derivation_index();
             let transactions = self.transactions()?;
             let utxos = self.utxos()?;

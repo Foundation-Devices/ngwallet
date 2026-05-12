@@ -10,12 +10,12 @@ use bdk_wallet::keys::bip39;
 use bdk_wallet::keys::bip39::{Language, Mnemonic};
 use bdk_wallet::miniscript::descriptor::DescriptorType;
 use bdk_wallet::template::{Bip44, Bip48Member, Bip49, Bip84, Bip86, DescriptorTemplateOut};
-use std::cmp::min;
+use std::{cmp::min, fmt};
 use thiserror::Error;
 use zeroize::{Zeroize, ZeroizeOnDrop};
 
 /// A master key for a given BIP-0039 mnemonic seed.
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct MasterKey {
     /// The mnemonic itself.
     pub mnemonic: String,
@@ -23,6 +23,16 @@ pub struct MasterKey {
     pub key: Key,
     /// The computed fingerprint from `xpriv`.
     pub fingerprint: Fingerprint,
+}
+
+impl fmt::Debug for MasterKey {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("MasterKey")
+            .field("mnemonic", &"<redacted mnemonic>")
+            .field("key", &self.key)
+            .field("fingerprint", &self.fingerprint)
+            .finish()
+    }
 }
 
 impl Drop for MasterKey {
@@ -76,8 +86,14 @@ impl MasterKey {
 
 pub const KEY_LEN: usize = 64;
 
-#[derive(Debug, Clone, ZeroizeOnDrop)]
+#[derive(Clone, ZeroizeOnDrop)]
 pub struct Key(pub [u8; KEY_LEN]);
+
+impl fmt::Debug for Key {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str("Key(<redacted seed bytes>)")
+    }
+}
 
 /// The word count of a mnemonic seed.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -113,13 +129,25 @@ pub enum Error {
     Bip85,
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(PartialEq)]
 pub struct Descriptors {
     pub bip: String,
     pub export_addr_hint: AddressType,
     pub descriptor: (ExtendedDescriptor, KeyMap),
     pub change_descriptor: (ExtendedDescriptor, KeyMap),
     pub descriptor_type: DescriptorType,
+}
+
+impl fmt::Debug for Descriptors {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("Descriptors")
+            .field("bip", &self.bip)
+            .field("export_addr_hint", &self.export_addr_hint)
+            .field("descriptor", &"<redacted descriptor>")
+            .field("change_descriptor", &"<redacted descriptor>")
+            .field("descriptor_type", &self.descriptor_type)
+            .finish()
+    }
 }
 
 impl Descriptors {
@@ -146,12 +174,22 @@ impl Descriptors {
     }
 }
 
-#[derive(Debug)]
 pub struct NgDescriptorTemplate {
     pub bip: String,
     pub export_addr_hint: AddressType,
     pub receive_template: DescriptorTemplateOut,
     pub change_template: DescriptorTemplateOut,
+}
+
+impl fmt::Debug for NgDescriptorTemplate {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("NgDescriptorTemplate")
+            .field("bip", &self.bip)
+            .field("export_addr_hint", &self.export_addr_hint)
+            .field("receive_template", &"<redacted descriptor template>")
+            .field("change_template", &"<redacted descriptor template>")
+            .finish()
+    }
 }
 
 pub fn get_seedword_suggestions(input: &str, nr_of_suggestions: usize) -> Vec<&str> {
