@@ -92,7 +92,17 @@ mod tests {
             updates.push((address_type, Update::from(update)));
         }
 
-        let payload = RemoteUpdate::new(None, updates).serialize();
+        let config = account.config.read().unwrap();
+        let payload = RemoteUpdate::new(
+            config.id.clone(),
+            config.network,
+            config.descriptor_hash(),
+            config.last_remote_sequence + 1,
+            None,
+            updates,
+        )
+        .serialize();
+        drop(config);
         account.update(payload).unwrap();
 
         let address = account.next_address().unwrap();
@@ -265,7 +275,17 @@ mod tests {
             updates.push((address_type, Update::from(update)));
         }
 
-        let payload = RemoteUpdate::new(None, updates).serialize();
+        let config = account.config.read().unwrap();
+        let payload = RemoteUpdate::new(
+            config.id.clone(),
+            config.network,
+            config.descriptor_hash(),
+            config.last_remote_sequence + 1,
+            None,
+            updates,
+        )
+        .serialize();
+        drop(config);
         account.update(payload).unwrap();
 
         let address = account.next_address().unwrap();
@@ -869,5 +889,388 @@ mod tests {
 
         assert!(has_tx_note, "Missing tx note in BIP-329 export");
         assert!(has_output_note, "Missing output note in BIP-329 export");
+    }
+
+    // -------------------------------------------------------------------------
+    // SFT-7011: RemoteUpdate authenticity, replay-protection, account-binding
+    #[test]
+    #[cfg(feature = "envoy")]
+    fn new_wallet_test_scan_security() {
+        let descriptors = vec![
+            Descriptor {
+                internal: FUNDED_INTERNAL_DESCRIPTOR.to_string(),
+                external: Some(FUNDED_EXTERNAL_DESCRIPTOR.to_string()),
+                bdk_persister: Arc::new(Mutex::new(Connection::open_in_memory().unwrap())),
+            },
+            Descriptor {
+                internal: FUNDED_INTERNAL_DESCRIPTOR_TR.to_string(),
+                external: Some(FUNDED_EXTERNAL_DESCRIPTOR_TR.to_string()),
+                bdk_persister: Arc::new(Mutex::new(Connection::open_in_memory().unwrap())),
+            },
+        ];
+
+        let account = NgAccountBuilder::default()
+            .name("Passport Prime".to_string())
+            .color("red".to_string())
+            .seed_has_passphrase(false)
+            .device_serial(None)
+            .date_added(None)
+            .preferred_address_type(AddressType::P2tr)
+            .index(0)
+            .descriptors(descriptors)
+            .date_synced(None)
+            .account_path(None)
+            .network(Network::Signet)
+            .id("1234567890".to_string())
+            .build_in_memory()
+            .unwrap();
+
+        // --- Step 1: do a real network scan and build a valid payload ----------
+        let mut updates = vec![];
+        for wallet in account.wallets.read().unwrap().iter() {
+            let (address_type, request) = account.full_scan_request(wallet.address_type).unwrap();
+            let update =
+                NgWallet::<Connection>::scan(request, ELECTRUM_SERVER, None, None, None).unwrap();
+            updates.push((address_type, Update::from(update)));
+        }
+
+        let valid_payload = {
+            let cfg = account.config.read().unwrap();
+            RemoteUpdate::new(
+                cfg.id.clone(),
+                cfg.network,
+                cfg.descriptor_hash(),
+                cfg.last_remote_sequence + 1,
+                None,
+                updates,
+            )
+            .serialize()
+        };
+
+        account.update(valid_payload.clone()).unwrap();
+        assert_eq!(account.config.read().unwrap().last_remote_sequence, 1);
+        assert!(account.balance().unwrap().total().to_sat() > 0);
+        assert!(!account.transactions().unwrap().is_empty());
+
+        //replay the exact same payload — must be rejected
+        let replay_err = account.update(valid_payload).unwrap_err();
+        assert!(
+            replay_err.to_string().contains("not newer"),
+            "replay should be rejected, got: {replay_err}"
+        );
+        // State must not have changed after a failed replay.
+        assert_eq!(account.config.read().unwrap().last_remote_sequence, 1);
+
+        // wrong account_id — must be rejectedd
+        let wrong_id_payload = {
+            let cfg = account.config.read().unwrap();
+            RemoteUpdate::new(
+                "attacker-account".to_string(),
+                cfg.network,
+                cfg.descriptor_hash(),
+                cfg.last_remote_sequence + 1,
+                None,
+                vec![],
+            )
+            .serialize()
+        };
+        let wrong_id_err = account.update(wrong_id_payload).unwrap_err();
+        assert!(
+            wrong_id_err.to_string().contains("account_id mismatch"),
+            "wrong account_id should be rejected, got: {wrong_id_err}"
+        );
+
+        //  metadata trying to change preferred_address_type
+        let tampered_meta_payload = {
+            let cfg = account.config.read().unwrap();
+            let mut meta = cfg.clone();
+            // Attempt to silently flip the coordinator wallet to P2wpkh.
+            meta.preferred_address_type = AddressType::P2wpkh;
+            RemoteUpdate::new(
+                cfg.id.clone(),
+                cfg.network,
+                cfg.descriptor_hash(),
+                cfg.last_remote_sequence + 1,
+                Some(meta),
+                vec![],
+            )
+            .serialize()
+        };
+        let meta_err = account.update(tampered_meta_payload).unwrap_err();
+        assert!(
+            meta_err.to_string().contains("preferred_address_type"),
+            "preferred_address_type tamper should be rejected, got: {meta_err}"
+        );
+        // Coordinator wallet must still be P2tr.
+        assert_eq!(
+            account.config.read().unwrap().preferred_address_type,
+            AddressType::P2tr
+        );
+    }
+
+    #[cfg(feature = "envoy")]
+    fn make_test_account() -> NgAccount<bdk_wallet::rusqlite::Connection> {
+        let descriptors = vec![Descriptor {
+            internal: INTERNAL_DESCRIPTOR.to_string(),
+            external: None,
+            bdk_persister: Arc::new(Mutex::new(
+                bdk_wallet::rusqlite::Connection::open_in_memory().unwrap(),
+            )),
+        }];
+        NgAccountBuilder::default()
+            .name("Test".to_string())
+            .color("blue".to_string())
+            .seed_has_passphrase(false)
+            .device_serial(None)
+            .date_added(None)
+            .preferred_address_type(AddressType::P2wpkh)
+            .index(0)
+            .descriptors(descriptors)
+            .date_synced(None)
+            .account_path(None)
+            .network(Network::Signet)
+            .id("account-id-abc".to_string())
+            .build_in_memory()
+            .unwrap()
+    }
+
+    #[cfg(feature = "envoy")]
+    fn valid_payload(
+        account: &NgAccount<bdk_wallet::rusqlite::Connection>,
+        seq_offset: u64,
+    ) -> Vec<u8> {
+        let cfg = account.config.read().unwrap();
+        RemoteUpdate::new(
+            cfg.id.clone(),
+            cfg.network,
+            cfg.descriptor_hash(),
+            cfg.last_remote_sequence + seq_offset,
+            None,
+            vec![],
+        )
+        .serialize()
+    }
+
+    #[test]
+    #[cfg(feature = "envoy")]
+    fn remote_update_rejects_wrong_account_id() {
+        let account = make_test_account();
+        let cfg = account.config.read().unwrap();
+        let payload = RemoteUpdate::new(
+            "wrong-account-id".to_string(),
+            cfg.network,
+            cfg.descriptor_hash(),
+            cfg.last_remote_sequence + 1,
+            None,
+            vec![],
+        )
+        .serialize();
+        drop(cfg);
+
+        let err = account.update(payload).unwrap_err();
+        assert!(
+            err.to_string().contains("account_id mismatch"),
+            "unexpected error: {err}"
+        );
+    }
+
+    #[test]
+    #[cfg(feature = "envoy")]
+    fn remote_update_rejects_wrong_network() {
+        let account = make_test_account();
+        let cfg = account.config.read().unwrap();
+        let payload = RemoteUpdate::new(
+            cfg.id.clone(),
+            Network::Bitcoin,
+            cfg.descriptor_hash(),
+            cfg.last_remote_sequence + 1,
+            None,
+            vec![],
+        )
+        .serialize();
+        drop(cfg);
+
+        let err = account.update(payload).unwrap_err();
+        assert!(
+            err.to_string().contains("network mismatch"),
+            "unexpected error: {err}"
+        );
+    }
+
+    #[test]
+    #[cfg(feature = "envoy")]
+    fn remote_update_rejects_wrong_descriptor_hash() {
+        let account = make_test_account();
+        let cfg = account.config.read().unwrap();
+        let bad_hash = [0xdeu8; 32];
+        let payload = RemoteUpdate::new(
+            cfg.id.clone(),
+            cfg.network,
+            bad_hash,
+            cfg.last_remote_sequence + 1,
+            None,
+            vec![],
+        )
+        .serialize();
+        drop(cfg);
+
+        let err = account.update(payload).unwrap_err();
+        assert!(
+            err.to_string().contains("descriptor hash mismatch"),
+            "unexpected error: {err}"
+        );
+    }
+
+    #[test]
+    #[cfg(feature = "envoy")]
+    fn remote_update_rejects_replay() {
+        let account = make_test_account();
+
+        // First update succeeds and advances the sequence to 1.
+        let first = valid_payload(&account, 1);
+        account.update(first).unwrap();
+        assert_eq!(account.config.read().unwrap().last_remote_sequence, 1);
+
+        // Replaying the same sequence is rejected.
+        let replay = valid_payload(&account, 0); // 1 + 0 = sequence 1 again
+        let err = account.update(replay).unwrap_err();
+        assert!(
+            err.to_string().contains("not newer"),
+            "unexpected error: {err}"
+        );
+    }
+
+    #[test]
+    #[cfg(feature = "envoy")]
+    fn remote_update_rejects_stale_sequence() {
+        let account = make_test_account();
+
+        // Advance to sequence 5.
+        account.update(valid_payload(&account, 5)).unwrap();
+
+        // Sequence 3 is now stale.
+        let cfg = account.config.read().unwrap();
+        let stale = RemoteUpdate::new(
+            cfg.id.clone(),
+            cfg.network,
+            cfg.descriptor_hash(),
+            3,
+            None,
+            vec![],
+        )
+        .serialize();
+        drop(cfg);
+
+        let err = account.update(stale).unwrap_err();
+        assert!(
+            err.to_string().contains("not newer"),
+            "unexpected error: {err}"
+        );
+    }
+
+    #[test]
+    #[cfg(feature = "envoy")]
+    fn remote_update_rejects_metadata_preferred_address_type_change() {
+        let account = make_test_account();
+        let cfg = account.config.read().unwrap();
+        let mut tampered_meta = cfg.clone();
+        tampered_meta.preferred_address_type = AddressType::P2tr;
+        let payload = RemoteUpdate::new(
+            cfg.id.clone(),
+            cfg.network,
+            cfg.descriptor_hash(),
+            cfg.last_remote_sequence + 1,
+            Some(tampered_meta),
+            vec![],
+        )
+        .serialize();
+        drop(cfg);
+
+        let err = account.update(payload).unwrap_err();
+        assert!(
+            err.to_string().contains("preferred_address_type"),
+            "unexpected error: {err}"
+        );
+    }
+
+    #[test]
+    #[cfg(feature = "envoy")]
+    fn remote_update_rejects_metadata_wrong_account_id() {
+        let account = make_test_account();
+        let cfg = account.config.read().unwrap();
+        let mut tampered_meta = cfg.clone();
+        tampered_meta.id = "attacker-account".to_string();
+        let payload = RemoteUpdate::new(
+            cfg.id.clone(),
+            cfg.network,
+            cfg.descriptor_hash(),
+            cfg.last_remote_sequence + 1,
+            Some(tampered_meta),
+            vec![],
+        )
+        .serialize();
+        drop(cfg);
+
+        let err = account.update(payload).unwrap_err();
+        assert!(
+            err.to_string().contains("metadata account_id mismatch"),
+            "unexpected error: {err}"
+        );
+    }
+
+    #[test]
+    #[cfg(feature = "envoy")]
+    fn remote_update_rejects_metadata_wrong_network() {
+        let account = make_test_account();
+        let cfg = account.config.read().unwrap();
+        let mut tampered_meta = cfg.clone();
+        tampered_meta.network = Network::Bitcoin;
+        let payload = RemoteUpdate::new(
+            cfg.id.clone(),
+            cfg.network,
+            cfg.descriptor_hash(),
+            cfg.last_remote_sequence + 1,
+            Some(tampered_meta),
+            vec![],
+        )
+        .serialize();
+        drop(cfg);
+
+        let err = account.update(payload).unwrap_err();
+        assert!(
+            err.to_string().contains("metadata network mismatch"),
+            "unexpected error: {err}"
+        );
+    }
+
+    #[test]
+    #[cfg(feature = "envoy")]
+    fn remote_update_allows_safe_metadata_fields() {
+        let account = make_test_account();
+        let cfg = account.config.read().unwrap();
+        let mut safe_meta = cfg.clone();
+        safe_meta.name = "Updated Name".to_string();
+        safe_meta.color = "green".to_string();
+        safe_meta.archived = true;
+        safe_meta.date_synced = Some("2026-01-01".to_string());
+        let payload = RemoteUpdate::new(
+            cfg.id.clone(),
+            cfg.network,
+            cfg.descriptor_hash(),
+            cfg.last_remote_sequence + 1,
+            Some(safe_meta),
+            vec![],
+        )
+        .serialize();
+        drop(cfg);
+
+        account.update(payload).unwrap();
+
+        let cfg = account.config.read().unwrap();
+        assert_eq!(cfg.name, "Updated Name");
+        assert_eq!(cfg.color, "green");
+        assert!(cfg.archived);
+        assert_eq!(cfg.date_synced.as_deref(), Some("2026-01-01"));
+        assert_eq!(cfg.last_remote_sequence, 1);
     }
 }
