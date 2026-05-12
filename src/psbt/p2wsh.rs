@@ -162,7 +162,7 @@ pub fn multisig_descriptor(
 mod tests {
     use super::*;
     use bdk_wallet::bitcoin::opcodes::all::OP_RETURN;
-    use bdk_wallet::bitcoin::{Amount, ScriptBuf, Script};
+    use bdk_wallet::bitcoin::{Amount, Script, ScriptBuf};
 
     fn empty_output_with_witness_script(witness_script: ScriptBuf) -> psbt::Output {
         psbt::Output {

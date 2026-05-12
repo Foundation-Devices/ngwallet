@@ -346,7 +346,7 @@ mod psbt_security_tests {
                 script_pubkey: real_p2sh_spk,
             }),
             redeem_script: Some(real_redeem_script), // correct outer binding
-            witness_script: Some(ScriptBuf::new()), // wrong inner — empty
+            witness_script: Some(ScriptBuf::new()),  // wrong inner — empty
             ..Default::default()
         };
         inp.bip32_derivation.insert(pk, (fp, path));

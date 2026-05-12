@@ -1,6 +1,6 @@
-/// RemoteUpdate  tests
-/// All validation logic fires before any wallet data is touched, so these
-/// tests use empty `wallet_update` payloads
+//! RemoteUpdate tests
+//! All validation logic fires before any wallet data is touched
+//! tests use empty `wallet_update` payloads
 
 #[cfg(test)]
 #[cfg(feature = "envoy")]

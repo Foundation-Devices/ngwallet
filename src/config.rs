@@ -1049,7 +1049,7 @@ impl NgAccountConfig {
     /// Used as a binding field in `RemoteUpdate` to ensure updates are applied
     /// only to the account they were created for.
     pub fn descriptor_hash(&self) -> [u8; 32] {
-        use bdk_wallet::bitcoin::hashes::{sha256, Hash, HashEngine};
+        use bdk_wallet::bitcoin::hashes::{Hash, HashEngine, sha256};
         let mut engine = sha256::HashEngine::default();
         let mut descriptors = self.descriptors.clone();
         descriptors.sort_by_key(|d| d.address_type);

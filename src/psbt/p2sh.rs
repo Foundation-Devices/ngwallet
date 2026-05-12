@@ -247,7 +247,7 @@ mod tests {
     use super::*;
     use bdk_wallet::bitcoin::hashes::{Hash, sha256};
     use bdk_wallet::bitcoin::opcodes::all::{OP_EQUAL, OP_HASH160, OP_PUSHBYTES_0, OP_RETURN};
-    use bdk_wallet::bitcoin::{Amount, ScriptBuf, Script, WScriptHash};
+    use bdk_wallet::bitcoin::{Amount, Script, ScriptBuf, WScriptHash};
 
     fn p2sh_script_pubkey() -> ScriptBuf {
         let mut bytes = Vec::with_capacity(23);
