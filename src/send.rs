@@ -68,6 +68,7 @@ pub enum TransactionComposeError {
     CreateTxError(CreateTxError),
     WalletError(String),
     Error(String),
+    LockedUtxoSelected(Vec<String>),
 }
 
 impl fmt::Display for TransactionComposeError {
@@ -76,6 +77,9 @@ impl fmt::Display for TransactionComposeError {
             TransactionComposeError::CreateTxError(e) => write!(f, "CreateTxError: {e}"),
             TransactionComposeError::WalletError(e) => write!(f, "WalletError: {e}"),
             TransactionComposeError::Error(e) => write!(f, "Error: {e}"),
+            TransactionComposeError::LockedUtxoSelected(ids) => {
+                write!(f, "LockedUtxoSelected: {}", ids.join(", "))
+            }
         }
     }
 }
@@ -115,7 +119,8 @@ impl<P: WalletPersister> NgAccount<P> {
             utxos.clone(),
             &mut do_not_spend_utxos,
             &mut spendables,
-        );
+        )
+        .map_err(TransactionComposeError::LockedUtxoSelected)?;
 
         if spendables.is_empty() {
             return Err(TransactionComposeError::Error(
@@ -201,7 +206,8 @@ impl<P: WalletPersister> NgAccount<P> {
                     match psbt.clone().extract_tx_fee_rate_limit() {
                         Ok(..) => {
                             max_fee_rate = FeeRateSatPerKwu::from_bdk(
-                                psbt.fee_rate().unwrap_or(FeeRate::from_sat_per_vb_unchecked(1)),
+                                psbt.fee_rate()
+                                    .unwrap_or(FeeRate::from_sat_per_vb_unchecked(1)),
                             );
                             if max_fee_rate < FeeRateSatPerKwu::from_sat_per_vb(1) {
                                 max_fee_rate = FeeRateSatPerKwu::from_sat_per_vb(1);
@@ -215,13 +221,15 @@ impl<P: WalletPersister> NgAccount<P> {
                             }
                             ExtractTxError::MissingInputValue { .. } => {
                                 max_fee_rate = FeeRateSatPerKwu::from_bdk(
-                                    psbt.fee_rate().unwrap_or(FeeRate::from_sat_per_vb_unchecked(1)),
+                                    psbt.fee_rate()
+                                        .unwrap_or(FeeRate::from_sat_per_vb_unchecked(1)),
                                 );
                                 break;
                             }
                             ExtractTxError::SendingTooMuch { psbt } => {
                                 max_fee_rate = FeeRateSatPerKwu::from_bdk(
-                                    psbt.fee_rate().unwrap_or(FeeRate::from_sat_per_vb_unchecked(1)),
+                                    psbt.fee_rate()
+                                        .unwrap_or(FeeRate::from_sat_per_vb_unchecked(1)),
                                 );
                                 break;
                             }
@@ -335,7 +343,8 @@ impl<P: WalletPersister> NgAccount<P> {
             utxos.clone(),
             &mut do_not_spend_utxos,
             &mut spendables,
-        );
+        )
+        .map_err(TransactionComposeError::LockedUtxoSelected)?;
 
         let mut do_not_spend_amount = 0;
 
@@ -429,24 +438,44 @@ impl<P: WalletPersister> NgAccount<P> {
         utxos: Vec<Output>,
         do_not_spend_utxos: &mut Vec<Output>,
         spendables: &mut Vec<Output>,
-    ) {
-        for output in utxos {
-            //choose all output that are not selected by the user,
-            //this will create a pool of available utxo for tx builder.
-            for selected_outputs in selected_outputs.clone() {
-                if output.get_id() == selected_outputs.get_id() {
-                    spendables.push(output.clone());
-                    break;
-                }
-            }
-            if selected_outputs.is_empty() && !output.do_not_spend {
-                spendables.push(output.clone());
-            }
+    ) -> Result<(), Vec<String>> {
+        let locked_utxo_ids: HashSet<String> = utxos
+            .iter()
+            .filter(|o| o.do_not_spend)
+            .map(|o| o.get_id())
+            .collect();
 
-            if !spendables.contains(&output) {
-                do_not_spend_utxos.push(output.clone());
+        let mut locked_selected: Vec<String> = Vec::new();
+        for selected in &selected_outputs {
+            let id = selected.get_id();
+            if (selected.do_not_spend || locked_utxo_ids.contains(&id))
+                && !locked_selected.contains(&id)
+            {
+                locked_selected.push(id);
             }
         }
+        if !locked_selected.is_empty() {
+            return Err(locked_selected);
+        }
+
+        let selected_ids: HashSet<String> = selected_outputs.iter().map(|o| o.get_id()).collect();
+        let has_explicit_selection = !selected_ids.is_empty();
+
+        for output in utxos {
+            let is_selected = selected_ids.contains(&output.get_id());
+            if has_explicit_selection {
+                if is_selected {
+                    spendables.push(output);
+                } else {
+                    do_not_spend_utxos.push(output);
+                }
+            } else if output.do_not_spend {
+                do_not_spend_utxos.push(output);
+            } else {
+                spendables.push(output);
+            }
+        }
+        Ok(())
     }
 
     pub(crate) fn transform_psbt_to_bitcointx(
@@ -478,7 +507,8 @@ impl<P: WalletPersister> NgAccount<P> {
             is_confirmed: false,
             fee: psbt.fee().unwrap_or(Amount::from_sat(0)).to_sat(),
             fee_rate: FeeRateSatPerKvb::from_bdk(
-                psbt.fee_rate().unwrap_or(FeeRate::from_sat_per_vb_unchecked(1)),
+                psbt.fee_rate()
+                    .unwrap_or(FeeRate::from_sat_per_vb_unchecked(1)),
             ),
             amount,
             inputs,
@@ -806,7 +836,8 @@ impl<P: WalletPersister> NgAccount<P> {
             is_confirmed: false,
             fee: psbt.fee().unwrap_or(Amount::from_sat(0)).to_sat(),
             fee_rate: FeeRateSatPerKvb::from_bdk(
-                psbt.fee_rate().unwrap_or(FeeRate::from_sat_per_vb_unchecked(1)),
+                psbt.fee_rate()
+                    .unwrap_or(FeeRate::from_sat_per_vb_unchecked(1)),
             ),
             amount: amount as i64,
             inputs: vec![],

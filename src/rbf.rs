@@ -1,10 +1,10 @@
 use crate::account::NgAccount;
+#[cfg(feature = "envoy")]
+use crate::fee_rate::FeeRateSatPerKvb;
+use crate::fee_rate::FeeRateSatPerKwu;
 use crate::ngwallet::NgWallet;
 use crate::rbf::BumpFeeError::ComposeTxError;
 use crate::send::DraftTransaction;
-use crate::fee_rate::FeeRateSatPerKwu;
-#[cfg(feature = "envoy")]
-use crate::fee_rate::FeeRateSatPerKvb;
 #[cfg(feature = "envoy")]
 use crate::send::TransactionFeeResult;
 use crate::transaction::{BitcoinTransaction, Input, KeyChain, Output};
@@ -44,6 +44,7 @@ pub enum BumpFeeError {
     FeeRateUnavailable,
     UnableToAccessWallet,
     UnableToAddForeignUtxo(AddForeignUtxoError),
+    LockedUtxoSelected(Vec<String>),
 }
 
 // TODO: chore: cleanup duplicate code
@@ -155,7 +156,8 @@ impl<P: WalletPersister> NgAccount<P> {
                                 max_fee = Some(required.to_sat());
                             }
                             CreateTxError::FeeRateTooLow { required } => {
-                                max_fee_rate = FeeRateSatPerKwu::from_bdk(required) + FeeRateSatPerKwu::from_sat_per_vb(1);
+                                max_fee_rate = FeeRateSatPerKwu::from_bdk(required)
+                                    + FeeRateSatPerKwu::from_sat_per_vb(1);
                                 max_fee = None;
                             }
                             CoinSelection(error) => {
@@ -200,7 +202,8 @@ impl<P: WalletPersister> NgAccount<P> {
                                 max_fee = Some(required.to_sat());
                             }
                             CreateTxError::FeeRateTooLow { required } => {
-                                max_fee_rate = FeeRateSatPerKwu::from_bdk(required) + FeeRateSatPerKwu::from_sat_per_vb(1);
+                                max_fee_rate = FeeRateSatPerKwu::from_bdk(required)
+                                    + FeeRateSatPerKwu::from_sat_per_vb(1);
                                 max_fee = None;
                             }
                             CoinSelection(error) => {
@@ -439,7 +442,8 @@ impl<P: WalletPersister> NgAccount<P> {
                 mature_utxos.clone(),
                 &mut do_not_spend_utxos,
                 &mut spendables,
-            );
+            )
+            .map_err(BumpFeeError::LockedUtxoSelected)?;
 
             for do_not_spend_utxo in do_not_spend_utxos.clone() {
                 tx_builder.add_unspendable(do_not_spend_utxo.get_outpoint());
