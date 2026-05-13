@@ -32,15 +32,9 @@ pub(crate) fn build_electrum_client(
     socks_proxy: Option<&str>,
     validate_domain: Option<bool>,
 ) -> BdkElectrumClient<Client> {
-    let socks5_config = match socks_proxy {
-        Some(socks_proxy) => {
-            let socks5_config = Socks5Config::new(socks_proxy);
-            Some(socks5_config)
-        }
-        None => None,
-    };
+    let socks5_config = socks_proxy.map(Socks5Config::new);
 
-    let validate_domain = socks5_config.is_none() && validate_domain.unwrap_or(true);
+    let validate_domain = validate_domain.unwrap_or(true);
     let electrum_config = Config::builder()
         .timeout(Some(30))
         .retry(3)
