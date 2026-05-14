@@ -1,5 +1,353 @@
 mod utils;
 
+///PSBT input-validation
+#[cfg(test)]
+mod psbt_security_tests {
+    use bdk_wallet::bitcoin::absolute::LockTime;
+    use bdk_wallet::bitcoin::bip32::{DerivationPath, Fingerprint, Xpriv, Xpub};
+    use bdk_wallet::bitcoin::psbt;
+    use bdk_wallet::bitcoin::psbt::Psbt;
+    use bdk_wallet::bitcoin::secp256k1::{All, PublicKey, Secp256k1};
+    use bdk_wallet::bitcoin::transaction::Version;
+    use bdk_wallet::bitcoin::{
+        Address, Amount, CompressedPublicKey, Network, OutPoint, ScriptBuf, Sequence, Transaction,
+        TxIn, TxOut, Txid, Witness,
+    };
+    use ngwallet::psbt::{Error, validate};
+    use std::str::FromStr;
+
+    const TEST_MASTER_XPRIV: &str = "tprv8ZgxMBicQKsPeLx4U7UmbcYU5VhS4BRxv86o1gNqNqxEEJL47F9ZZhvBi1EVbKPmmFYnTEZ6uArarK6zZyrZf7mSyWZRAuNKQp4dHfxBdMM";
+
+    fn test_secp() -> Secp256k1<All> {
+        Secp256k1::new()
+    }
+
+    fn test_master_key() -> Xpriv {
+        Xpriv::from_str(TEST_MASTER_XPRIV).unwrap()
+    }
+
+    fn derive_test_key(
+        secp: &Secp256k1<All>,
+        path_str: &str,
+    ) -> (PublicKey, DerivationPath, Fingerprint) {
+        let master = test_master_key();
+        let fp = master.fingerprint(secp);
+        let path: DerivationPath = path_str.parse().unwrap();
+        let child = master.derive_priv(secp, &path).unwrap();
+        let xpub = Xpub::from_priv(secp, &child);
+        (xpub.public_key, path, fp)
+    }
+
+    fn dummy_txin(txid: Txid) -> TxIn {
+        TxIn {
+            previous_output: OutPoint { txid, vout: 0 },
+            script_sig: ScriptBuf::new(),
+            sequence: Sequence::MAX,
+            witness: Witness::new(),
+        }
+    }
+
+    /// Build a minimal unsigned tx spending from `txid:0` with one OP_RETURN output.
+    fn dummy_unsigned_tx(txid: Txid) -> Transaction {
+        Transaction {
+            version: Version::TWO,
+            lock_time: LockTime::ZERO,
+            input: vec![dummy_txin(txid)],
+            output: vec![TxOut {
+                value: Amount::from_sat(99_000),
+                script_pubkey: ScriptBuf::new_op_return(&[]),
+            }],
+        }
+    }
+
+    /// Build a previous transaction whose output[0] is `txout`, and return
+    /// the (prev_tx, computed_txid) pair.
+    fn prev_tx_with_output(txout: TxOut) -> (Transaction, Txid) {
+        let tx = Transaction {
+            version: Version::TWO,
+            lock_time: LockTime::ZERO,
+            input: vec![],
+            output: vec![txout],
+        };
+        let txid = tx.compute_txid();
+        (tx, txid)
+    }
+
+    //witness_utxo/non_witness_utxo consistency
+
+    #[test]
+    fn psbt_rejects_forged_witness_utxo_value() {
+        // The on-chain output pays 1 000 sat, but witness_utxo claims 999 999.
+        let secp = test_secp();
+        let master = test_master_key();
+        let (pk, path, fp) = derive_test_key(&secp, "m/84'/1'/0'/0/0");
+
+        let address = Address::p2wpkh(&CompressedPublicKey(pk), Network::Testnet);
+        let real_txout = TxOut {
+            value: Amount::from_sat(1_000),
+            script_pubkey: address.script_pubkey(),
+        };
+        let forged_txout = TxOut {
+            value: Amount::from_sat(999_999), // inflated
+            script_pubkey: address.script_pubkey(),
+        };
+
+        let (prev_tx, txid) = prev_tx_with_output(real_txout);
+        let unsigned_tx = dummy_unsigned_tx(txid);
+        let mut psbt = Psbt::from_unsigned_tx(unsigned_tx).unwrap();
+
+        let mut inp = psbt::Input::default();
+        inp.non_witness_utxo = Some(prev_tx);
+        inp.witness_utxo = Some(forged_txout);
+        inp.bip32_derivation.insert(pk, (fp, path));
+        psbt.inputs = vec![inp];
+
+        assert!(
+            matches!(
+                validate(&secp, &master, &psbt, Network::Testnet),
+                Err(Error::FraudulentInput { index: 0 })
+            ),
+            "forged witness_utxo value must be rejected"
+        );
+    }
+
+    #[test]
+    fn psbt_rejects_forged_witness_utxo_script() {
+        // The on-chain output pays to our address, but witness_utxo uses a
+        // different script at the same value.
+        let secp = test_secp();
+        let master = test_master_key();
+        let (pk, path, fp) = derive_test_key(&secp, "m/84'/1'/0'/0/0");
+
+        let address = Address::p2wpkh(&CompressedPublicKey(pk), Network::Testnet);
+        let real_txout = TxOut {
+            value: Amount::from_sat(1_000),
+            script_pubkey: address.script_pubkey(),
+        };
+        let forged_txout = TxOut {
+            value: Amount::from_sat(1_000),
+            script_pubkey: ScriptBuf::new_op_return(&[0x42]), // wrong script
+        };
+
+        let (prev_tx, txid) = prev_tx_with_output(real_txout);
+        let unsigned_tx = dummy_unsigned_tx(txid);
+        let mut psbt = Psbt::from_unsigned_tx(unsigned_tx).unwrap();
+
+        let mut inp = psbt::Input::default();
+        inp.non_witness_utxo = Some(prev_tx);
+        inp.witness_utxo = Some(forged_txout);
+        inp.bip32_derivation.insert(pk, (fp, path));
+        psbt.inputs = vec![inp];
+
+        assert!(
+            matches!(
+                validate(&secp, &master, &psbt, Network::Testnet),
+                Err(Error::FraudulentInput { index: 0 })
+            ),
+            "forged witness_utxo script must be rejected"
+        );
+    }
+
+    #[test]
+    fn psbt_accepts_consistent_funding_pair() {
+        // When witness_utxo and non_witness_utxo agree, validate must not
+        let secp = test_secp();
+        let master = test_master_key();
+        let (pk, path, fp) = derive_test_key(&secp, "m/84'/1'/0'/0/0");
+
+        let address = Address::p2wpkh(&CompressedPublicKey(pk), Network::Testnet);
+        let txout = TxOut {
+            value: Amount::from_sat(100_000),
+            script_pubkey: address.script_pubkey(),
+        };
+
+        let (prev_tx, txid) = prev_tx_with_output(txout.clone());
+        let unsigned_tx = dummy_unsigned_tx(txid);
+        let mut psbt = Psbt::from_unsigned_tx(unsigned_tx).unwrap();
+
+        let mut inp = psbt::Input::default();
+        inp.non_witness_utxo = Some(prev_tx);
+        inp.witness_utxo = Some(txout); // identical — consistent
+        inp.bip32_derivation.insert(pk, (fp, path));
+        psbt.inputs = vec![inp];
+
+        let result = validate(&secp, &master, &psbt, Network::Testnet);
+        assert!(
+            !matches!(result, Err(Error::FraudulentInput { index: 0 })),
+            "consistent funding pair must not be rejected as fraudulent, got: {result:?}"
+        );
+    }
+
+    //legacy P2PKH requires non_witness_utxo
+
+    #[test]
+    fn psbt_rejects_p2pkh_without_non_witness_utxo() {
+        let secp = test_secp();
+        let master = test_master_key();
+        let (pk, path, fp) = derive_test_key(&secp, "m/44'/1'/0'/0/0");
+
+        let address = Address::p2pkh(CompressedPublicKey(pk), Network::Testnet);
+        let funding_out = TxOut {
+            value: Amount::from_sat(100_000),
+            script_pubkey: address.script_pubkey(),
+        };
+
+        let fake_txid =
+            Txid::from_str("abababababababababababababababababababababababababababababababab")
+                .unwrap();
+        let unsigned_tx = dummy_unsigned_tx(fake_txid);
+        let mut psbt = Psbt::from_unsigned_tx(unsigned_tx).unwrap();
+
+        let mut inp = psbt::Input::default();
+        inp.witness_utxo = Some(funding_out); // no non_witness_utxo
+        inp.bip32_derivation.insert(pk, (fp, path));
+        psbt.inputs = vec![inp];
+
+        assert!(
+            matches!(
+                validate(&secp, &master, &psbt, Network::Testnet),
+                Err(Error::MissingInputFundingUtxo { index: 0 })
+            ),
+            "P2PKH input without non_witness_utxo must be rejected"
+        );
+    }
+
+    //P2WSH script hash binding
+
+    #[test]
+    fn psbt_rejects_p2wsh_wrong_witness_script_hash() {
+        let secp = test_secp();
+        let master = test_master_key();
+        let (pk, path, fp) = derive_test_key(&secp, "m/48'/1'/0'/2'/0/0");
+
+        let real_witness_script = {
+            use bdk_wallet::bitcoin::opcodes::all::{OP_CHECKMULTISIG, OP_PUSHNUM_1};
+            use bdk_wallet::bitcoin::script::Builder;
+            Builder::new()
+                .push_opcode(OP_PUSHNUM_1)
+                .push_key(&bdk_wallet::bitcoin::PublicKey::new(pk))
+                .push_opcode(OP_PUSHNUM_1)
+                .push_opcode(OP_CHECKMULTISIG)
+                .into_script()
+        };
+        let real_spk = ScriptBuf::new_p2wsh(&real_witness_script.wscript_hash());
+
+        let fake_txid =
+            Txid::from_str("cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd")
+                .unwrap();
+        let unsigned_tx = dummy_unsigned_tx(fake_txid);
+        let mut psbt = Psbt::from_unsigned_tx(unsigned_tx).unwrap();
+
+        let mut inp = psbt::Input::default();
+        inp.witness_utxo = Some(TxOut {
+            value: Amount::from_sat(100_000),
+            script_pubkey: real_spk,
+        });
+        inp.witness_script = Some(ScriptBuf::new()); // wrong — empty script
+        inp.bip32_derivation.insert(pk, (fp, path));
+        psbt.inputs = vec![inp];
+
+        assert!(
+            matches!(
+                validate(&secp, &master, &psbt, Network::Testnet),
+                Err(Error::FraudulentInput { index: 0 })
+            ),
+            "P2WSH witness_script hash mismatch must be rejected"
+        );
+    }
+
+    // P2SH-P2WSH script hash binding
+
+    #[test]
+    fn psbt_rejects_p2sh_wrong_redeem_script_hash() {
+        let secp = test_secp();
+        let master = test_master_key();
+        let (pk, path, fp) = derive_test_key(&secp, "m/48'/1'/0'/1'/0/0");
+
+        let witness_script = {
+            use bdk_wallet::bitcoin::opcodes::all::{OP_CHECKMULTISIG, OP_PUSHNUM_1};
+            use bdk_wallet::bitcoin::script::Builder;
+            Builder::new()
+                .push_opcode(OP_PUSHNUM_1)
+                .push_key(&bdk_wallet::bitcoin::PublicKey::new(pk))
+                .push_opcode(OP_PUSHNUM_1)
+                .push_opcode(OP_CHECKMULTISIG)
+                .into_script()
+        };
+        let real_redeem_script = ScriptBuf::new_p2wsh(&witness_script.wscript_hash());
+        let real_p2sh_spk = ScriptBuf::new_p2sh(&real_redeem_script.script_hash());
+        let forged_redeem_script = ScriptBuf::new_p2wsh(&ScriptBuf::new().wscript_hash()); // different hash
+
+        let fake_txid =
+            Txid::from_str("efefefefefefefefefefefefefefefefefefefefefefefefefefefefefefefef")
+                .unwrap();
+        let unsigned_tx = dummy_unsigned_tx(fake_txid);
+        let mut psbt = Psbt::from_unsigned_tx(unsigned_tx).unwrap();
+
+        let mut inp = psbt::Input::default();
+        inp.witness_utxo = Some(TxOut {
+            value: Amount::from_sat(100_000),
+            script_pubkey: real_p2sh_spk,
+        });
+        inp.redeem_script = Some(forged_redeem_script);
+        inp.witness_script = Some(witness_script);
+        inp.bip32_derivation.insert(pk, (fp, path));
+        psbt.inputs = vec![inp];
+
+        assert!(
+            matches!(
+                validate(&secp, &master, &psbt, Network::Testnet),
+                Err(Error::FraudulentInput { index: 0 })
+            ),
+            "P2SH redeem_script hash mismatch must be rejected"
+        );
+    }
+
+    #[test]
+    fn psbt_rejects_p2sh_p2wsh_wrong_witness_script_hash() {
+        let secp = test_secp();
+        let master = test_master_key();
+        let (pk, path, fp) = derive_test_key(&secp, "m/48'/1'/0'/1'/0/0");
+
+        let real_witness_script = {
+            use bdk_wallet::bitcoin::opcodes::all::{OP_CHECKMULTISIG, OP_PUSHNUM_1};
+            use bdk_wallet::bitcoin::script::Builder;
+            Builder::new()
+                .push_opcode(OP_PUSHNUM_1)
+                .push_key(&bdk_wallet::bitcoin::PublicKey::new(pk))
+                .push_opcode(OP_PUSHNUM_1)
+                .push_opcode(OP_CHECKMULTISIG)
+                .into_script()
+        };
+        let real_redeem_script = ScriptBuf::new_p2wsh(&real_witness_script.wscript_hash());
+        let real_p2sh_spk = ScriptBuf::new_p2sh(&real_redeem_script.script_hash());
+
+        let fake_txid =
+            Txid::from_str("0101010101010101010101010101010101010101010101010101010101010101")
+                .unwrap();
+        let unsigned_tx = dummy_unsigned_tx(fake_txid);
+        let mut psbt = Psbt::from_unsigned_tx(unsigned_tx).unwrap();
+
+        let mut inp = psbt::Input::default();
+        inp.witness_utxo = Some(TxOut {
+            value: Amount::from_sat(100_000),
+            script_pubkey: real_p2sh_spk,
+        });
+        inp.redeem_script = Some(real_redeem_script); // correct outer binding
+        inp.witness_script = Some(ScriptBuf::new()); // wrong inner — empty
+        inp.bip32_derivation.insert(pk, (fp, path));
+        psbt.inputs = vec![inp];
+
+        assert!(
+            matches!(
+                validate(&secp, &master, &psbt, Network::Testnet),
+                Err(Error::FraudulentInput { index: 0 })
+            ),
+            "P2SH-P2WSH witness_script hash mismatch must be rejected"
+        );
+    }
+}
+
 #[cfg(test)]
 #[cfg(feature = "envoy")]
 mod spend_tests {
@@ -25,7 +373,7 @@ mod spend_tests {
         };
         let draft = account.get_max_fee(params.clone()).unwrap();
         assert_eq!(draft.max_fee_rate, FeeRateSatPerKvb(553_828)); // 138_457 sat/kwu * 4 = sat/kvB
-        assert_eq!(draft.min_fee_rate, FeeRateSatPerKvb(1000));   // 1 sat/vB in sat/kvB
+        assert_eq!(draft.min_fee_rate, FeeRateSatPerKvb(1000)); // 1 sat/vB in sat/kvB
         check_draft_tx_match_params(draft.draft_transaction.clone(), params.clone());
     }
 
