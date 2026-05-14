@@ -55,7 +55,7 @@ mod psbt_security_tests {
             input: vec![dummy_txin(txid)],
             output: vec![TxOut {
                 value: Amount::from_sat(99_000),
-                script_pubkey: ScriptBuf::new_op_return(&[]),
+                script_pubkey: ScriptBuf::new_op_return([]),
             }],
         }
     }
@@ -96,9 +96,11 @@ mod psbt_security_tests {
         let unsigned_tx = dummy_unsigned_tx(txid);
         let mut psbt = Psbt::from_unsigned_tx(unsigned_tx).unwrap();
 
-        let mut inp = psbt::Input::default();
-        inp.non_witness_utxo = Some(prev_tx);
-        inp.witness_utxo = Some(forged_txout);
+        let mut inp = psbt::Input {
+            non_witness_utxo: Some(prev_tx),
+            witness_utxo: Some(forged_txout),
+            ..Default::default()
+        };
         inp.bip32_derivation.insert(pk, (fp, path));
         psbt.inputs = vec![inp];
 
@@ -126,16 +128,18 @@ mod psbt_security_tests {
         };
         let forged_txout = TxOut {
             value: Amount::from_sat(1_000),
-            script_pubkey: ScriptBuf::new_op_return(&[0x42]), // wrong script
+            script_pubkey: ScriptBuf::new_op_return([0x42]), // wrong script
         };
 
         let (prev_tx, txid) = prev_tx_with_output(real_txout);
         let unsigned_tx = dummy_unsigned_tx(txid);
         let mut psbt = Psbt::from_unsigned_tx(unsigned_tx).unwrap();
 
-        let mut inp = psbt::Input::default();
-        inp.non_witness_utxo = Some(prev_tx);
-        inp.witness_utxo = Some(forged_txout);
+        let mut inp = psbt::Input {
+            non_witness_utxo: Some(prev_tx),
+            witness_utxo: Some(forged_txout),
+            ..Default::default()
+        };
         inp.bip32_derivation.insert(pk, (fp, path));
         psbt.inputs = vec![inp];
 
@@ -165,9 +169,11 @@ mod psbt_security_tests {
         let unsigned_tx = dummy_unsigned_tx(txid);
         let mut psbt = Psbt::from_unsigned_tx(unsigned_tx).unwrap();
 
-        let mut inp = psbt::Input::default();
-        inp.non_witness_utxo = Some(prev_tx);
-        inp.witness_utxo = Some(txout); // identical — consistent
+        let mut inp = psbt::Input {
+            non_witness_utxo: Some(prev_tx),
+            witness_utxo: Some(txout), // identical — consistent
+            ..Default::default()
+        };
         inp.bip32_derivation.insert(pk, (fp, path));
         psbt.inputs = vec![inp];
 
@@ -198,8 +204,10 @@ mod psbt_security_tests {
         let unsigned_tx = dummy_unsigned_tx(fake_txid);
         let mut psbt = Psbt::from_unsigned_tx(unsigned_tx).unwrap();
 
-        let mut inp = psbt::Input::default();
-        inp.witness_utxo = Some(funding_out); // no non_witness_utxo
+        let mut inp = psbt::Input {
+            witness_utxo: Some(funding_out), // no non_witness_utxo
+            ..Default::default()
+        };
         inp.bip32_derivation.insert(pk, (fp, path));
         psbt.inputs = vec![inp];
 
@@ -238,12 +246,14 @@ mod psbt_security_tests {
         let unsigned_tx = dummy_unsigned_tx(fake_txid);
         let mut psbt = Psbt::from_unsigned_tx(unsigned_tx).unwrap();
 
-        let mut inp = psbt::Input::default();
-        inp.witness_utxo = Some(TxOut {
-            value: Amount::from_sat(100_000),
-            script_pubkey: real_spk,
-        });
-        inp.witness_script = Some(ScriptBuf::new()); // wrong — empty script
+        let mut inp = psbt::Input {
+            witness_utxo: Some(TxOut {
+                value: Amount::from_sat(100_000),
+                script_pubkey: real_spk,
+            }),
+            witness_script: Some(ScriptBuf::new()), // wrong — empty script
+            ..Default::default()
+        };
         inp.bip32_derivation.insert(pk, (fp, path));
         psbt.inputs = vec![inp];
 
@@ -284,13 +294,15 @@ mod psbt_security_tests {
         let unsigned_tx = dummy_unsigned_tx(fake_txid);
         let mut psbt = Psbt::from_unsigned_tx(unsigned_tx).unwrap();
 
-        let mut inp = psbt::Input::default();
-        inp.witness_utxo = Some(TxOut {
-            value: Amount::from_sat(100_000),
-            script_pubkey: real_p2sh_spk,
-        });
-        inp.redeem_script = Some(forged_redeem_script);
-        inp.witness_script = Some(witness_script);
+        let mut inp = psbt::Input {
+            witness_utxo: Some(TxOut {
+                value: Amount::from_sat(100_000),
+                script_pubkey: real_p2sh_spk,
+            }),
+            redeem_script: Some(forged_redeem_script),
+            witness_script: Some(witness_script),
+            ..Default::default()
+        };
         inp.bip32_derivation.insert(pk, (fp, path));
         psbt.inputs = vec![inp];
 
@@ -328,13 +340,15 @@ mod psbt_security_tests {
         let unsigned_tx = dummy_unsigned_tx(fake_txid);
         let mut psbt = Psbt::from_unsigned_tx(unsigned_tx).unwrap();
 
-        let mut inp = psbt::Input::default();
-        inp.witness_utxo = Some(TxOut {
-            value: Amount::from_sat(100_000),
-            script_pubkey: real_p2sh_spk,
-        });
-        inp.redeem_script = Some(real_redeem_script); // correct outer binding
-        inp.witness_script = Some(ScriptBuf::new()); // wrong inner — empty
+        let mut inp = psbt::Input {
+            witness_utxo: Some(TxOut {
+                value: Amount::from_sat(100_000),
+                script_pubkey: real_p2sh_spk,
+            }),
+            redeem_script: Some(real_redeem_script), // correct outer binding
+            witness_script: Some(ScriptBuf::new()), // wrong inner — empty
+            ..Default::default()
+        };
         inp.bip32_derivation.insert(pk, (fp, path));
         psbt.inputs = vec![inp];
 
