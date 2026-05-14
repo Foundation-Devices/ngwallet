@@ -21,8 +21,11 @@ pub fn validate_output(
         .witness_script
         .as_ref()
         .ok_or_else(|| Error::MissingWitnessScript { index })?;
-    let ms = Miniscript::<_, Segwitv0>::parse(witness_script).unwrap();
-    let descriptor = Wsh::new(ms).map(Descriptor::Wsh).unwrap();
+    let ms = Miniscript::<_, Segwitv0>::parse(witness_script)
+        .map_err(|_| Error::InvalidWitnessScript { index })?;
+    let descriptor = Wsh::new(ms)
+        .map(Descriptor::Wsh)
+        .map_err(|_| Error::InvalidWitnessScript { index })?;
 
     // Verify that all keys in the descriptor are in the bip32_derivation map
     // which should have been validated already.
@@ -32,7 +35,9 @@ pub fn validate_output(
         return Err(Error::FraudulentOutput { index });
     }
 
-    let address = descriptor.address(network).unwrap();
+    let address = descriptor
+        .address(network)
+        .map_err(|_| Error::InvalidWitnessScript { index })?;
     if !address.matches_script_pubkey(&txout.script_pubkey) {
         return Err(Error::FraudulentOutput { index });
     }
@@ -40,7 +45,7 @@ pub fn validate_output(
     let (_, (_, path)) = output
         .bip32_derivation
         .first_key_value()
-        .expect("at least one bip32 derivation should be present");
+        .ok_or(Error::ExpectedKeys { index })?;
 
     let Some(purpose) = path.as_ref().iter().next() else {
         return Ok(PsbtOutput {
@@ -151,4 +156,82 @@ pub fn multisig_descriptor(
             .unwrap();
 
     Ok([external_descriptor, internal_descriptor])
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use bdk_wallet::bitcoin::opcodes::all::OP_RETURN;
+    use bdk_wallet::bitcoin::{Amount, ScriptBuf, Script};
+
+    fn empty_output_with_witness_script(witness_script: ScriptBuf) -> psbt::Output {
+        psbt::Output {
+            witness_script: Some(witness_script),
+            ..Default::default()
+        }
+    }
+
+    fn empty_txout() -> TxOut {
+        TxOut {
+            value: Amount::from_sat(1000),
+            script_pubkey: ScriptBuf::new(),
+        }
+    }
+
+    /// A malformed witness_script (random non-script bytes) must not panic
+    /// when reaching the Miniscript parser.
+    #[test]
+    fn malformed_witness_script_returns_error() {
+        let witness_script = ScriptBuf::from_bytes(vec![0xff; 32]);
+        let output = empty_output_with_witness_script(witness_script);
+        let txout = empty_txout();
+
+        let result = validate_output(&output, &txout, Network::Bitcoin, 0);
+        assert!(matches!(
+            result,
+            Err(Error::InvalidWitnessScript { index: 0 })
+        ));
+    }
+
+    /// A syntactically valid script that is not a valid Miniscript expression
+    /// must be reported as InvalidWitnessScript instead of panicking.
+    #[test]
+    fn non_miniscript_witness_script_returns_error() {
+        let witness_script = Script::builder().push_opcode(OP_RETURN).into_script();
+        let output = empty_output_with_witness_script(witness_script);
+        let txout = empty_txout();
+
+        let result = validate_output(&output, &txout, Network::Bitcoin, 0);
+        assert!(matches!(
+            result,
+            Err(Error::InvalidWitnessScript { index: 0 })
+        ));
+    }
+
+    /// An empty witness_script triggers the parser at the boundary and must
+    /// not panic.
+    #[test]
+    fn empty_witness_script_returns_error() {
+        let output = empty_output_with_witness_script(ScriptBuf::new());
+        let txout = empty_txout();
+
+        let result = validate_output(&output, &txout, Network::Bitcoin, 0);
+        assert!(matches!(
+            result,
+            Err(Error::InvalidWitnessScript { index: 0 })
+        ));
+    }
+
+    /// Missing witness_script must surface as a structured error.
+    #[test]
+    fn missing_witness_script_returns_error() {
+        let output = psbt::Output::default();
+        let txout = empty_txout();
+
+        let result = validate_output(&output, &txout, Network::Bitcoin, 7);
+        assert!(matches!(
+            result,
+            Err(Error::MissingWitnessScript { index: 7 })
+        ));
+    }
 }
