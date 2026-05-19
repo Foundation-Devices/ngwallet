@@ -107,13 +107,8 @@ impl<P: WalletPersister> NgAccount<P> {
         //self spend
         if bitcoin_transaction.fee == (bitcoin_transaction.amount.unsigned_abs()) {
             for output in bitcoin_transaction.clone().outputs {
-                match output.keychain {
-                    None => {}
-                    Some(keychain) => {
-                        if keychain == KeyChain::External {
-                            receive_amount = output.amount;
-                        }
-                    }
+                if let Some(KeyChain::External) = output.keychain {
+                    receive_amount = output.amount;
                 }
             }
         }
