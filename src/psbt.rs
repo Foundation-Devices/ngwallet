@@ -15,7 +15,7 @@ use bdk_wallet::bitcoin::psbt;
 use bdk_wallet::bitcoin::psbt::Psbt;
 use bdk_wallet::bitcoin::secp256k1::{PublicKey, Secp256k1, Signing, Verification, XOnlyPublicKey};
 use bdk_wallet::bitcoin::{
-    Address, Amount, CompressedPublicKey, Network, NetworkKind, TapLeafHash, TxIn, TxOut,
+    Address, Amount, CompressedPublicKey, Network, NetworkKind, ScriptBuf, TapLeafHash, TxIn, TxOut,
 };
 use bdk_wallet::descriptor::ExtendedDescriptor;
 use bdk_wallet::keys::{DescriptorPublicKey, SinglePub, SinglePubKey};
@@ -482,7 +482,7 @@ where
         }
 
         let funding_utxo =
-            funding_utxo(input, txin).ok_or(Error::MissingInputFundingUtxo { index: i })?;
+            funding_utxo(input, txin, i)?.ok_or(Error::MissingInputFundingUtxo { index: i })?;
 
         if funding_utxo.script_pubkey.is_p2tr() {
             // Only single-sig P2TR supported for now.
@@ -520,6 +520,12 @@ where
             });
             descriptors.insert(p2wpkh::descriptor(secp, master_key, &source.1, network));
         } else if funding_utxo.script_pubkey.is_p2pkh() {
+            // Legacy inputs must supply the full previous transaction so the
+            // referenced output can be verified. witness_utxo alone is not
+            if input.non_witness_utxo.is_none() {
+                return Err(Error::MissingInputFundingUtxo { index: i });
+            }
+
             if input.bip32_derivation.len() != 1 {
                 return Err(Error::MultipleKeysNotExpected { index: i });
             }
@@ -538,9 +544,14 @@ where
             });
             descriptors.insert(p2pkh::descriptor(secp, master_key, &source.1, network));
         } else if funding_utxo.script_pubkey.is_p2wsh() {
-            // TODO: Construct the address to check that it matches script_pubkey.
-
             if let Some(witness_script) = input.witness_script.as_ref() {
+                // Verify sha256(witness_script) matches the P2WSH scriptPubKey so
+                // an attacker cannot substitute a different script via witness_utxo.
+                let expected_spk = ScriptBuf::new_p2wsh(&witness_script.wscript_hash());
+                if expected_spk != funding_utxo.script_pubkey {
+                    return Err(Error::FraudulentInput { index: i });
+                }
+
                 if witness_script.is_multisig() {
                     let required_signers = multisig::disassemble(witness_script)
                         .map_err(|_| Error::InvalidMultisigScript { index: i })?;
@@ -561,6 +572,13 @@ where
             }
         } else if funding_utxo.script_pubkey.is_p2sh() {
             if let Some(redeem_script) = input.redeem_script.as_ref() {
+                // Verify hash160(redeem_script) matches the P2SH scriptPubKey so
+                // an attacker cannot inject a different redeem script.
+                let expected_p2sh_spk = ScriptBuf::new_p2sh(&redeem_script.script_hash());
+                if expected_p2sh_spk != funding_utxo.script_pubkey {
+                    return Err(Error::FraudulentInput { index: i });
+                }
+
                 if redeem_script.is_p2wpkh() {
                     if input.bip32_derivation.len() != 1 {
                         return Err(Error::MultipleKeysNotExpected { index: i });
@@ -583,6 +601,14 @@ where
                     ));
                 } else if redeem_script.is_p2wsh() {
                     if let Some(witness_script) = input.witness_script.as_ref() {
+                        // Verify sha256(witness_script) matches the P2WSH redeem_script
+                        // so neither the redeem_script nor the witness_script can be forged.
+                        let expected_p2wsh_script =
+                            ScriptBuf::new_p2wsh(&witness_script.wscript_hash());
+                        if expected_p2wsh_script != *redeem_script {
+                            return Err(Error::FraudulentInput { index: i });
+                        }
+
                         if witness_script.is_multisig() {
                             let required_signers = multisig::disassemble(witness_script)
                                 .map_err(|_| Error::InvalidMultisigScript { index: i })?;
@@ -810,14 +836,30 @@ fn x_only_keys_iterator<K>(
         .filter(move |(_, (_, source))| fingerprint == source.0)
 }
 
-fn funding_utxo<'a>(input: &'a psbt::Input, txin: &'a TxIn) -> Option<&'a TxOut> {
+fn funding_utxo<'a>(
+    input: &'a psbt::Input,
+    txin: &'a TxIn,
+    index: usize,
+) -> Result<Option<&'a TxOut>, Error> {
+    let vout = txin.previous_output.vout as usize;
     match (input.witness_utxo.as_ref(), input.non_witness_utxo.as_ref()) {
-        (Some(witness_utxo), _) => Some(witness_utxo),
-        (None, Some(non_witness_utxo)) => {
-            let vout = txin.previous_output.vout as usize;
-            non_witness_utxo.output.get(vout)
+        (Some(witness_utxo), Some(non_witness_utxo)) => {
+            let authoritative = non_witness_utxo
+                .output
+                .get(vout)
+                .ok_or(Error::MissingInputFundingUtxo { index })?;
+            // Reject if the Wrong witness_utxo differs from the
+            // full transaction output at the referenced vout.
+            if witness_utxo.script_pubkey != authoritative.script_pubkey
+                || witness_utxo.value != authoritative.value
+            {
+                return Err(Error::FraudulentInput { index });
+            }
+            Ok(Some(authoritative))
         }
-        (None, None) => None,
+        (Some(witness_utxo), None) => Ok(Some(witness_utxo)),
+        (None, Some(non_witness_utxo)) => Ok(non_witness_utxo.output.get(vout)),
+        (None, None) => Ok(None),
     }
 }
 
