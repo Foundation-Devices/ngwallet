@@ -6,7 +6,10 @@ mod spend_tests {
     use crate::utils::tests_util;
     use bdk_wallet::rusqlite::Connection;
     use ngwallet::account::NgAccount;
-    use ngwallet::send::{DraftTransaction, FeeRateSatPerKvb, TransactionParams};
+    use ngwallet::rbf::BumpFeeError;
+    use ngwallet::send::{
+        DraftTransaction, FeeRateSatPerKvb, TransactionComposeError, TransactionParams,
+    };
 
     use crate::utils::tests_util::get_ng_hot_wallet;
 
@@ -25,7 +28,7 @@ mod spend_tests {
         };
         let draft = account.get_max_fee(params.clone()).unwrap();
         assert_eq!(draft.max_fee_rate, FeeRateSatPerKvb(553_828)); // 138_457 sat/kwu * 4 = sat/kvB
-        assert_eq!(draft.min_fee_rate, FeeRateSatPerKvb(1000));   // 1 sat/vB in sat/kvB
+        assert_eq!(draft.min_fee_rate, FeeRateSatPerKvb(1000)); // 1 sat/vB in sat/kvB
         check_draft_tx_match_params(draft.draft_transaction.clone(), params.clone());
     }
 
@@ -146,6 +149,157 @@ mod spend_tests {
         assert_eq!(transaction.amount, -(params.amount as i64));
         assert_eq!(transaction.note, params.note);
         assert_eq!(transaction.get_change_tag(), params.tag);
+    }
+
+    // Audit P2-01: a UTXO marked do_not_spend must never be spent, even when
+    // the caller passes it explicitly in `selected_outputs`. Both the send
+    // and RBF paths share this policy and must surface a dedicated error.
+
+    #[test]
+    fn test_compose_psbt_rejects_locked_selected_utxo() {
+        let mut account = get_ng_hot_wallet();
+        tests_util::add_funds_to_wallet(&mut account);
+
+        let locked = account.utxos().unwrap()[0].clone();
+        account
+            .set_do_not_spend(locked.get_id().as_str(), true)
+            .unwrap();
+        let locked_live = account
+            .utxos()
+            .unwrap()
+            .into_iter()
+            .find(|o| o.get_id() == locked.get_id())
+            .expect("locked utxo should still exist");
+        assert!(locked_live.do_not_spend);
+
+        let params = TransactionParams {
+            address: "tb1pspfcrvz538vvj9f9gfkd85nu5ty98zw9y5e302kha6zurv6vg07s8z7a8w".to_string(),
+            amount: 4000,
+            fee_rate: FeeRateSatPerKvb(2000),
+            selected_outputs: vec![locked_live.clone()],
+            note: None,
+            tag: None,
+            do_not_spend_change: false,
+        };
+        match account.compose_psbt(params) {
+            Err(TransactionComposeError::LockedUtxoSelected(ids)) => {
+                assert_eq!(ids, vec![locked_live.get_id()]);
+            }
+            other => panic!("expected LockedUtxoSelected, got {other:?}"),
+        }
+    }
+
+    // A caller cannot bypass the lock by zeroing `do_not_spend` on the
+    // Output values it passes in `selected_outputs`. The wallet's live UTXO
+    // set is the source of truth.
+    #[test]
+    fn test_compose_psbt_rejects_stale_unlocked_selected_utxo() {
+        let mut account = get_ng_hot_wallet();
+        tests_util::add_funds_to_wallet(&mut account);
+
+        let locked_id = {
+            let utxo = account.utxos().unwrap()[0].clone();
+            account
+                .set_do_not_spend(utxo.get_id().as_str(), true)
+                .unwrap();
+            utxo.get_id()
+        };
+
+        let mut stale = account
+            .utxos()
+            .unwrap()
+            .into_iter()
+            .find(|o| o.get_id() == locked_id)
+            .unwrap();
+        // Simulate a compromised caller forging do_not_spend=false.
+        stale.do_not_spend = false;
+
+        let params = TransactionParams {
+            address: "tb1pspfcrvz538vvj9f9gfkd85nu5ty98zw9y5e302kha6zurv6vg07s8z7a8w".to_string(),
+            amount: 4000,
+            fee_rate: FeeRateSatPerKvb(2000),
+            selected_outputs: vec![stale],
+            note: None,
+            tag: None,
+            do_not_spend_change: false,
+        };
+        match account.compose_psbt(params) {
+            Err(TransactionComposeError::LockedUtxoSelected(ids)) => {
+                assert_eq!(ids, vec![locked_id]);
+            }
+            other => panic!("expected LockedUtxoSelected, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn test_get_max_fee_rejects_locked_selected_utxo() {
+        let mut account = get_ng_hot_wallet();
+        tests_util::add_funds_to_wallet(&mut account);
+
+        let locked = account.utxos().unwrap()[0].clone();
+        account
+            .set_do_not_spend(locked.get_id().as_str(), true)
+            .unwrap();
+        let locked_live = account
+            .utxos()
+            .unwrap()
+            .into_iter()
+            .find(|o| o.get_id() == locked.get_id())
+            .unwrap();
+
+        let params = TransactionParams {
+            address: "tb1pspfcrvz538vvj9f9gfkd85nu5ty98zw9y5e302kha6zurv6vg07s8z7a8w".to_string(),
+            amount: 2003,
+            fee_rate: FeeRateSatPerKvb(1000),
+            selected_outputs: vec![locked_live.clone()],
+            note: None,
+            tag: None,
+            do_not_spend_change: false,
+        };
+        match account.get_max_fee(params) {
+            Err(TransactionComposeError::LockedUtxoSelected(ids)) => {
+                assert_eq!(ids, vec![locked_live.get_id()]);
+            }
+            other => panic!("expected LockedUtxoSelected, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn test_rbf_rejects_locked_selected_utxo() {
+        let mut account = get_ng_hot_wallet();
+        tests_util::add_funds_wallet_with_unconfirmed(&mut account);
+
+        // Lock a confirmed mature UTXO (one of the funding outputs) so the
+        // RBF builder will see it as a candidate input.
+        let mature = account
+            .utxos()
+            .unwrap()
+            .into_iter()
+            .find(|o| o.is_confirmed)
+            .expect("at least one confirmed utxo");
+        account
+            .set_do_not_spend(mature.get_id().as_str(), true)
+            .unwrap();
+        let locked_live = account
+            .utxos()
+            .unwrap()
+            .into_iter()
+            .find(|o| o.get_id() == mature.get_id())
+            .unwrap();
+
+        let unconfirmed_tx = account
+            .transactions()
+            .unwrap()
+            .into_iter()
+            .find(|tx| tx.confirmations == 0)
+            .expect("expected an unconfirmed tx for RBF");
+
+        match account.get_max_bump_fee(vec![locked_live.clone()], unconfirmed_tx) {
+            Err(BumpFeeError::LockedUtxoSelected(ids)) => {
+                assert_eq!(ids, vec![locked_live.get_id()]);
+            }
+            other => panic!("expected LockedUtxoSelected, got {other:?}"),
+        }
     }
 }
 
