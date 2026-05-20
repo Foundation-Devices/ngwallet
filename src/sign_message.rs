@@ -101,7 +101,7 @@ pub fn sign_message(
 /// Format a signed message in the standard Bitcoin signed message format.
 pub fn format_signed_message(signed: &SignedMessage) -> String {
     format!(
-        "-----BEGIN BITCOIN SIGNED MESSAGE-----\n{}\n-----BEGIN SIGNATURE-----\n{}\n{}\n-----END BITCOIN SIGNED MESSAGE-----",
+        "-----BEGIN BITCOIN SIGNED MESSAGE-----\n{}\n-----BEGIN BITCOIN SIGNATURE-----\n{}\n{}\n-----END BITCOIN SIGNATURE-----",
         signed.message, signed.address, signed.signature
     )
 }
@@ -251,9 +251,9 @@ mod tests {
         let formatted = format_signed_message(&signed);
         assert!(formatted.contains("-----BEGIN BITCOIN SIGNED MESSAGE-----"));
         assert!(formatted.contains("test message"));
-        assert!(formatted.contains("-----BEGIN SIGNATURE-----"));
+        assert!(formatted.contains("-----BEGIN BITCOIN SIGNATURE-----"));
         assert!(formatted.contains("bc1qtest"));
         assert!(formatted.contains("base64sig"));
-        assert!(formatted.contains("-----END BITCOIN SIGNED MESSAGE-----"));
+        assert!(formatted.contains("-----END BITCOIN SIGNATURE-----"));
     }
 }

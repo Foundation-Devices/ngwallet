@@ -814,16 +814,11 @@ impl<P: WalletPersister> NgAccount<P> {
                 for wallet in self.wallets.read().unwrap().iter() {
                     let bdk_wallet = wallet.bdk_wallet.lock().unwrap();
                     let derivation = bdk_wallet.derivation_of_spk(script.clone());
-                    match derivation {
-                        None => {}
-                        Some((kind, _)) => {
-                            if kind == KeychainKind::External {
-                                address = Address::from_script(&script, bdk_wallet.network())
-                                    .unwrap()
-                                    .to_string();
-                                amount = outputs.value.to_sat();
-                            }
-                        }
+                    if let Some((KeychainKind::External, _)) = derivation {
+                        address = Address::from_script(&script, bdk_wallet.network())
+                            .unwrap()
+                            .to_string();
+                        amount = outputs.value.to_sat();
                     }
                 }
             }
