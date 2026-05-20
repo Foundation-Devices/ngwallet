@@ -12,7 +12,7 @@ use crate::utils;
 use crate::utils::get_address_type;
 use anyhow::{Context, Error, anyhow};
 use bdk_wallet::bitcoin::address::{NetworkChecked, NetworkUnchecked};
-use bdk_wallet::bitcoin::{Address, Amount, Psbt, Transaction, Txid};
+use bdk_wallet::bitcoin::{Address, Amount, Network, Psbt, Transaction, Txid};
 #[cfg(feature = "envoy")]
 use bdk_wallet::chain::spk_client::FullScanRequest;
 #[cfg(feature = "envoy")]
@@ -59,20 +59,38 @@ impl<P: WalletPersister> fmt::Debug for Descriptor<P> {
 
 #[derive(Serialize, Deserialize)]
 pub struct RemoteUpdate {
+    /// Must match the target account's `id`. Prevents cross-account injection.
+    pub account_id: String,
+    /// Must match the target account's `network`. Prevents cross-network injection.
+    pub network: Network,
+    /// SHA-256 of the target account's sorted descriptor strings. Ensures the
+    /// update was produced for the exact wallet configuration being updated.
+    pub descriptor_hash: [u8; 32],
+    /// `last_remote_sequence` to prevent replay attacks.
+    pub sequence: u64,
     pub metadata: Option<NgAccountConfig>,
     pub wallet_update: Vec<(AddressType, Update)>,
 }
 
 impl RemoteUpdate {
     pub fn new(
+        account_id: String,
+        network: Network,
+        descriptor_hash: [u8; 32],
+        sequence: u64,
         metadata: Option<NgAccountConfig>,
         wallet_update: Vec<(AddressType, Update)>,
     ) -> Self {
         Self {
+            account_id,
+            network,
+            descriptor_hash,
+            sequence,
             metadata,
             wallet_update,
         }
     }
+
     pub fn serialize(self) -> Vec<u8> {
         minicbor_serde::to_vec(self).unwrap()
     }
@@ -682,15 +700,86 @@ impl<P: WalletPersister> NgAccount<P> {
     pub fn update(&self, payload: Vec<u8>) -> anyhow::Result<()> {
         let update = RemoteUpdate::deserialize(&payload)?;
 
-        for wallet_update in update.wallet_update {
-            self.apply(wallet_update)?
+        // Validate all binding fields before mutating anything.
+        {
+            let config = self.config.read().unwrap();
+
+            if update.account_id != config.id {
+                return Err(anyhow!(
+                    "RemoteUpdate account_id mismatch: expected {}, got {}",
+                    config.id,
+                    update.account_id
+                ));
+            }
+
+            if update.network != config.network {
+                return Err(anyhow!(
+                    "RemoteUpdate network mismatch: expected {:?}, got {:?}",
+                    config.network,
+                    update.network
+                ));
+            }
+
+            let expected_hash = config.descriptor_hash();
+            if update.descriptor_hash != expected_hash {
+                return Err(anyhow!(
+                    "RemoteUpdate descriptor hash mismatch: update was not produced for this account"
+                ));
+            }
+
+            if update.sequence <= config.last_remote_sequence {
+                return Err(anyhow!(
+                    "RemoteUpdate sequence {} is not newer than last accepted sequence {}; possible replay attack",
+                    update.sequence,
+                    config.last_remote_sequence
+                ));
+            }
+
+            if let Some(ref m) = update.metadata {
+                if m.id != config.id {
+                    return Err(anyhow!("RemoteUpdate metadata account_id mismatch"));
+                }
+                if m.network != config.network {
+                    return Err(anyhow!("RemoteUpdate metadata network mismatch"));
+                }
+                if m.preferred_address_type != config.preferred_address_type {
+                    return Err(anyhow!(
+                        "RemoteUpdate metadata preferred_address_type change rejected; use set_preferred_address_type"
+                    ));
+                }
+                if m.descriptors != config.descriptors {
+                    return Err(anyhow!(
+                        "RemoteUpdate metadata descriptor change rejected; use add_new_descriptor"
+                    ));
+                }
+                if m.index != config.index {
+                    return Err(anyhow!("RemoteUpdate metadata index change rejected"));
+                }
+                if m.multisig != config.multisig {
+                    return Err(anyhow!("RemoteUpdate metadata multisig change rejected"));
+                }
+            }
         }
 
-        match update.metadata {
-            None => {}
-            Some(m) => {
-                *self.config.write().unwrap() = m;
+        for wallet_update in update.wallet_update {
+            self.apply(wallet_update)?;
+        }
+
+        {
+            let mut config = self.config.write().unwrap();
+            if let Some(m) = update.metadata {
+                // Only copy cosmetic / sync-state fields; security-critical
+                // fields (id, network, descriptors, preferred_address_type,
+                // index, multisig) are validated above and never overwritten here.
+                config.name = m.name;
+                config.color = m.color;
+                config.date_synced = m.date_synced;
+                config.archived = m.archived;
+                config.date_added = m.date_added;
+                config.device_serial = m.device_serial;
+                config.seed_has_passphrase = m.seed_has_passphrase;
             }
+            config.last_remote_sequence = update.sequence;
         }
 
         self.persist()?;
@@ -1016,6 +1105,7 @@ mod tests {
             id: "test_id".to_string(),
             multisig: None,
             archived: false,
+            last_remote_sequence: 0,
         };
 
         let account = NgAccount {

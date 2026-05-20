@@ -983,6 +983,10 @@ pub struct NgAccountConfig {
     pub multisig: Option<MultiSigDetails>,
     #[serde(default)]
     pub archived: bool,
+    /// Monotonic counter incremented by each accepted `RemoteUpdate`. Used to
+    /// reject replayed or stale updates.
+    #[serde(default)]
+    pub last_remote_sequence: u64,
 }
 
 impl fmt::Debug for NgAccountConfig {
@@ -1002,6 +1006,7 @@ impl fmt::Debug for NgAccountConfig {
             .field("id", &self.id)
             .field("multisig", &self.multisig)
             .field("archived", &self.archived)
+            .field("last_remote_sequence", &self.last_remote_sequence)
             .finish()
     }
 }
@@ -1040,6 +1045,23 @@ impl fmt::Debug for NgAccountBackup {
 }
 
 impl NgAccountConfig {
+    /// SHA-256 of all descriptor strings, sorted by address type.
+    /// Used as a binding field in `RemoteUpdate` to ensure updates are applied
+    /// only to the account they were created for.
+    pub fn descriptor_hash(&self) -> [u8; 32] {
+        use bdk_wallet::bitcoin::hashes::{Hash, HashEngine, sha256};
+        let mut engine = sha256::HashEngine::default();
+        let mut descriptors = self.descriptors.clone();
+        descriptors.sort_by_key(|d| d.address_type);
+        for d in &descriptors {
+            engine.input(d.internal.as_bytes());
+            if let Some(ext) = &d.external {
+                engine.input(ext.as_bytes());
+            }
+        }
+        sha256::Hash::from_engine(engine).to_byte_array()
+    }
+
     pub fn serialize(&self) -> String {
         serde_json::to_string_pretty(self).unwrap()
     }
@@ -1081,8 +1103,19 @@ impl NgAccountConfig {
         })
     }
     pub fn to_remote_update(mut self) -> Vec<u8> {
+        let descriptor_hash = self.descriptor_hash();
         self.clear_private_descriptors();
-        RemoteUpdate::new(Some(self), vec![]).serialize()
+        // sequence 0 signals a config-exchange payload; this is consumed by
+        // NgAccountConfig::from_remote, not by NgAccount::update.
+        RemoteUpdate::new(
+            self.id.clone(),
+            self.network,
+            descriptor_hash,
+            0,
+            Some(self),
+            vec![],
+        )
+        .serialize()
     }
 
     pub fn from_file(db_path: Option<String>) -> Option<NgAccountConfig> {
@@ -1265,6 +1298,7 @@ impl<P: WalletPersister> NgAccountBuilder<P> {
             seed_has_passphrase: self.seed_has_passphrase.unwrap_or(false),
             multisig: self.multisig,
             archived: self.archived.unwrap_or_default(),
+            last_remote_sequence: 0,
         };
 
         NgAccount::new_from_descriptors(ng_account_config, storage, descriptors)
