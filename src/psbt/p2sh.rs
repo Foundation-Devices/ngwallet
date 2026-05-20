@@ -35,8 +35,11 @@ pub fn validate_output(
             .as_ref()
             .ok_or_else(|| Error::MissingWitnessScript { index })?;
 
-        let ms = Miniscript::<_, Segwitv0>::parse(witness_script).unwrap();
-        let descriptor = Sh::new_wsh(ms).map(Descriptor::Sh).unwrap();
+        let ms = Miniscript::<_, Segwitv0>::parse(witness_script)
+            .map_err(|_| Error::InvalidWitnessScript { index })?;
+        let descriptor = Sh::new_wsh(ms)
+            .map(Descriptor::Sh)
+            .map_err(|_| Error::InvalidWitnessScript { index })?;
 
         // Verify that all keys in the descriptor are in the bip32_derivation map
         // which should have been validated already.
@@ -46,7 +49,9 @@ pub fn validate_output(
             return Err(Error::FraudulentOutput { index });
         }
 
-        let address = descriptor.address(network).unwrap();
+        let address = descriptor
+            .address(network)
+            .map_err(|_| Error::InvalidWitnessScript { index })?;
         if !address.matches_script_pubkey(&txout.script_pubkey) {
             return Err(Error::FraudulentOutput { index });
         }
@@ -54,7 +59,7 @@ pub fn validate_output(
         let (_, (_, path)) = output
             .bip32_derivation
             .first_key_value()
-            .expect("at least one bip32 derivation should be present");
+            .ok_or(Error::ExpectedKeys { index })?;
 
         let Some(purpose) = path.as_ref().iter().next() else {
             return Ok(PsbtOutput {
@@ -235,4 +240,125 @@ pub fn wsh_multisig_descriptor(
             .unwrap();
 
     Ok([external_descriptor, internal_descriptor])
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use bdk_wallet::bitcoin::hashes::{Hash, sha256};
+    use bdk_wallet::bitcoin::opcodes::all::{OP_EQUAL, OP_HASH160, OP_PUSHBYTES_0, OP_RETURN};
+    use bdk_wallet::bitcoin::{Amount, ScriptBuf, Script, WScriptHash};
+
+    fn p2sh_script_pubkey() -> ScriptBuf {
+        let mut bytes = Vec::with_capacity(23);
+        bytes.push(OP_HASH160.to_u8());
+        bytes.push(20);
+        bytes.extend_from_slice(&[0u8; 20]);
+        bytes.push(OP_EQUAL.to_u8());
+        ScriptBuf::from_bytes(bytes)
+    }
+
+    fn p2wsh_redeem_script() -> ScriptBuf {
+        // OP_0 <32-byte witness program> -> matches Script::is_p2wsh().
+        let inner = sha256::Hash::const_hash(b"fixture witness script");
+        let hash = WScriptHash::from_byte_array(inner.to_byte_array());
+        ScriptBuf::new_p2wsh(&hash)
+    }
+
+    fn output_with_scripts(
+        redeem_script: ScriptBuf,
+        witness_script: Option<ScriptBuf>,
+    ) -> psbt::Output {
+        psbt::Output {
+            redeem_script: Some(redeem_script),
+            witness_script,
+            ..Default::default()
+        }
+    }
+
+    fn txout() -> TxOut {
+        TxOut {
+            value: Amount::from_sat(1000),
+            script_pubkey: p2sh_script_pubkey(),
+        }
+    }
+
+    /// A nested P2SH-P2WSH with a malformed witness_script must not panic.
+    #[test]
+    fn nested_malformed_witness_script_returns_error() {
+        let witness_script = ScriptBuf::from_bytes(vec![0xff; 32]);
+        let output = output_with_scripts(p2wsh_redeem_script(), Some(witness_script));
+
+        let result = validate_output(&output, &txout(), Network::Bitcoin, 0);
+        assert!(matches!(
+            result,
+            Err(Error::InvalidWitnessScript { index: 0 })
+        ));
+    }
+
+    /// A nested P2SH-P2WSH whose witness_script is syntactically valid Script
+    /// but not valid Miniscript must surface a structured error.
+    #[test]
+    fn nested_non_miniscript_witness_script_returns_error() {
+        let witness_script = Script::builder().push_opcode(OP_RETURN).into_script();
+        let output = output_with_scripts(p2wsh_redeem_script(), Some(witness_script));
+
+        let result = validate_output(&output, &txout(), Network::Bitcoin, 0);
+        assert!(matches!(
+            result,
+            Err(Error::InvalidWitnessScript { index: 0 })
+        ));
+    }
+
+    /// A nested P2SH-P2WSH with an empty witness_script triggers the parser.
+    #[test]
+    fn nested_empty_witness_script_returns_error() {
+        let output = output_with_scripts(p2wsh_redeem_script(), Some(ScriptBuf::new()));
+
+        let result = validate_output(&output, &txout(), Network::Bitcoin, 0);
+        assert!(matches!(
+            result,
+            Err(Error::InvalidWitnessScript { index: 0 })
+        ));
+    }
+
+    /// Missing witness_script when redeem_script is P2WSH must return a
+    /// structured error rather than panicking later.
+    #[test]
+    fn nested_missing_witness_script_returns_error() {
+        let output = output_with_scripts(p2wsh_redeem_script(), None);
+
+        let result = validate_output(&output, &txout(), Network::Bitcoin, 4);
+        assert!(matches!(
+            result,
+            Err(Error::MissingWitnessScript { index: 4 })
+        ));
+    }
+
+    /// Missing redeem_script altogether must return MissingRedeemScript.
+    #[test]
+    fn missing_redeem_script_returns_error() {
+        let output = psbt::Output::default();
+
+        let result = validate_output(&output, &txout(), Network::Bitcoin, 9);
+        assert!(matches!(
+            result,
+            Err(Error::MissingRedeemScript { index: 9 })
+        ));
+    }
+
+    /// An unsupported (legacy) P2SH redeem_script must return Unimplemented,
+    /// not panic.
+    #[test]
+    fn legacy_p2sh_returns_unimplemented() {
+        // Use a tiny non-segwit redeem script.
+        let redeem_script = Script::builder()
+            .push_opcode(OP_PUSHBYTES_0)
+            .push_opcode(OP_RETURN)
+            .into_script();
+        let output = output_with_scripts(redeem_script, None);
+
+        let result = validate_output(&output, &txout(), Network::Bitcoin, 0);
+        assert!(matches!(result, Err(Error::Unimplemented)));
+    }
 }

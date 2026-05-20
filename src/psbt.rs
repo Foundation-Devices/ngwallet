@@ -277,6 +277,9 @@ pub enum Error {
     #[error("the output number {index} does not have a witness script")]
     MissingWitnessScript { index: usize },
 
+    #[error("the multisig script of input/output number {index} is malformed")]
+    InvalidMultisigScript { index: usize },
+
     // TODO(jeandudey): Remove this.
     #[error("not yet implemented")]
     Unimplemented,
@@ -539,7 +542,8 @@ where
 
             if let Some(witness_script) = input.witness_script.as_ref() {
                 if witness_script.is_multisig() {
-                    let required_signers = multisig::disassemble(witness_script).unwrap();
+                    let required_signers = multisig::disassemble(witness_script)
+                        .map_err(|_| Error::InvalidMultisigScript { index: i })?;
                     let multisig_descriptors = p2wsh::multisig_descriptor(
                         required_signers,
                         &psbt.xpub,
@@ -580,7 +584,8 @@ where
                 } else if redeem_script.is_p2wsh() {
                     if let Some(witness_script) = input.witness_script.as_ref() {
                         if witness_script.is_multisig() {
-                            let required_signers = multisig::disassemble(witness_script).unwrap();
+                            let required_signers = multisig::disassemble(witness_script)
+                                .map_err(|_| Error::InvalidMultisigScript { index: i })?;
                             let multisig_descriptors = p2sh::wsh_multisig_descriptor(
                                 required_signers,
                                 &psbt.xpub,

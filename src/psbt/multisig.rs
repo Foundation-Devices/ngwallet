@@ -96,3 +96,39 @@ fn parse_check_multisig(instructions: &mut Peekable<Instructions>) -> Option<Res
         Err(_) => Some(Err(Error::MalformedScript)),
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use bdk_wallet::bitcoin::ScriptBuf;
+    use bdk_wallet::bitcoin::opcodes::all::OP_RETURN;
+    use bdk_wallet::bitcoin::script::Builder;
+
+    #[test]
+    fn empty_script_does_not_panic() {
+        let script = ScriptBuf::new();
+        let result = disassemble(&script);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn random_bytes_do_not_panic() {
+        // 0x4f is OP_1NEGATE, followed by garbage push bytes — not valid multisig.
+        let script = ScriptBuf::from_bytes(vec![0x4f, 0xff, 0xff, 0xff, 0xff]);
+        let result = disassemble(&script);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn non_pushnum_first_opcode_returns_expected_pushnum() {
+        let script = Builder::new().push_opcode(OP_RETURN).into_script();
+        assert!(matches!(disassemble(&script), Err(Error::ExpectedPushnum)));
+    }
+
+    #[test]
+    fn truncated_script_returns_unexpected_eof() {
+        // Just OP_PUSHNUM_2 with nothing after it.
+        let script = ScriptBuf::from_bytes(vec![0x52]);
+        assert!(matches!(disassemble(&script), Err(Error::UnexpectedEof)));
+    }
+}
