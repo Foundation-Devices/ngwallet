@@ -40,7 +40,7 @@ pub(crate) fn build_electrum_client(
         None => None,
     };
 
-    let validate_domain = socks5_config.is_none() && validate_domain.unwrap_or(true);
+    let validate_domain = validate_domain.unwrap_or(true);
     let electrum_config = Config::builder()
         .timeout(Some(30))
         .retry(3)
