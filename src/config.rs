@@ -941,7 +941,7 @@ impl From<NetworkKind> for bitcoin::NetworkKind {
     }
 }
 
-#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
+#[derive(Serialize, Deserialize, Clone, PartialEq, Eq)]
 pub struct NgDescriptor {
     pub internal: String,
     pub external: Option<String>,
@@ -952,7 +952,21 @@ pub struct NgDescriptor {
     pub export_addr_hint: Option<AddressType>,
 }
 
-#[derive(Serialize, Deserialize, Debug, Clone)]
+impl fmt::Debug for NgDescriptor {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("NgDescriptor")
+            .field("internal", &"<redacted descriptor>")
+            .field(
+                "external",
+                &self.external.as_ref().map(|_| "<redacted descriptor>"),
+            )
+            .field("address_type", &self.address_type)
+            .field("export_addr_hint", &self.export_addr_hint)
+            .finish()
+    }
+}
+
+#[derive(Serialize, Deserialize, Clone)]
 pub struct NgAccountConfig {
     pub name: String,
     pub color: String,
@@ -970,7 +984,28 @@ pub struct NgAccountConfig {
     pub archived: bool,
 }
 
-#[derive(Serialize, Deserialize, Debug, Clone)]
+impl fmt::Debug for NgAccountConfig {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let descriptors = format!("<redacted; {} descriptors>", self.descriptors.len());
+        f.debug_struct("NgAccountConfig")
+            .field("name", &self.name)
+            .field("color", &self.color)
+            .field("seed_has_passphrase", &self.seed_has_passphrase)
+            .field("device_serial", &self.device_serial)
+            .field("date_added", &self.date_added)
+            .field("preferred_address_type", &self.preferred_address_type)
+            .field("index", &self.index)
+            .field("descriptors", &descriptors)
+            .field("date_synced", &self.date_synced)
+            .field("network", &self.network)
+            .field("id", &self.id)
+            .field("multisig", &self.multisig)
+            .field("archived", &self.archived)
+            .finish()
+    }
+}
+
+#[derive(Serialize, Deserialize, Clone)]
 pub struct NgAccountBackup {
     pub ng_account_config: NgAccountConfig,
     //envoy 2.0.1 doesnt include xfp in backup
@@ -985,6 +1020,24 @@ pub struct NgAccountBackup {
     pub do_not_spend: HashMap<String, bool>,
 }
 
+impl fmt::Debug for NgAccountBackup {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let public_descriptors = format!(
+            "<redacted; {} public descriptors>",
+            self.public_descriptors.len()
+        );
+        f.debug_struct("NgAccountBackup")
+            .field("ng_account_config", &self.ng_account_config)
+            .field("xfp", &self.xfp)
+            .field("public_descriptors", &public_descriptors)
+            .field("last_used_index", &self.last_used_index)
+            .field("notes", &self.notes)
+            .field("tags", &self.tags)
+            .field("do_not_spend", &self.do_not_spend)
+            .finish()
+    }
+}
+
 impl NgAccountConfig {
     pub fn serialize(&self) -> String {
         serde_json::to_string_pretty(self).unwrap()
@@ -992,6 +1045,22 @@ impl NgAccountConfig {
 
     pub fn deserialize(data: &str) -> Self {
         serde_json::from_str(data).unwrap()
+    }
+
+    pub fn has_private_descriptors(&self) -> bool {
+        self.descriptors.iter().any(|descriptor| {
+            descriptor_contains_private_material(&descriptor.internal)
+                || descriptor
+                    .external
+                    .as_ref()
+                    .is_some_and(|external| descriptor_contains_private_material(external))
+        })
+    }
+
+    pub fn clear_private_descriptors(&mut self) {
+        if self.has_private_descriptors() {
+            self.descriptors = vec![];
+        }
     }
 
     pub fn from_remote(remote_update: Vec<u8>) -> anyhow::Result<NgAccountConfig> {
@@ -1010,7 +1079,8 @@ impl NgAccountConfig {
             None
         })
     }
-    pub fn to_remote_update(self) -> Vec<u8> {
+    pub fn to_remote_update(mut self) -> Vec<u8> {
+        self.clear_private_descriptors();
         RemoteUpdate::new(Some(self), vec![]).serialize()
     }
 
@@ -1018,6 +1088,13 @@ impl NgAccountConfig {
         let meta_storage = RedbMetaStorage::from_file(db_path).ok()?;
         Self::from_storage(meta_storage)
     }
+}
+
+fn descriptor_contains_private_material(descriptor: &str) -> bool {
+    let descriptor = descriptor.to_ascii_lowercase();
+    ["xprv", "tprv", "yprv", "zprv", "uprv", "vprv"]
+        .iter()
+        .any(|marker| descriptor.contains(marker))
 }
 
 impl NgAccountBackup {

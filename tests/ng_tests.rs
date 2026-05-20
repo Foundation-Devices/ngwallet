@@ -34,11 +34,21 @@ mod tests {
         ngwallet::account::NgAccount,
         ngwallet::account::RemoteUpdate,
         ngwallet::bip39::get_descriptors,
-        ngwallet::config::{AddressType, NgAccountBackup, NgAccountBuilder},
+        ngwallet::config::{AddressType, NgAccountBackup, NgAccountBuilder, NgAccountConfig},
         ngwallet::ngwallet::NgWallet,
         ngwallet::send::{FeeRateSatPerKvb, TransactionParams},
         std::sync::{Arc, Mutex},
     };
+
+    #[cfg(feature = "envoy")]
+    fn assert_no_private_material(label: &str, value: &str) {
+        for marker in ["xprv", "tprv", "yprv", "zprv", "uprv", "vprv"] {
+            assert!(
+                !value.contains(marker),
+                "{label} leaked private marker {marker}: {value}"
+            );
+        }
+    }
 
     #[test]
     #[cfg(feature = "envoy")]
@@ -250,7 +260,8 @@ mod tests {
         for wallet in account.wallets.read().unwrap().iter() {
             let (address_type, request) = account.full_scan_request(wallet.address_type).unwrap();
             let update =
-                NgWallet::<Connection>::scan(request, ELECTRUM_SERVER_T4, None, None, None).unwrap();
+                NgWallet::<Connection>::scan(request, ELECTRUM_SERVER_T4, None, None, None)
+                    .unwrap();
             updates.push((address_type, Update::from(update)));
         }
 
@@ -404,7 +415,16 @@ mod tests {
 
         let config = account.config.clone();
         assert!(account.is_hot());
+        assert_no_private_material(
+            "account config debug",
+            &format!("{:?}", config.read().unwrap()),
+        );
+        let remote_update = config.read().unwrap().clone().to_remote_update();
+        assert_no_private_material("remote update", &String::from_utf8_lossy(&remote_update));
+        let remote_config = NgAccountConfig::from_remote(remote_update).unwrap();
+        assert_eq!(remote_config.descriptors.len(), 0);
         let backup = account.get_backup_json().unwrap();
+        assert_no_private_material("account backup", &backup);
         println!("backup: {backup}");
         let account_backup = serde_json::from_str::<NgAccountBackup>(&backup).unwrap();
         let config_from_backup = account_backup.ng_account_config;
