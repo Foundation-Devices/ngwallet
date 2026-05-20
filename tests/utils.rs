@@ -104,9 +104,7 @@ pub mod tests_util {
         fill_with_unconfirmed(&account.get_coordinator_wallet());
     }
 
-    pub fn add_funds_wallet_with_one_confirmation<P: WalletPersister>(
-        account: &mut NgAccount<P>,
-    ) {
+    pub fn add_funds_wallet_with_one_confirmation<P: WalletPersister>(account: &mut NgAccount<P>) {
         for (index, ngwallet) in account.wallets.read().unwrap().iter().enumerate() {
             fill_with_one_confirmation(index, &ngwallet)
         }
