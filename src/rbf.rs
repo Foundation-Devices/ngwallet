@@ -1,10 +1,10 @@
 use crate::account::NgAccount;
+#[cfg(feature = "envoy")]
+use crate::fee_rate::FeeRateSatPerKvb;
+use crate::fee_rate::FeeRateSatPerKwu;
 use crate::ngwallet::NgWallet;
 use crate::rbf::BumpFeeError::ComposeTxError;
 use crate::send::DraftTransaction;
-use crate::fee_rate::FeeRateSatPerKwu;
-#[cfg(feature = "envoy")]
-use crate::fee_rate::FeeRateSatPerKvb;
 #[cfg(feature = "envoy")]
 use crate::send::TransactionFeeResult;
 use crate::transaction::{BitcoinTransaction, Input, KeyChain, Output};
@@ -107,13 +107,8 @@ impl<P: WalletPersister> NgAccount<P> {
         //self spend
         if bitcoin_transaction.fee == (bitcoin_transaction.amount.unsigned_abs()) {
             for output in bitcoin_transaction.clone().outputs {
-                match output.keychain {
-                    None => {}
-                    Some(keychain) => {
-                        if keychain == KeyChain::External {
-                            receive_amount = output.amount;
-                        }
-                    }
+                if let Some(KeyChain::External) = output.keychain {
+                    receive_amount = output.amount;
                 }
             }
         }
@@ -155,7 +150,8 @@ impl<P: WalletPersister> NgAccount<P> {
                                 max_fee = Some(required.to_sat());
                             }
                             CreateTxError::FeeRateTooLow { required } => {
-                                max_fee_rate = FeeRateSatPerKwu::from_bdk(required) + FeeRateSatPerKwu::from_sat_per_vb(1);
+                                max_fee_rate = FeeRateSatPerKwu::from_bdk(required)
+                                    + FeeRateSatPerKwu::from_sat_per_vb(1);
                                 max_fee = None;
                             }
                             CoinSelection(error) => {
@@ -200,7 +196,8 @@ impl<P: WalletPersister> NgAccount<P> {
                                 max_fee = Some(required.to_sat());
                             }
                             CreateTxError::FeeRateTooLow { required } => {
-                                max_fee_rate = FeeRateSatPerKwu::from_bdk(required) + FeeRateSatPerKwu::from_sat_per_vb(1);
+                                max_fee_rate = FeeRateSatPerKwu::from_bdk(required)
+                                    + FeeRateSatPerKwu::from_sat_per_vb(1);
                                 max_fee = None;
                             }
                             CoinSelection(error) => {

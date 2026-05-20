@@ -25,7 +25,7 @@ mod spend_tests {
         };
         let draft = account.get_max_fee(params.clone()).unwrap();
         assert_eq!(draft.max_fee_rate, FeeRateSatPerKvb(553_828)); // 138_457 sat/kwu * 4 = sat/kvB
-        assert_eq!(draft.min_fee_rate, FeeRateSatPerKvb(1000));   // 1 sat/vB in sat/kvB
+        assert_eq!(draft.min_fee_rate, FeeRateSatPerKvb(1000)); // 1 sat/vB in sat/kvB
         check_draft_tx_match_params(draft.draft_transaction.clone(), params.clone());
     }
 

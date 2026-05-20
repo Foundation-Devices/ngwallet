@@ -20,9 +20,6 @@ use bdk_wallet::bitcoin::bip32::{
 };
 use bdk_wallet::bitcoin::secp256k1::{PublicKey, Secp256k1, Signing};
 use bdk_wallet::bitcoin::{self, Network, NetworkKind as BtcNetworkKind};
-use foundation_urtypes::registry::{
-    ChildNumber as UrChildNumber, HDKeyRef, Key as UrKey, Terminal,
-};
 use bdk_wallet::descriptor::Descriptor as BdkDescriptor;
 use bdk_wallet::miniscript::{
     ForEachKey,
@@ -30,6 +27,9 @@ use bdk_wallet::miniscript::{
         DescriptorPublicKey, DescriptorSecretKey, DescriptorXKey, ShInner, SortedMultiVec,
         Wildcard, WshInner,
     },
+};
+use foundation_urtypes::registry::{
+    ChildNumber as UrChildNumber, HDKeyRef, Key as UrKey, Terminal,
 };
 use regex::Regex;
 use serde::{Deserialize, Serialize};
@@ -518,10 +518,11 @@ impl MultiSigDetails {
         let mut signers: Vec<MultiSigSigner> = Vec::new();
         for k in multikey.keys.iter() {
             let signer = hdkey_to_signer(&k)?;
-            if signers.iter().any(|existing| existing.pubkey == signer.pubkey) {
-                anyhow::bail!(
-                    "crypto-output multisig contains duplicate cosigner keys"
-                );
+            if signers
+                .iter()
+                .any(|existing| existing.pubkey == signer.pubkey)
+            {
+                anyhow::bail!("crypto-output multisig contains duplicate cosigner keys");
             }
             signers.push(signer);
         }
@@ -1421,7 +1422,10 @@ Format: P2WSH
         assert_eq!(multisig.signers.len(), 2);
         assert_eq!(multisig.signers[0].fingerprint, [0x44, 0x1C, 0x5C, 0x1A]);
         assert_eq!(multisig.signers[1].fingerprint, [0x60, 0x15, 0xC0, 0xF4]);
-        assert_eq!(multisig.signers[0].derivation, String::from("m/48'/0'/0'/2'"));
+        assert_eq!(
+            multisig.signers[0].derivation,
+            String::from("m/48'/0'/0'/2'")
+        );
         // Normalization should rewrite Zpub → xpub so downstream consumers
         // (descriptor building, signing, display) only ever see canonical
         // extended keys.
@@ -1511,10 +1515,7 @@ Format: P2WSH
     // what `minicbor::to_vec(&Terminal)` gives us when the sender is
     // e.g. Sparrow.
     #[cfg(test)]
-    fn encode_wsh_sortedmulti_cbor(
-        threshold: u8,
-        entries: &[(&str, [u8; 4], &str)],
-    ) -> Vec<u8> {
+    fn encode_wsh_sortedmulti_cbor(threshold: u8, entries: &[(&str, [u8; 4], &str)]) -> Vec<u8> {
         use foundation_arena::boxed::Box as ArenaBox;
         use foundation_urtypes::registry::{
             CoinInfo, CoinType, DerivedKeyRef, HDKeyRef as UrHDKeyRef, Key, KeypathRef, Keys,
@@ -1665,7 +1666,8 @@ Format: P2WSH
         let key_data = xpub.public_key.serialize();
         let chain_code = xpub.chain_code.to_bytes();
         let path_raw: Vec<u32> = vec![48 | (1 << 31), 1 << 31, 1 << 31, 2 | (1 << 31)];
-        let source_fingerprint = NonZeroU32::new(u32::from_be_bytes([0x71, 0xC8, 0xBD, 0x85])).unwrap();
+        let source_fingerprint =
+            NonZeroU32::new(u32::from_be_bytes([0x71, 0xC8, 0xBD, 0x85])).unwrap();
 
         let arena: TerminalContext<4> = TerminalContext::new();
         let k = Key::HDKey(UrHDKeyRef::DerivedKey(DerivedKeyRef {
@@ -1687,11 +1689,8 @@ Format: P2WSH
         }));
         let keys_storage: &[Key] = &[k.clone(), k];
         let keys = Keys::from(keys_storage);
-        let multi = ArenaBox::new_in(
-            Terminal::Multisig(Multikey { threshold: 2, keys }),
-            &arena,
-        )
-        .unwrap();
+        let multi =
+            ArenaBox::new_in(Terminal::Multisig(Multikey { threshold: 2, keys }), &arena).unwrap();
         let root = Terminal::WitnessScriptHash(multi);
 
         let err = MultiSigDetails::from_crypto_output(&root).unwrap_err();
@@ -1718,10 +1717,7 @@ Format: P2WSH
         let arena: TerminalContext<4> = TerminalContext::new();
         let terminal = decode_output_descriptor("crypto-output", &cbor, &arena).unwrap();
         let err = MultiSigDetails::from_crypto_output(&terminal).unwrap_err();
-        assert!(
-            err.to_string().contains("duplicate cosigner"),
-            "err: {err}"
-        );
+        assert!(err.to_string().contains("duplicate cosigner"), "err: {err}");
     }
 
     #[cfg(feature = "sha2")]

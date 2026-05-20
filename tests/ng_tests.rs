@@ -250,7 +250,8 @@ mod tests {
         for wallet in account.wallets.read().unwrap().iter() {
             let (address_type, request) = account.full_scan_request(wallet.address_type).unwrap();
             let update =
-                NgWallet::<Connection>::scan(request, ELECTRUM_SERVER_T4, None, None, None).unwrap();
+                NgWallet::<Connection>::scan(request, ELECTRUM_SERVER_T4, None, None, None)
+                    .unwrap();
             updates.push((address_type, Update::from(update)));
         }
 

@@ -201,7 +201,8 @@ impl<P: WalletPersister> NgAccount<P> {
                     match psbt.clone().extract_tx_fee_rate_limit() {
                         Ok(..) => {
                             max_fee_rate = FeeRateSatPerKwu::from_bdk(
-                                psbt.fee_rate().unwrap_or(FeeRate::from_sat_per_vb_unchecked(1)),
+                                psbt.fee_rate()
+                                    .unwrap_or(FeeRate::from_sat_per_vb_unchecked(1)),
                             );
                             if max_fee_rate < FeeRateSatPerKwu::from_sat_per_vb(1) {
                                 max_fee_rate = FeeRateSatPerKwu::from_sat_per_vb(1);
@@ -215,13 +216,15 @@ impl<P: WalletPersister> NgAccount<P> {
                             }
                             ExtractTxError::MissingInputValue { .. } => {
                                 max_fee_rate = FeeRateSatPerKwu::from_bdk(
-                                    psbt.fee_rate().unwrap_or(FeeRate::from_sat_per_vb_unchecked(1)),
+                                    psbt.fee_rate()
+                                        .unwrap_or(FeeRate::from_sat_per_vb_unchecked(1)),
                                 );
                                 break;
                             }
                             ExtractTxError::SendingTooMuch { psbt } => {
                                 max_fee_rate = FeeRateSatPerKwu::from_bdk(
-                                    psbt.fee_rate().unwrap_or(FeeRate::from_sat_per_vb_unchecked(1)),
+                                    psbt.fee_rate()
+                                        .unwrap_or(FeeRate::from_sat_per_vb_unchecked(1)),
                                 );
                                 break;
                             }
@@ -478,7 +481,8 @@ impl<P: WalletPersister> NgAccount<P> {
             is_confirmed: false,
             fee: psbt.fee().unwrap_or(Amount::from_sat(0)).to_sat(),
             fee_rate: FeeRateSatPerKvb::from_bdk(
-                psbt.fee_rate().unwrap_or(FeeRate::from_sat_per_vb_unchecked(1)),
+                psbt.fee_rate()
+                    .unwrap_or(FeeRate::from_sat_per_vb_unchecked(1)),
             ),
             amount,
             inputs,
@@ -784,16 +788,11 @@ impl<P: WalletPersister> NgAccount<P> {
                 for wallet in self.wallets.read().unwrap().iter() {
                     let bdk_wallet = wallet.bdk_wallet.lock().unwrap();
                     let derivation = bdk_wallet.derivation_of_spk(script.clone());
-                    match derivation {
-                        None => {}
-                        Some((kind, _)) => {
-                            if kind == KeychainKind::External {
-                                address = Address::from_script(&script, bdk_wallet.network())
-                                    .unwrap()
-                                    .to_string();
-                                amount = outputs.value.to_sat();
-                            }
-                        }
+                    if let Some((KeychainKind::External, _)) = derivation {
+                        address = Address::from_script(&script, bdk_wallet.network())
+                            .unwrap()
+                            .to_string();
+                        amount = outputs.value.to_sat();
                     }
                 }
             }
@@ -806,7 +805,8 @@ impl<P: WalletPersister> NgAccount<P> {
             is_confirmed: false,
             fee: psbt.fee().unwrap_or(Amount::from_sat(0)).to_sat(),
             fee_rate: FeeRateSatPerKvb::from_bdk(
-                psbt.fee_rate().unwrap_or(FeeRate::from_sat_per_vb_unchecked(1)),
+                psbt.fee_rate()
+                    .unwrap_or(FeeRate::from_sat_per_vb_unchecked(1)),
             ),
             amount: amount as i64,
             inputs: vec![],
