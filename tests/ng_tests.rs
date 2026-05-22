@@ -23,19 +23,20 @@ mod tests {
     use {
         crate::*,
         bdk_wallet::Update,
-        bdk_wallet::bitcoin::Network,
         bdk_wallet::bitcoin::Psbt,
         bdk_wallet::bitcoin::key::Secp256k1,
+        bdk_wallet::bitcoin::psbt,
+        bdk_wallet::bitcoin::{Amount, Network, ScriptBuf, TxOut},
         bdk_wallet::keys::bip39::Mnemonic,
         bdk_wallet::miniscript::psbt::PsbtExt,
         bdk_wallet::rusqlite::Connection,
-        bdk_wallet::{KeychainKind, SignOptions},
+        bdk_wallet::{KeychainKind, SignOptions, TxOrdering},
         ngwallet::account::Descriptor,
         ngwallet::account::NgAccount,
         ngwallet::account::RemoteUpdate,
         ngwallet::bip39::get_descriptors,
         ngwallet::config::{AddressType, NgAccountBackup, NgAccountBuilder, NgAccountConfig},
-        ngwallet::ngwallet::NgWallet,
+        ngwallet::ngwallet::{NgWallet, PsbtOutputOwnership},
         ngwallet::send::{FeeRateSatPerKvb, TransactionParams},
         std::sync::{Arc, Mutex},
     };
@@ -551,6 +552,87 @@ mod tests {
         } else {
             panic!("Failed to compose transaction: {compose_transaction:?}");
         }
+    }
+
+    #[test]
+    #[cfg(feature = "envoy")]
+    fn parse_psbt_preserves_duplicate_outputs() {
+        let mut account = utils::tests_util::get_ng_watch_only_account();
+        utils::tests_util::add_funds_to_wallet(&mut account);
+
+        let wallet = account.get_coordinator_wallet();
+        let recipient_a = "tb1pspfcrvz538vvj9f9gfkd85nu5ty98zw9y5e302kha6zurv6vg07s8z7a8w";
+        let recipient_b = "tb1qp3s35d5579w9mtx4vkx2lngfpnwyjx8jxhveym";
+        let recipient_a_address = recipient_a
+            .parse::<bdk_wallet::bitcoin::Address<_>>()
+            .unwrap()
+            .require_network(Network::Signet)
+            .unwrap();
+        let recipient_b_address = recipient_b
+            .parse::<bdk_wallet::bitcoin::Address<_>>()
+            .unwrap()
+            .require_network(Network::Signet)
+            .unwrap();
+
+        let mut psbt = {
+            let mut bdk_wallet = wallet.bdk_wallet.lock().unwrap();
+            let mut builder = bdk_wallet.build_tx();
+            builder
+                .ordering(TxOrdering::Untouched)
+                .add_recipient(
+                    recipient_a_address.script_pubkey(),
+                    Amount::from_sat(10_000),
+                )
+                .add_recipient(
+                    recipient_b_address.script_pubkey(),
+                    Amount::from_sat(10_000),
+                );
+            builder.finish().unwrap()
+        };
+        psbt.unsigned_tx.output.push(TxOut {
+            value: Amount::ZERO,
+            script_pubkey: ScriptBuf::new_op_return([0x42]),
+        });
+        psbt.outputs.push(psbt::Output::default());
+        psbt.unsigned_tx.output.push(TxOut {
+            value: Amount::ZERO,
+            script_pubkey: ScriptBuf::from_bytes(vec![0x51]),
+        });
+        psbt.outputs.push(psbt::Output::default());
+
+        let parsed = wallet.parse_psbt(&psbt.to_string()).unwrap();
+        let duplicate_outputs = parsed
+            .outputs
+            .iter()
+            .filter(|output| {
+                output.amount == 10_000 && output.ownership == PsbtOutputOwnership::External
+            })
+            .collect::<Vec<_>>();
+
+        assert_eq!(duplicate_outputs.len(), 2);
+        assert_eq!(duplicate_outputs[0].address.as_deref(), Some(recipient_a));
+        assert_eq!(duplicate_outputs[1].address.as_deref(), Some(recipient_b));
+        assert!(duplicate_outputs[0].vout < duplicate_outputs[1].vout);
+        assert!(
+            parsed
+                .outputs
+                .iter()
+                .any(|output| output.ownership == PsbtOutputOwnership::Change && output.is_change)
+        );
+        assert!(
+            parsed
+                .outputs
+                .iter()
+                .any(|output| output.ownership == PsbtOutputOwnership::OpReturn
+                    && output.script_type == "op_return")
+        );
+        assert!(
+            parsed
+                .outputs
+                .iter()
+                .any(|output| output.ownership == PsbtOutputOwnership::Unknown
+                    && output.script_type == "unknown")
+        );
     }
 
     #[test]
