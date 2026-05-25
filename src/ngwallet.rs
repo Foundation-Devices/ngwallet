@@ -31,8 +31,27 @@ use crate::utils;
 
 #[derive(Debug)]
 pub struct PsbtInfo {
-    pub outputs: std::collections::HashMap<u64, String>,
+    pub outputs: Vec<PsbtOutputInfo>,
     pub fee: u64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PsbtOutputInfo {
+    pub vout: u32,
+    pub amount: u64,
+    pub address: Option<String>,
+    pub script_pubkey: String,
+    pub script_type: String,
+    pub ownership: PsbtOutputOwnership,
+    pub is_change: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum PsbtOutputOwnership {
+    External,
+    Change,
+    OpReturn,
+    Unknown,
 }
 
 #[derive(Debug)]
@@ -574,17 +593,37 @@ impl<P: WalletPersister> NgWallet<P> {
 
     pub fn parse_psbt(&self, psbt_str: &str) -> Result<PsbtInfo> {
         let psbt = Psbt::from_str(psbt_str)?;
-        let tx = psbt.extract_tx()?;
+        let tx = psbt.unsigned_tx;
         let wallet = self.bdk_wallet.lock().unwrap();
-        let mut outputs = std::collections::HashMap::new();
+        let mut outputs = Vec::new();
         let mut fee = 0;
 
-        for output in tx.clone().output {
-            if let Ok(address) = Address::from_script(&output.script_pubkey, wallet.network())
-                && !wallet.is_mine(output.script_pubkey)
-            {
-                outputs.insert(output.value.to_sat(), address.to_string());
-            }
+        for (vout, output) in tx.output.iter().enumerate() {
+            let address = Address::from_script(&output.script_pubkey, wallet.network())
+                .map(|address| address.to_string())
+                .ok();
+            let is_change = wallet
+                .derivation_of_spk(output.script_pubkey.clone())
+                .is_some_and(|(keychain, _)| keychain == KeychainKind::Internal);
+            let ownership = if is_change {
+                PsbtOutputOwnership::Change
+            } else if output.script_pubkey.is_op_return() {
+                PsbtOutputOwnership::OpReturn
+            } else if address.is_some() {
+                PsbtOutputOwnership::External
+            } else {
+                PsbtOutputOwnership::Unknown
+            };
+
+            outputs.push(PsbtOutputInfo {
+                vout: vout as u32,
+                amount: output.value.to_sat(),
+                address,
+                script_pubkey: output.script_pubkey.to_hex_string(),
+                script_type: script_type(&output.script_pubkey).to_string(),
+                ownership,
+                is_change,
+            });
         }
 
         if let Ok(fee_amount) = wallet.calculate_fee(&tx) {
@@ -621,5 +660,25 @@ impl<P: WalletPersister> NgWallet<P> {
             .reveal_addresses_to(keychain, index);
         self.persist().unwrap();
         Ok(())
+    }
+}
+
+fn script_type(script: &bdk_wallet::bitcoin::Script) -> &'static str {
+    if script.is_op_return() {
+        "op_return"
+    } else if script.is_p2tr() {
+        "p2tr"
+    } else if script.is_p2wpkh() {
+        "p2wpkh"
+    } else if script.is_p2wsh() {
+        "p2wsh"
+    } else if script.is_p2pkh() {
+        "p2pkh"
+    } else if script.is_p2sh() {
+        "p2sh"
+    } else if script.is_p2pk() {
+        "p2pk"
+    } else {
+        "unknown"
     }
 }
