@@ -1,7 +1,7 @@
 use std::str::FromStr;
 
 use bdk_wallet::bitcoin::{
-    Address, CompressedPublicKey, Network, PrivateKey, PublicKey,
+    Address, AddressType, CompressedPublicKey, Network, PrivateKey, PublicKey,
     bip32::{DerivationPath, Xpriv},
     key::TapTweak,
     secp256k1::{Message, Secp256k1, XOnlyPublicKey},
@@ -11,7 +11,11 @@ use thiserror::Error;
 
 use crate::bip32::NgAccountPath;
 
-/// A signed Bitcoin message (BIP-137).
+/// A signed Bitcoin message.
+///
+/// The signature scheme depends on the address type:
+/// * legacy / SegWit (BIP-44/49/84/48) addresses use BIP-137 (recoverable ECDSA);
+/// * Taproot (BIP-86) addresses use BIP-322 (Simple variant, Schnorr).
 #[derive(Debug, Clone)]
 pub struct SignedMessage {
     /// The original message that was signed.
@@ -41,6 +45,15 @@ pub enum SignMessageError {
 
     #[error("invalid message digest: {0}")]
     InvalidDigest(#[from] bdk_wallet::bitcoin::secp256k1::Error),
+
+    #[error("BIP-322 signing failed: {0}")]
+    Bip322(String),
+
+    #[error("invalid address: {0}")]
+    InvalidAddress(String),
+
+    #[error("unsupported address type for verification")]
+    UnsupportedAddressType,
 }
 
 /// Sign a Bitcoin message using BIP-137.
@@ -81,21 +94,70 @@ pub fn sign_message(
     let address =
         derive_address_from_purpose(purpose, &compressed_pubkey, &public_key, network, &secp)?;
 
-    let msg_hash = signed_msg_hash(message);
-    let msg = Message::from_digest_slice(msg_hash.as_ref())?;
-    let signature = secp.sign_ecdsa_recoverable(&msg, &private_key.inner);
-
-    let message_signature = MessageSignature {
-        signature,
-        compressed: true,
+    let signature = if purpose == 86 {
+        // Taproot: BIP-137 is undefined for P2TR, so use BIP-322 (Simple
+        // variant), which produces a Schnorr signature that verifies against
+        // the tweaked output key committed to by the bc1p... address.
+        bip322::sign_simple_encoded(&address.to_string(), message, &private_key.to_wif())
+            .map_err(|e| SignMessageError::Bip322(e.to_string()))?
+    } else {
+        // Legacy / SegWit: BIP-137 recoverable ECDSA.
+        let msg_hash = signed_msg_hash(message);
+        let msg = Message::from_digest_slice(msg_hash.as_ref())?;
+        let recoverable = secp.sign_ecdsa_recoverable(&msg, &private_key.inner);
+        let message_signature = MessageSignature {
+            signature: recoverable,
+            compressed: true,
+        };
+        message_signature.to_base64()
     };
-    let sig_base64 = message_signature.to_base64();
 
     Ok(SignedMessage {
         message: message.to_string(),
         address: address.to_string(),
-        signature: sig_base64,
+        signature,
     })
+}
+
+/// Verify a signed Bitcoin message.
+///
+/// The verification scheme is selected from the address type:
+/// * Taproot (P2TR / bc1p...) addresses are verified with BIP-322 (Simple);
+/// * legacy and SegWit addresses (P2PKH, P2SH-P2WPKH, P2WPKH) are verified
+///   with BIP-137 by recovering the public key from the recoverable ECDSA
+///   signature and checking that it matches the address.
+///
+/// Returns `Ok(false)` for a malformed or non-matching signature, and only
+/// `Err(..)` when the address cannot be parsed or its type is unsupported.
+pub fn verify_signed_message(
+    message: &str,
+    address: &str,
+    signature: &str,
+) -> Result<bool, SignMessageError> {
+    let parsed = Address::from_str(address)
+        .map_err(|e| SignMessageError::InvalidAddress(e.to_string()))?
+        .assume_checked();
+
+    match parsed.address_type() {
+        Some(AddressType::P2tr) => {
+            // BIP-322 Simple (Schnorr).
+            Ok(bip322::verify_simple_encoded(address, message, signature).is_ok())
+        }
+        Some(AddressType::P2pkh | AddressType::P2sh | AddressType::P2wpkh) => {
+            let secp = Secp256k1::new();
+            let Ok(message_signature) = MessageSignature::from_base64(signature) else {
+                return Ok(false);
+            };
+            let msg_hash = signed_msg_hash(message);
+            let Ok(pubkey) = message_signature.recover_pubkey(&secp, msg_hash) else {
+                return Ok(false);
+            };
+            // `is_related_to_pubkey` matches P2PKH, P2WPKH and P2SH-P2WPKH
+            // payloads against the recovered key.
+            Ok(parsed.is_related_to_pubkey(&pubkey))
+        }
+        _ => Err(SignMessageError::UnsupportedAddressType),
+    }
 }
 
 /// Format a signed message in the standard Bitcoin signed message format.
@@ -197,6 +259,88 @@ mod tests {
 
         assert!(!result.signature.is_empty());
         assert!(result.address.starts_with("bc1p"));
+
+        // The taproot signature must round-trip through BIP-322 verification.
+        assert!(
+            verify_signed_message(&result.message, &result.address, &result.signature).unwrap(),
+            "BIP-322 taproot signature should verify"
+        );
+
+        // A different message must not verify against the same signature.
+        assert!(
+            !verify_signed_message("Goodbye, Bitcoin!", &result.address, &result.signature)
+                .unwrap(),
+            "signature should not verify for a different message"
+        );
+    }
+
+    #[test]
+    fn verify_round_trip_all_purposes() {
+        let seed = test_seed();
+        let message = "Hello, Bitcoin!";
+        for path in [
+            "m/44'/0'/0'/0/0",
+            "m/49'/0'/0'/0/0",
+            "m/84'/0'/0'/0/0",
+            "m/86'/0'/0'/0/0",
+            "m/48'/0'/0'/2'/0/0",
+        ] {
+            let result = sign_message(&seed, path, message, Network::Bitcoin).unwrap();
+            assert!(
+                verify_signed_message(&result.message, &result.address, &result.signature).unwrap(),
+                "signature for {path} should verify"
+            );
+            assert!(
+                !verify_signed_message("tampered", &result.address, &result.signature).unwrap(),
+                "tampered message for {path} should not verify"
+            );
+        }
+    }
+
+    #[test]
+    fn verify_rejects_wrong_address() {
+        let seed = test_seed();
+        let signed = sign_message(
+            &seed,
+            "m/84'/0'/0'/0/0",
+            "Hello, Bitcoin!",
+            Network::Bitcoin,
+        )
+        .unwrap();
+
+        let other = sign_message(
+            &seed,
+            "m/84'/0'/0'/0/1",
+            "Hello, Bitcoin!",
+            Network::Bitcoin,
+        )
+        .unwrap();
+        assert_ne!(signed.address, other.address);
+        assert!(
+            !verify_signed_message(&signed.message, &other.address, &signed.signature).unwrap(),
+            "signature should not verify against a different address"
+        );
+    }
+
+    #[test]
+    fn verify_malformed_signature_is_false() {
+        let seed = test_seed();
+        let signed = sign_message(
+            &seed,
+            "m/84'/0'/0'/0/0",
+            "Hello, Bitcoin!",
+            Network::Bitcoin,
+        )
+        .unwrap();
+        assert!(
+            !verify_signed_message(&signed.message, &signed.address, "not-a-signature").unwrap()
+        );
+    }
+
+    #[test]
+    fn verify_invalid_address_errors() {
+        let result = verify_signed_message("msg", "not-an-address", "sig");
+        assert!(matches!(result, Err(SignMessageError::InvalidAddress(_))));
     }
 
     #[test]
