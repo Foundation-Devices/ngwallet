@@ -194,4 +194,56 @@ mod tests {
         );
         assert_eq!(account.config.read().unwrap().last_remote_sequence, 3);
     }
+
+    /// Pre-3.5 wire shape: no binding fields. Element type of the empty
+    /// `wallet_update` is irrelevant to the encoding.
+    fn make_legacy_payload(metadata: Option<ngwallet::config::NgAccountConfig>) -> Vec<u8> {
+        #[derive(serde::Serialize)]
+        struct LegacyRemoteUpdate {
+            metadata: Option<ngwallet::config::NgAccountConfig>,
+            wallet_update: Vec<()>,
+        }
+
+        minicbor_serde::to_vec(&LegacyRemoteUpdate {
+            metadata,
+            wallet_update: vec![],
+        })
+        .unwrap()
+    }
+
+    /// Config-exchange payloads from pre-3.5 peers (older Prime firmware)
+    /// lack the binding fields; `from_remote` must still accept them.
+    #[test]
+    fn legacy_config_payload_is_accepted_by_from_remote() {
+        let account = make_account();
+        let cfg = account.config.read().unwrap().clone();
+        let payload = make_legacy_payload(Some(cfg.clone()));
+
+        let decoded = ngwallet::config::NgAccountConfig::from_remote(payload).unwrap();
+        assert_eq!(decoded.id, cfg.id);
+        assert_eq!(decoded.name, cfg.name);
+        assert_eq!(decoded.network, cfg.network);
+    }
+
+    /// The current 6-field shape must keep decoding through `from_remote`.
+    #[test]
+    fn current_config_payload_is_accepted_by_from_remote() {
+        let account = make_account();
+        let cfg = account.config.read().unwrap().clone();
+        let payload = cfg.clone().to_remote_update();
+
+        let decoded = ngwallet::config::NgAccountConfig::from_remote(payload).unwrap();
+        assert_eq!(decoded.id, cfg.id);
+    }
+
+    /// The wallet-update path must stay strict: legacy payloads carry none of
+    /// the binding fields, so `update()` rejects them outright.
+    #[test]
+    fn legacy_payload_is_rejected_by_update() {
+        let account = make_account();
+        let payload = make_legacy_payload(None);
+
+        account.update(payload).unwrap_err();
+        assert_eq!(account.config.read().unwrap().last_remote_sequence, 0);
+    }
 }
