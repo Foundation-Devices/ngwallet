@@ -9,7 +9,7 @@ const FUNDED_INTERNAL_DESCRIPTOR_TR: &str = "tr([b032ef5f/86'/1'/0']tpubDCYjw9j1
 const FUNDED_EXTERNAL_DESCRIPTOR_TR: &str = "tr([b032ef5f/86'/1'/0']tpubDCYjw9j1fst87iV3Mep6c3jUWe6JwCqLArZv7uZMEfa4VyXjU5uHZrWAMdokfsvm2HisA8Ym5Zbp4o5iCS3UARP6SxDdR2SvmSsSBAzvZMZ/1/*)#9gh9fanu";
 
 #[cfg(feature = "envoy")]
-const ELECTRUM_SERVER: &str = "ssl://mempool.space:60602";
+const ELECTRUM_SERVER: &str = "ssl://signet.foundation.xyz:50002";
 const ELECTRUM_SERVER_T4: &str = "ssl://testnet4.foundation.xyz:50002";
 
 #[cfg(feature = "envoy")]
