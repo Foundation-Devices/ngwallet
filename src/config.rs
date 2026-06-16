@@ -1044,6 +1044,15 @@ impl fmt::Debug for NgAccountBackup {
     }
 }
 
+/// Wire shape of [`RemoteUpdate`] before the binding fields were added in
+/// 3.5.0. Decoded only by [`NgAccountConfig::from_remote`] as a fallback so
+/// config-exchange payloads from older peers still parse; the legacy
+/// `wallet_update` field is ignored.
+#[derive(Deserialize)]
+struct LegacyRemoteUpdate {
+    metadata: Option<NgAccountConfig>,
+}
+
 impl NgAccountConfig {
     /// SHA-256 of all descriptor strings, sorted by address type.
     /// Used as a binding field in `RemoteUpdate` to ensure updates are applied
@@ -1087,8 +1096,15 @@ impl NgAccountConfig {
     }
 
     pub fn from_remote(remote_update: Vec<u8>) -> anyhow::Result<NgAccountConfig> {
-        let update: RemoteUpdate = minicbor_serde::from_slice(&remote_update)?;
-        match update.metadata {
+        let metadata = match minicbor_serde::from_slice::<RemoteUpdate>(&remote_update) {
+            Ok(update) => update.metadata,
+            // Pre-3.5 peers (e.g. older Prime firmware) send a RemoteUpdate
+            // without the binding fields. Those fields are never validated in
+            // this config-exchange path, so accept the legacy shape here.
+            // NgAccount::update stays strict and rejects legacy payloads.
+            Err(_) => minicbor_serde::from_slice::<LegacyRemoteUpdate>(&remote_update)?.metadata,
+        };
+        match metadata {
             None => {
                 bail!("expected metadata")
             }
