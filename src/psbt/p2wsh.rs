@@ -58,7 +58,7 @@ pub fn validate_output(
     if matches!(purpose, ChildNumber::Hardened { index: 48 }) {
         // For BIP-0048 all paths used to derive an address should be equal.
         let mut are_paths_equal = true;
-        for (_, (_, other_path)) in output.bip32_derivation.iter() {
+        for (_, other_path) in output.bip32_derivation.values() {
             if other_path != path {
                 are_paths_equal = false;
                 break;

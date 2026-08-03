@@ -98,7 +98,7 @@ pub fn sign_message(
         // Taproot: BIP-137 is undefined for P2TR, so use BIP-322 (Simple
         // variant), which produces a Schnorr signature that verifies against
         // the tweaked output key committed to by the bc1p... address.
-        bip322::sign_simple_encoded(&address.to_string(), message, &private_key.to_wif())
+        bip322::sign_simple_encoded(&address.to_string(), message, &[private_key.to_wif()], None)
             .map_err(|e| SignMessageError::Bip322(e.to_string()))?
     } else {
         // Legacy / SegWit: BIP-137 recoverable ECDSA.
