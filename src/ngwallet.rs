@@ -231,7 +231,7 @@ impl<P: WalletPersister> NgWallet<P> {
                         vout,
                         amount,
                         tag: storage
-                            .get_tag(format!("{}{}", &tx_id, vout).as_str())
+                            .get_tag(format!("{}{}", tx_id, vout).as_str())
                             .unwrap_or(None),
                     }
                 })
@@ -253,7 +253,7 @@ impl<P: WalletPersister> NgWallet<P> {
                             &output.script_pubkey,
                             wallet.network(),
                         ),
-                        tag: storage.get_tag(&format!("{}:{}", &tx_id, index)).unwrap(),
+                        tag: storage.get_tag(&format!("{}:{}", tx_id, index)).unwrap(),
                         do_not_spend,
                         keychain: wallet
                             .derivation_of_spk(output.script_pubkey.clone())
