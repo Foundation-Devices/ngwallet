@@ -22,14 +22,14 @@ thiserror = "2.0"
 zeroize = { version = "1.8", features = ["zeroize_derive"] }
 bitcoin = { version = "0.32", features = ["secp-recovery"], default-features = false }
 bip322 = "0.0.11"
-foundation-urtypes = { git = "https://github.com/Foundation-Devices/foundation-rs.git", tag = "0.6.0", default-features = false, features = ["alloc"] }
+foundation-urtypes = { git = "https://github.com/Foundation-Devices/foundation-rs.git", tag = "0.6.1", default-features = false, features = ["alloc"] }
 
 [dev-dependencies]
 minicbor = { version = "0.24", features = ["alloc"] }
 # Only used inside `#[cfg(test)]` helpers in `src/config.rs` (the
 # crypto-output CBOR encoder/decoder tests); keep it out of the
 # production dep graph.
-foundation-arena = { git = "https://github.com/Foundation-Devices/foundation-rs.git", tag = "0.6.0" }
+foundation-arena = { git = "https://github.com/Foundation-Devices/foundation-rs.git", tag = "0.6.1" }
 
 [lints.rust]
 unexpected_cfgs = { level = "warn", check-cfg = ['cfg(frb_expand)'] }
