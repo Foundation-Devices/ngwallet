@@ -416,8 +416,13 @@ impl<P: WalletPersister> NgAccount<P> {
         draft_transaction: DraftTransaction,
         psbt: &[u8],
     ) -> Result<DraftTransaction> {
+        let draft_psbt = Psbt::deserialize(&draft_transaction.psbt)
+            .map_err(|e| anyhow::anyhow!("Failed to deserialize draft PSBT: {}", e))?;
         let mut psbt = Psbt::deserialize(psbt)
             .map_err(|e| anyhow::anyhow!("Failed to deserialize PSBT: {}", e))?;
+        if psbt.unsigned_tx != draft_psbt.unsigned_tx {
+            anyhow::bail!("Returned PSBT does not match the reviewed transaction");
+        }
         if psbt.extract(&Secp256k1::verification_only()).is_err() {
             psbt = psbt
                 .clone()
