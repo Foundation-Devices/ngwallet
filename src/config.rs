@@ -1,4 +1,4 @@
-use anyhow::{self, Context, bail};
+use anyhow::{self, Context};
 use bdk_core::bitcoin::hex::DisplayHex;
 #[cfg(feature = "sha2")]
 use sha2::{Digest, Sha256};
@@ -1057,6 +1057,10 @@ impl NgAccountConfig {
     /// SHA-256 of all descriptor strings, sorted by address type.
     /// Used as a binding field in `RemoteUpdate` to ensure updates are applied
     /// only to the account they were created for.
+    ///
+    /// This intentionally hashes the original bytes for compatibility with the
+    /// unversioned `RemoteUpdate` schema released in 3.6.2. A canonical public
+    /// hash requires a separately versioned and negotiated wire format.
     pub fn descriptor_hash(&self) -> [u8; 32] {
         use bdk_wallet::bitcoin::hashes::{Hash, HashEngine, sha256};
         let mut engine = sha256::HashEngine::default();
@@ -1081,11 +1085,15 @@ impl NgAccountConfig {
 
     pub fn has_private_descriptors(&self) -> bool {
         self.descriptors.iter().any(|descriptor| {
-            descriptor_contains_private_material(&descriptor.internal)
-                || descriptor
-                    .external
-                    .as_ref()
-                    .is_some_and(|external| descriptor_contains_private_material(external))
+            !matches!(
+                classify_descriptor_for_exchange(&descriptor.internal),
+                ExchangeDescriptor::WatchOnly
+            ) || descriptor.external.as_ref().is_some_and(|external| {
+                !matches!(
+                    classify_descriptor_for_exchange(external),
+                    ExchangeDescriptor::WatchOnly
+                )
+            })
         })
     }
 
@@ -1104,12 +1112,10 @@ impl NgAccountConfig {
             // NgAccount::update stays strict and rejects legacy payloads.
             Err(_) => minicbor_serde::from_slice::<LegacyRemoteUpdate>(&remote_update)?.metadata,
         };
-        match metadata {
-            None => {
-                bail!("expected metadata")
-            }
-            Some(update) => Ok(update),
-        }
+        let mut update = metadata.context("expected metadata")?;
+        update.descriptors = descriptors_for_exchange(&update.descriptors)
+            .map_err(|_| anyhow::anyhow!("remote metadata contains an unsafe descriptor"))?;
+        Ok(update)
     }
 
     pub fn from_storage(meta_storage: impl MetaStorage) -> Option<NgAccountConfig> {
@@ -1120,7 +1126,7 @@ impl NgAccountConfig {
     }
     pub fn to_remote_update(mut self) -> Vec<u8> {
         let descriptor_hash = self.descriptor_hash();
-        self.clear_private_descriptors();
+        self.descriptors = descriptors_for_exchange(&self.descriptors).unwrap_or_default();
         // sequence 0 signals a config-exchange payload; this is consumed by
         // NgAccountConfig::from_remote, not by NgAccount::update.
         RemoteUpdate::new(
@@ -1140,11 +1146,120 @@ impl NgAccountConfig {
     }
 }
 
-fn descriptor_contains_private_material(descriptor: &str) -> bool {
-    let descriptor = descriptor.to_ascii_lowercase();
-    ["xprv", "tprv", "yprv", "zprv", "uprv", "vprv"]
+enum ExchangeDescriptor {
+    /// The source is already public and must be retained byte-for-byte.
+    WatchOnly,
+    /// The source contained a recognized secret and has been converted to a
+    /// canonical public descriptor with a matching checksum.
+    Publicized(String),
+    /// The source cannot be safely represented as an equivalent watch-only descriptor.
+    Unsafe,
+}
+
+/// Classify a descriptor using its parsed key types. Any syntax, key, policy,
+/// or public-derivation ambiguity is unsafe rather than passed through.
+fn classify_descriptor_for_exchange(descriptor: &str) -> ExchangeDescriptor {
+    let Ok(raw_descriptor) = BdkDescriptor::<String>::from_str(descriptor) else {
+        return ExchangeDescriptor::Unsafe;
+    };
+
+    let mut contains_secret = false;
+    let keys_are_safe = raw_descriptor.for_each_key(|raw_key| {
+        if let Ok(secret_key) = DescriptorSecretKey::from_str(raw_key) {
+            contains_secret = true;
+            match secret_key {
+                // Miniscript 12.3.2 drops origins from WIF keys while
+                // publicizing them, so only plain WIFs are unambiguous.
+                DescriptorSecretKey::Single(_) => !raw_key.starts_with('['),
+                // A hardened wildcard cannot be reproduced by the resulting
+                // xpub, even though miniscript can serialize that form.
+                DescriptorSecretKey::XPrv(xprv) => xprv.wildcard != Wildcard::Hardened,
+                DescriptorSecretKey::MultiXPrv(_) => false,
+            }
+        } else {
+            DescriptorPublicKey::from_str(raw_key).is_ok()
+        }
+    });
+
+    if !keys_are_safe {
+        return ExchangeDescriptor::Unsafe;
+    }
+    let secp = Secp256k1::signing_only();
+    let Ok((public_descriptor, keymap)) =
+        BdkDescriptor::<DescriptorPublicKey>::parse_descriptor(&secp, descriptor)
+    else {
+        return ExchangeDescriptor::Unsafe;
+    };
+
+    if contains_secret == keymap.is_empty()
+        || public_descriptor.sanity_check().is_err()
+        || !public_descriptor.for_each_key(|public_key| match public_key {
+            DescriptorPublicKey::Single(_) => true,
+            DescriptorPublicKey::XPub(xpub) => {
+                xpub.wildcard != Wildcard::Hardened
+                    && xpub
+                        .derivation_path
+                        .into_iter()
+                        .all(|step| step.is_normal())
+            }
+            DescriptorPublicKey::MultiXPub(xpub) => {
+                xpub.wildcard != Wildcard::Hardened
+                    && xpub
+                        .derivation_paths
+                        .paths()
+                        .iter()
+                        .all(|path| path.into_iter().all(|step| step.is_normal()))
+            }
+        })
+    {
+        return ExchangeDescriptor::Unsafe;
+    }
+
+    if !contains_secret {
+        return ExchangeDescriptor::WatchOnly;
+    }
+
+    if keymap.values().all(|secret_key| match secret_key {
+        DescriptorSecretKey::Single(_) => true,
+        DescriptorSecretKey::XPrv(xprv) => xprv.wildcard != Wildcard::Hardened,
+        DescriptorSecretKey::MultiXPrv(_) => false,
+    }) {
+        ExchangeDescriptor::Publicized(public_descriptor.to_string())
+    } else {
+        ExchangeDescriptor::Unsafe
+    }
+}
+
+/// Convert a descriptor vector atomically so callers never receive a partial wallet view.
+fn descriptors_for_exchange(descriptors: &[NgDescriptor]) -> Result<Vec<NgDescriptor>, ()> {
+    descriptors
         .iter()
-        .any(|marker| descriptor.contains(marker))
+        .map(|descriptor| {
+            let internal = match classify_descriptor_for_exchange(&descriptor.internal) {
+                ExchangeDescriptor::WatchOnly => descriptor.internal.clone(),
+                ExchangeDescriptor::Publicized(public) => public,
+                ExchangeDescriptor::Unsafe => return Err(()),
+            };
+            let external = descriptor
+                .external
+                .as_ref()
+                .map(
+                    |external| match classify_descriptor_for_exchange(external) {
+                        ExchangeDescriptor::WatchOnly => Ok(external.clone()),
+                        ExchangeDescriptor::Publicized(public) => Ok(public),
+                        ExchangeDescriptor::Unsafe => Err(()),
+                    },
+                )
+                .transpose()?;
+
+            Ok(NgDescriptor {
+                internal,
+                external,
+                address_type: descriptor.address_type,
+                export_addr_hint: descriptor.export_addr_hint,
+            })
+        })
+        .collect()
 }
 
 impl NgAccountBackup {
