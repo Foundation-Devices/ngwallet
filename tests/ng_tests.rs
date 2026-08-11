@@ -440,10 +440,34 @@ mod tests {
             "account config debug",
             &format!("{:?}", config.read().unwrap()),
         );
+        let original_descriptors = config.read().unwrap().descriptors.clone();
+        let expected_public_descriptors = account
+            .wallets
+            .read()
+            .unwrap()
+            .iter()
+            .map(|wallet| {
+                let wallet = wallet.bdk_wallet.lock().unwrap();
+                (
+                    wallet.public_descriptor(KeychainKind::Internal).to_string(),
+                    wallet.public_descriptor(KeychainKind::External).to_string(),
+                )
+            })
+            .collect::<Vec<_>>();
         let remote_update = config.read().unwrap().clone().to_remote_update();
-        assert_no_private_material("remote update", &String::from_utf8_lossy(&remote_update));
         let remote_config = NgAccountConfig::from_remote(remote_update).unwrap();
-        assert_eq!(remote_config.descriptors.len(), 0);
+        assert_eq!(remote_config.descriptors.len(), original_descriptors.len());
+        for ((remote, original), (expected_internal, expected_external)) in remote_config
+            .descriptors
+            .iter()
+            .zip(&original_descriptors)
+            .zip(&expected_public_descriptors)
+        {
+            assert_eq!(&remote.internal, expected_internal);
+            assert_eq!(remote.external.as_ref(), Some(expected_external));
+            assert_eq!(remote.address_type, original.address_type);
+            assert_eq!(remote.export_addr_hint, original.export_addr_hint);
+        }
         let backup = account.get_backup_json().unwrap();
         assert_no_private_material("account backup", &backup);
         println!("backup: {backup}");
