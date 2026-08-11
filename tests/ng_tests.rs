@@ -556,6 +556,33 @@ mod tests {
 
     #[test]
     #[cfg(feature = "envoy")]
+    fn decode_psbt_rejects_transaction_mismatch() {
+        let mut account = utils::tests_util::get_ng_hot_wallet();
+        utils::tests_util::add_funds_to_wallet(&mut account);
+        let params = TransactionParams {
+            address: "tb1pspfcrvz538vvj9f9gfkd85nu5ty98zw9y5e302kha6zurv6vg07s8z7a8w".into(),
+            amount: 4_000,
+            fee_rate: FeeRateSatPerKvb(2_000),
+            selected_outputs: vec![],
+            note: None,
+            tag: None,
+            do_not_spend_change: false,
+        };
+        let draft = account.compose_psbt(params.clone()).unwrap();
+        let returned = account
+            .compose_psbt(TransactionParams {
+                amount: 5_000,
+                ..params
+            })
+            .unwrap();
+        assert!(returned.is_finalized);
+
+        let error = NgAccount::<Connection>::decode_psbt(draft, &returned.psbt).unwrap_err();
+        assert!(error.to_string().contains("does not match"));
+    }
+
+    #[test]
+    #[cfg(feature = "envoy")]
     fn parse_psbt_preserves_duplicate_outputs() {
         let mut account = utils::tests_util::get_ng_watch_only_account();
         utils::tests_util::add_funds_to_wallet(&mut account);
