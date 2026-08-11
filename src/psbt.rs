@@ -686,6 +686,24 @@ where
                     } else {
                         return Err(Error::MissingWitnessScript { index: i });
                     }
+                } else if redeem_script.is_multisig() {
+                    // Legacy inputs must include the full previous transaction;
+                    // witness_utxo alone is not sufficient for pre-SegWit spends.
+                    if input.non_witness_utxo.is_none() {
+                        return Err(Error::MissingInputFundingUtxo { index: i });
+                    }
+
+                    let required_signers = multisig::disassemble_sorted(redeem_script)
+                        .map_err(|_| Error::InvalidMultisigScript { index: i })?;
+                    let multisig_descriptors = p2sh::legacy_multisig_descriptor(
+                        required_signers,
+                        &psbt.xpub,
+                        &input.bip32_derivation,
+                    )?;
+
+                    for descriptor in multisig_descriptors {
+                        descriptors.insert(descriptor);
+                    }
                 } else {
                     // TODO: Change to UnknownInputScript
                     return Err(Error::UnknownOutputScript { index: i });

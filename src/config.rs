@@ -36,7 +36,8 @@ use regex::Regex;
 use serde::{Deserialize, Serialize};
 
 pub const MULTI_SIG_SIGNER_LIMIT: usize = 20;
-pub const ACCEPTED_FORMATS: &[AddressType] = &[AddressType::P2wsh, AddressType::P2ShWsh];
+pub const ACCEPTED_FORMATS: &[AddressType] =
+    &[AddressType::P2sh, AddressType::P2wsh, AddressType::P2ShWsh];
 
 /// Rewrites a SLIP-132 prefixed multisig extended public key to its canonical
 /// `xpub`/`tpub` form so that `bip32::Xpub::from_str` will accept it.
@@ -554,6 +555,7 @@ impl MultiSigDetails {
     /// text-config or string-descriptor formats.
     ///
     /// Accepted shapes (mirroring [`Self::from_descriptor`]):
+    /// - `sh(sortedmulti(M, xpub1, xpub2, ...))` → `P2sh`
     /// - `wsh(sortedmulti(M, xpub1, xpub2, ...))` → `P2wsh`
     /// - `sh(wsh(sortedmulti(M, xpub1, xpub2, ...)))` → `P2ShWsh`
     ///
@@ -575,6 +577,7 @@ impl MultiSigDetails {
                 ),
             },
             Terminal::ScriptHash(outer) => match &**outer {
+                Terminal::SortedMultisig(mk) => (AddressType::P2sh, mk),
                 Terminal::WitnessScriptHash(inner) => match &**inner {
                     Terminal::SortedMultisig(mk) => (AddressType::P2ShWsh, mk),
                     Terminal::Multisig(_) => anyhow::bail!(
@@ -585,11 +588,11 @@ impl MultiSigDetails {
                     ),
                 },
                 _ => anyhow::bail!(
-                    "crypto-output sh() must wrap wsh(sortedmulti), other scripts are not accepted"
+                    "crypto-output sh() must wrap sortedmulti or wsh(sortedmulti), other scripts are not accepted"
                 ),
             },
             _ => anyhow::bail!(
-                "crypto-output descriptors must be wsh(sortedmulti) or sh(wsh(sortedmulti))"
+                "crypto-output descriptors must be sh(sortedmulti), wsh(sortedmulti), or sh(wsh(sortedmulti))"
             ),
         };
 
@@ -631,6 +634,7 @@ impl MultiSigDetails {
 
         match descriptor {
             BdkDescriptor::Sh(desc) => match desc.into_inner() {
+                ShInner::SortedMulti(ms) => Self::from_sorted_multi(AddressType::P2sh, ms),
                 ShInner::Wsh(d) => match d.into_inner() {
                     WshInner::SortedMulti(ms) => Self::from_sorted_multi(AddressType::P2ShWsh, ms),
                     _ => anyhow::bail!(
@@ -638,7 +642,7 @@ impl MultiSigDetails {
                     ),
                 },
                 _ => anyhow::bail!(
-                    "Multisig descriptors starting with Sh() should contain Wsh(SortedMulti()), other scripts are not currently accepted"
+                    "Multisig descriptors starting with Sh() should contain SortedMulti() or Wsh(SortedMulti()), other scripts are not currently accepted"
                 ),
             },
             BdkDescriptor::Wsh(desc) => match desc.into_inner() {
@@ -695,6 +699,10 @@ impl MultiSigDetails {
             .collect::<Vec<DescriptorPublicKey>>();
 
         let descriptor = match self.format {
+            AddressType::P2sh => BdkDescriptor::<DescriptorPublicKey>::new_sh_sortedmulti(
+                self.policy_threshold,
+                signers,
+            )?,
             AddressType::P2ShWsh => BdkDescriptor::<DescriptorPublicKey>::new_sh_wsh_sortedmulti(
                 self.policy_threshold,
                 signers,
@@ -746,6 +754,7 @@ impl MultiSigDetails {
 
     pub fn get_bip(&self) -> Result<String, anyhow::Error> {
         Ok(match self.format {
+            AddressType::P2sh => String::from("45"),
             AddressType::P2ShWsh => String::from("48_1"),
             AddressType::P2wsh => String::from("48_2"),
             other => anyhow::bail!(
@@ -1883,6 +1892,42 @@ Derivation: m/48'/1'/0'/2'
                 .all(|signer| signer.pubkey.starts_with("xpub"))
         );
         assert!(MultiSigDetails::from_descriptor(&format!("{body}#deadbeef")).is_err());
+    }
+
+    #[test]
+    fn multisig_from_legacy_p2sh_descriptor_round_trips() {
+        let descriptor = "sh(sortedmulti(2,[71C8BD85/45h]xpub6ESpvmZa75rCQWKik2KoCZrjTi6xhSubZKJ25rbtgZRk2g9tZTJqubhaGD3dJeqruw9KMCaanoEfJ1PVtBXiwTuuqLVwk9ucqkRv1sKWiEC/<0;1>/*,[AB88DE89/45h]xpub6EPJuK8Ejz82nKc7PsRgcYqdcQH9G1ZikCTasr9i79CbXxMMiPfxEyA14S6HPTHufmcQR7x8t5L3BP9tRfm9EBRBPic2xV892j9z4ePESae/<0;1>/*,[A9F9964A/45h]xpub6FQY5W8WygMVYY2nTP188jFHNdZfH2t9qtcS8SPpFatUGiciqUsGZpNvEa1oABEyeAsrUL2XSnvuRUdrhf5LcMXcjhrUFBcneBYYZzky3Mc/<0;1>/*))";
+
+        let (multisig, name) = MultiSigDetails::from_descriptor(descriptor).unwrap();
+        assert_eq!(multisig.format, AddressType::P2sh);
+        assert_eq!(name, "Multisig-2-of-3-Main");
+
+        let secp = Secp256k1::new();
+        let receive_descriptor = multisig
+            .to_descriptor(KeychainKind::External, &secp, None)
+            .unwrap()
+            .0;
+        let change_descriptor = multisig
+            .to_descriptor(KeychainKind::Internal, &secp, None)
+            .unwrap()
+            .0;
+
+        assert_eq!(
+            receive_descriptor.desc_type(),
+            bdk_wallet::miniscript::descriptor::DescriptorType::ShSortedMulti
+        );
+        assert_eq!(
+            change_descriptor.desc_type(),
+            bdk_wallet::miniscript::descriptor::DescriptorType::ShSortedMulti
+        );
+
+        let (reloaded, _) =
+            MultiSigDetails::from_descriptor(&receive_descriptor.to_string()).unwrap();
+        assert_eq!(reloaded, multisig);
+
+        let descriptors = multisig.get_descriptors(&secp, None).unwrap();
+        assert_eq!(descriptors[0].bip, "45");
+        assert_eq!(descriptors[0].export_addr_hint, AddressType::P2sh);
     }
 
     // Regression test for SFT-6907: BlueWallet emits P2WSH multisig exports
