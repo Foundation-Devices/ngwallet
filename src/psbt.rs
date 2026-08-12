@@ -7,7 +7,7 @@ mod p2wpkh;
 mod p2wsh;
 
 use crate::bip32::{NgAccountPath, ParsePathError};
-use crate::config::MultiSigDetails;
+use crate::config::{AddressType, MultiSigDetails};
 use bdk_wallet::KeychainKind;
 use bdk_wallet::bitcoin::bip32;
 use bdk_wallet::bitcoin::bip32::{
@@ -682,16 +682,35 @@ where
                         return Err(Error::MissingInputFundingUtxo { index: i });
                     }
 
-                    let required_signers = multisig::disassemble_sorted(redeem_script)
-                        .map_err(|_| Error::InvalidMultisigScript { index: i })?;
-                    let multisig_descriptors = p2sh::legacy_multisig_descriptor(
-                        required_signers,
-                        &psbt.xpub,
-                        &input.bip32_derivation,
-                    )?;
+                    match registered_multisig {
+                        Some(multisig) => {
+                            validate_registered_multisig_input(
+                                secp,
+                                multisig,
+                                fingerprint,
+                                &input.bip32_derivation,
+                                &funding_utxo.script_pubkey,
+                                i,
+                            )?;
+                            insert_registered_multisig_descriptors(
+                                secp,
+                                multisig,
+                                &mut descriptors,
+                            )?;
+                        }
+                        None => {
+                            let required_signers = multisig::disassemble_sorted(redeem_script)
+                                .map_err(|_| Error::InvalidMultisigScript { index: i })?;
+                            let multisig_descriptors = p2sh::legacy_multisig_descriptor(
+                                required_signers,
+                                &psbt.xpub,
+                                &input.bip32_derivation,
+                            )?;
 
-                    for descriptor in multisig_descriptors {
-                        descriptors.insert(descriptor);
+                            for descriptor in multisig_descriptors {
+                                descriptors.insert(descriptor);
+                            }
+                        }
                     }
                 } else {
                     // TODO: Change to UnknownInputScript
@@ -1045,7 +1064,8 @@ fn validate_registered_multisig_input<C: Signing + Verification>(
         .ok_or(Error::FraudulentInput { index })?;
 
     let (keychain, address_index) =
-        bip48_keychain_and_index(our_path).ok_or(Error::FraudulentInput { index })?;
+        registered_multisig_keychain_and_index(multisig, fingerprint, our_path)
+            .ok_or(Error::FraudulentInput { index })?;
 
     let matches = registered_script_pubkey(secp, multisig, keychain, address_index)
         .is_some_and(|script| script == *funding_script_pubkey);
@@ -1083,6 +1103,38 @@ fn registered_script_pubkey<C: Signing + Verification>(
         .derived_descriptor(secp, address_index)
         .ok()
         .map(|descriptor| descriptor.script_pubkey())
+}
+
+pub(crate) fn registered_multisig_keychain_and_index(
+    multisig: &MultiSigDetails,
+    fingerprint: Fingerprint,
+    path: &DerivationPath,
+) -> Option<(KeychainKind, u32)> {
+    if multisig.format != AddressType::P2sh {
+        return bip48_keychain_and_index(path);
+    }
+
+    multisig.get_signers().iter().find_map(|signer| {
+        if signer.get_fingerprint() != fingerprint {
+            return None;
+        }
+        let account_path = signer.get_derivation().ok()?;
+        let [
+            ChildNumber::Normal { index: keychain },
+            ChildNumber::Normal {
+                index: address_index,
+            },
+        ] = path.as_ref().strip_prefix(account_path.as_ref())?
+        else {
+            return None;
+        };
+        let keychain = match keychain {
+            0 => KeychainKind::External,
+            1 => KeychainKind::Internal,
+            _ => return None,
+        };
+        Some((keychain, *address_index))
+    })
 }
 
 fn bip48_keychain_and_index(path: &DerivationPath) -> Option<(KeychainKind, u32)> {
