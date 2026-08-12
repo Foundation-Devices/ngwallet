@@ -1,8 +1,10 @@
-use crate::bip32::NgAccountPath;
-use crate::psbt::{Error, OutputKind, PsbtOutput, sort_keys};
+use crate::config::MultiSigDetails;
+use crate::psbt::{
+    Error, OutputKind, PsbtOutput, bip48_keychain_and_index, registered_script_pubkey, sort_keys,
+};
 use bdk_wallet::bitcoin::bip32::{ChildNumber, DerivationPath, KeySource, Xpub};
 use bdk_wallet::bitcoin::psbt;
-use bdk_wallet::bitcoin::secp256k1::PublicKey;
+use bdk_wallet::bitcoin::secp256k1::{PublicKey, Secp256k1, Signing, Verification};
 use bdk_wallet::bitcoin::{Network, TxOut};
 use bdk_wallet::descriptor::{Descriptor, ExtendedDescriptor, Segwitv0};
 use bdk_wallet::keys::DescriptorPublicKey;
@@ -10,12 +12,13 @@ use bdk_wallet::miniscript::descriptor::{DescriptorXKey, Wildcard, Wsh};
 use bdk_wallet::miniscript::{ForEachKey, Miniscript};
 use std::collections::BTreeMap;
 
-/// Validate a Pay to Witness Script Hash (P2WSH).
-pub fn validate_output(
+pub fn validate_output<C: Signing + Verification>(
+    secp: &Secp256k1<C>,
     output: &psbt::Output,
     txout: &TxOut,
     network: Network,
     index: usize,
+    registered_multisig: Option<&MultiSigDetails>,
 ) -> Result<PsbtOutput, Error> {
     let witness_script = output
         .witness_script
@@ -42,62 +45,27 @@ pub fn validate_output(
         return Err(Error::FraudulentOutput { index });
     }
 
-    let (_, (_, path)) = output
-        .bip32_derivation
-        .first_key_value()
-        .ok_or(Error::ExpectedKeys { index })?;
+    let path = registered_multisig.and_then(|multisig| {
+        let mut paths = output.bip32_derivation.values();
+        let (_, path) = paths.next()?;
+        if !paths.all(|(_, other_path)| other_path == path) {
+            return None;
+        }
 
-    let Some(purpose) = path.as_ref().iter().next() else {
-        return Ok(PsbtOutput {
-            amount: txout.value,
-            kind: OutputKind::Suspicious(address),
-        });
+        let (keychain, address_index) = bip48_keychain_and_index(path)?;
+        let script = registered_script_pubkey(secp, multisig, keychain, address_index)?;
+        (script == txout.script_pubkey).then_some(path)
+    });
+
+    let kind = match path {
+        Some(path) => OutputKind::from_derivation_path(path, 48, network, address)?,
+        None => OutputKind::External(address),
     };
 
-    // TODO: Add support for other BIPs here.
-    if matches!(purpose, ChildNumber::Hardened { index: 48 }) {
-        // For BIP-0048 all paths used to derive an address should be equal.
-        let mut are_paths_equal = true;
-        for (_, other_path) in output.bip32_derivation.values() {
-            if other_path != path {
-                are_paths_equal = false;
-                break;
-            }
-        }
-
-        if !are_paths_equal {
-            return Ok(PsbtOutput {
-                amount: txout.value,
-                kind: OutputKind::Suspicious(address),
-            });
-        }
-
-        let maybe_account_path =
-            NgAccountPath::parse(path).map_err(|e| Error::invalid_path(path.clone(), e))?;
-        let Some(account_path) = maybe_account_path else {
-            return Ok(PsbtOutput {
-                amount: txout.value,
-                kind: OutputKind::Suspicious(address),
-            });
-        };
-
-        if !matches!(account_path.script_type, Some(2)) {
-            return Ok(PsbtOutput {
-                amount: txout.value,
-                kind: OutputKind::Suspicious(address),
-            });
-        }
-
-        Ok(PsbtOutput {
-            amount: txout.value,
-            kind: OutputKind::from_derivation_path(path, 48, network, address)?,
-        })
-    } else {
-        Ok(PsbtOutput {
-            amount: txout.value,
-            kind: OutputKind::Suspicious(address),
-        })
-    }
+    Ok(PsbtOutput {
+        amount: txout.value,
+        kind,
+    })
 }
 
 /// Returns the descriptor for a P2WSH multisig account.
@@ -150,10 +118,10 @@ pub fn multisig_descriptor(
 
     let external_descriptor =
         ExtendedDescriptor::new_wsh_sortedmulti(usize::from(required_signers), external_keys)
-            .unwrap();
+            .map_err(|_| Error::InvalidMultisigDescriptor)?;
     let internal_descriptor =
         ExtendedDescriptor::new_wsh_sortedmulti(usize::from(required_signers), internal_keys)
-            .unwrap();
+            .map_err(|_| Error::InvalidMultisigDescriptor)?;
 
     Ok([external_descriptor, internal_descriptor])
 }
@@ -186,7 +154,14 @@ mod tests {
         let output = empty_output_with_witness_script(witness_script);
         let txout = empty_txout();
 
-        let result = validate_output(&output, &txout, Network::Bitcoin, 0);
+        let result = validate_output(
+            &Secp256k1::new(),
+            &output,
+            &txout,
+            Network::Bitcoin,
+            0,
+            None,
+        );
         assert!(matches!(
             result,
             Err(Error::InvalidWitnessScript { index: 0 })
@@ -201,7 +176,14 @@ mod tests {
         let output = empty_output_with_witness_script(witness_script);
         let txout = empty_txout();
 
-        let result = validate_output(&output, &txout, Network::Bitcoin, 0);
+        let result = validate_output(
+            &Secp256k1::new(),
+            &output,
+            &txout,
+            Network::Bitcoin,
+            0,
+            None,
+        );
         assert!(matches!(
             result,
             Err(Error::InvalidWitnessScript { index: 0 })
@@ -215,7 +197,14 @@ mod tests {
         let output = empty_output_with_witness_script(ScriptBuf::new());
         let txout = empty_txout();
 
-        let result = validate_output(&output, &txout, Network::Bitcoin, 0);
+        let result = validate_output(
+            &Secp256k1::new(),
+            &output,
+            &txout,
+            Network::Bitcoin,
+            0,
+            None,
+        );
         assert!(matches!(
             result,
             Err(Error::InvalidWitnessScript { index: 0 })
@@ -228,7 +217,14 @@ mod tests {
         let output = psbt::Output::default();
         let txout = empty_txout();
 
-        let result = validate_output(&output, &txout, Network::Bitcoin, 7);
+        let result = validate_output(
+            &Secp256k1::new(),
+            &output,
+            &txout,
+            Network::Bitcoin,
+            7,
+            None,
+        );
         assert!(matches!(
             result,
             Err(Error::MissingWitnessScript { index: 7 })

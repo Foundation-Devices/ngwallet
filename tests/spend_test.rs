@@ -106,7 +106,7 @@ mod psbt_security_tests {
 
         assert!(
             matches!(
-                validate(&secp, &master, &psbt, Network::Testnet),
+                validate(&secp, &master, &psbt, Network::Testnet, None),
                 Err(Error::FraudulentInput { index: 0 })
             ),
             "forged witness_utxo value must be rejected"
@@ -145,7 +145,7 @@ mod psbt_security_tests {
 
         assert!(
             matches!(
-                validate(&secp, &master, &psbt, Network::Testnet),
+                validate(&secp, &master, &psbt, Network::Testnet, None),
                 Err(Error::FraudulentInput { index: 0 })
             ),
             "forged witness_utxo script must be rejected"
@@ -177,7 +177,7 @@ mod psbt_security_tests {
         inp.bip32_derivation.insert(pk, (fp, path));
         psbt.inputs = vec![inp];
 
-        let result = validate(&secp, &master, &psbt, Network::Testnet);
+        let result = validate(&secp, &master, &psbt, Network::Testnet, None);
         assert!(
             !matches!(result, Err(Error::FraudulentInput { index: 0 })),
             "consistent funding pair must not be rejected as fraudulent, got: {result:?}"
@@ -213,7 +213,7 @@ mod psbt_security_tests {
 
         assert!(
             matches!(
-                validate(&secp, &master, &psbt, Network::Testnet),
+                validate(&secp, &master, &psbt, Network::Testnet, None),
                 Err(Error::MissingInputFundingUtxo { index: 0 })
             ),
             "P2PKH input without non_witness_utxo must be rejected"
@@ -259,7 +259,7 @@ mod psbt_security_tests {
 
         assert!(
             matches!(
-                validate(&secp, &master, &psbt, Network::Testnet),
+                validate(&secp, &master, &psbt, Network::Testnet, None),
                 Err(Error::FraudulentInput { index: 0 })
             ),
             "P2WSH witness_script hash mismatch must be rejected"
@@ -308,7 +308,7 @@ mod psbt_security_tests {
 
         assert!(
             matches!(
-                validate(&secp, &master, &psbt, Network::Testnet),
+                validate(&secp, &master, &psbt, Network::Testnet, None),
                 Err(Error::FraudulentInput { index: 0 })
             ),
             "P2SH redeem_script hash mismatch must be rejected"
@@ -354,7 +354,7 @@ mod psbt_security_tests {
 
         assert!(
             matches!(
-                validate(&secp, &master, &psbt, Network::Testnet),
+                validate(&secp, &master, &psbt, Network::Testnet, None),
                 Err(Error::FraudulentInput { index: 0 })
             ),
             "P2SH-P2WSH witness_script hash mismatch must be rejected"
