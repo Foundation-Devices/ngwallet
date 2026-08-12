@@ -1,10 +1,12 @@
 use crate::bip32::NgAccountPath;
+use crate::config::MultiSigDetails;
 use crate::psbt::{
-    Error, OutputKind, PsbtOutput, derive_account_xpub, derive_full_descriptor_pubkey, sort_keys,
+    Error, OutputKind, PsbtOutput, bip48_keychain_and_index, derive_account_xpub,
+    derive_full_descriptor_pubkey, registered_script_pubkey, sort_keys,
 };
 use bdk_wallet::bitcoin::bip32::{ChildNumber, DerivationPath, KeySource, Xpriv, Xpub};
 use bdk_wallet::bitcoin::psbt;
-use bdk_wallet::bitcoin::secp256k1::{PublicKey, Secp256k1, Signing};
+use bdk_wallet::bitcoin::secp256k1::{PublicKey, Secp256k1, Signing, Verification};
 use bdk_wallet::bitcoin::{Address, CompressedPublicKey, Network, TxOut};
 use bdk_wallet::descriptor::{Descriptor, ExtendedDescriptor, Segwitv0};
 use bdk_wallet::keys::DescriptorPublicKey;
@@ -14,11 +16,13 @@ use bdk_wallet::miniscript::{ForEachKey, Miniscript};
 use bdk_wallet::template::Bip49Public;
 use std::collections::BTreeMap;
 
-pub fn validate_output(
+pub fn validate_output<C: Signing + Verification>(
+    secp: &Secp256k1<C>,
     output: &psbt::Output,
     txout: &TxOut,
     network: Network,
     index: usize,
+    registered_multisig: Option<&MultiSigDetails>,
 ) -> Result<PsbtOutput, Error> {
     debug_assert!(txout.script_pubkey.is_p2sh());
 
@@ -56,62 +60,27 @@ pub fn validate_output(
             return Err(Error::FraudulentOutput { index });
         }
 
-        let (_, (_, path)) = output
-            .bip32_derivation
-            .first_key_value()
-            .ok_or(Error::ExpectedKeys { index })?;
+        let path = registered_multisig.and_then(|multisig| {
+            let mut paths = output.bip32_derivation.values();
+            let (_, path) = paths.next()?;
+            if !paths.all(|(_, other_path)| other_path == path) {
+                return None;
+            }
 
-        let Some(purpose) = path.as_ref().iter().next() else {
-            return Ok(PsbtOutput {
-                amount: txout.value,
-                kind: OutputKind::Suspicious(address),
-            });
+            let (keychain, address_index) = bip48_keychain_and_index(path)?;
+            let script = registered_script_pubkey(secp, multisig, keychain, address_index)?;
+            (script == txout.script_pubkey).then_some(path)
+        });
+
+        let kind = match path {
+            Some(path) => OutputKind::from_derivation_path(path, 48, network, address)?,
+            None => OutputKind::External(address),
         };
 
-        // TODO: Add support for other BIPs here.
-        if matches!(purpose, ChildNumber::Hardened { index: 48 }) {
-            // For BIP-0048 all paths used to derive an address should be equal.
-            let mut are_paths_equal = true;
-            for (_, other_path) in output.bip32_derivation.values() {
-                if other_path != path {
-                    are_paths_equal = false;
-                    break;
-                }
-            }
-
-            if !are_paths_equal {
-                return Ok(PsbtOutput {
-                    amount: txout.value,
-                    kind: OutputKind::Suspicious(address),
-                });
-            }
-
-            let maybe_account_path =
-                NgAccountPath::parse(path).map_err(|e| Error::invalid_path(path.clone(), e))?;
-            let Some(account_path) = maybe_account_path else {
-                return Ok(PsbtOutput {
-                    amount: txout.value,
-                    kind: OutputKind::Suspicious(address),
-                });
-            };
-
-            if !matches!(account_path.script_type, Some(1)) {
-                return Ok(PsbtOutput {
-                    amount: txout.value,
-                    kind: OutputKind::Suspicious(address),
-                });
-            }
-
-            Ok(PsbtOutput {
-                amount: txout.value,
-                kind: OutputKind::from_derivation_path(path, 48, network, address)?,
-            })
-        } else {
-            Ok(PsbtOutput {
-                amount: txout.value,
-                kind: OutputKind::Suspicious(address),
-            })
-        }
+        Ok(PsbtOutput {
+            amount: txout.value,
+            kind,
+        })
     } else {
         // TODO: Legacy P2SH (e.g. BIP45).
         Err(Error::Unimplemented)
@@ -234,10 +203,10 @@ pub fn wsh_multisig_descriptor(
 
     let external_descriptor =
         ExtendedDescriptor::new_sh_wsh_sortedmulti(usize::from(required_signers), external_keys)
-            .unwrap();
+            .map_err(|_| Error::InvalidMultisigDescriptor)?;
     let internal_descriptor =
         ExtendedDescriptor::new_sh_wsh_sortedmulti(usize::from(required_signers), internal_keys)
-            .unwrap();
+            .map_err(|_| Error::InvalidMultisigDescriptor)?;
 
     Ok([external_descriptor, internal_descriptor])
 }
@@ -289,7 +258,14 @@ mod tests {
         let witness_script = ScriptBuf::from_bytes(vec![0xff; 32]);
         let output = output_with_scripts(p2wsh_redeem_script(), Some(witness_script));
 
-        let result = validate_output(&output, &txout(), Network::Bitcoin, 0);
+        let result = validate_output(
+            &Secp256k1::new(),
+            &output,
+            &txout(),
+            Network::Bitcoin,
+            0,
+            None,
+        );
         assert!(matches!(
             result,
             Err(Error::InvalidWitnessScript { index: 0 })
@@ -303,7 +279,14 @@ mod tests {
         let witness_script = Script::builder().push_opcode(OP_RETURN).into_script();
         let output = output_with_scripts(p2wsh_redeem_script(), Some(witness_script));
 
-        let result = validate_output(&output, &txout(), Network::Bitcoin, 0);
+        let result = validate_output(
+            &Secp256k1::new(),
+            &output,
+            &txout(),
+            Network::Bitcoin,
+            0,
+            None,
+        );
         assert!(matches!(
             result,
             Err(Error::InvalidWitnessScript { index: 0 })
@@ -315,7 +298,14 @@ mod tests {
     fn nested_empty_witness_script_returns_error() {
         let output = output_with_scripts(p2wsh_redeem_script(), Some(ScriptBuf::new()));
 
-        let result = validate_output(&output, &txout(), Network::Bitcoin, 0);
+        let result = validate_output(
+            &Secp256k1::new(),
+            &output,
+            &txout(),
+            Network::Bitcoin,
+            0,
+            None,
+        );
         assert!(matches!(
             result,
             Err(Error::InvalidWitnessScript { index: 0 })
@@ -328,7 +318,14 @@ mod tests {
     fn nested_missing_witness_script_returns_error() {
         let output = output_with_scripts(p2wsh_redeem_script(), None);
 
-        let result = validate_output(&output, &txout(), Network::Bitcoin, 4);
+        let result = validate_output(
+            &Secp256k1::new(),
+            &output,
+            &txout(),
+            Network::Bitcoin,
+            4,
+            None,
+        );
         assert!(matches!(
             result,
             Err(Error::MissingWitnessScript { index: 4 })
@@ -340,7 +337,14 @@ mod tests {
     fn missing_redeem_script_returns_error() {
         let output = psbt::Output::default();
 
-        let result = validate_output(&output, &txout(), Network::Bitcoin, 9);
+        let result = validate_output(
+            &Secp256k1::new(),
+            &output,
+            &txout(),
+            Network::Bitcoin,
+            9,
+            None,
+        );
         assert!(matches!(
             result,
             Err(Error::MissingRedeemScript { index: 9 })
@@ -358,7 +362,14 @@ mod tests {
             .into_script();
         let output = output_with_scripts(redeem_script, None);
 
-        let result = validate_output(&output, &txout(), Network::Bitcoin, 0);
+        let result = validate_output(
+            &Secp256k1::new(),
+            &output,
+            &txout(),
+            Network::Bitcoin,
+            0,
+            None,
+        );
         assert!(matches!(result, Err(Error::Unimplemented)));
     }
 }

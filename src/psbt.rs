@@ -7,6 +7,8 @@ mod p2wpkh;
 mod p2wsh;
 
 use crate::bip32::{NgAccountPath, ParsePathError};
+use crate::config::MultiSigDetails;
+use bdk_wallet::KeychainKind;
 use bdk_wallet::bitcoin::bip32;
 use bdk_wallet::bitcoin::bip32::{
     ChildNumber, DerivationPath, Fingerprint, KeySource, Xpriv, Xpub,
@@ -280,6 +282,9 @@ pub enum Error {
     #[error("the multisig script of input/output number {index} is malformed")]
     InvalidMultisigScript { index: usize },
 
+    #[error("the multisig descriptor could not be constructed from the PSBT metadata")]
+    InvalidMultisigDescriptor,
+
     // TODO(jeandudey): Remove this.
     #[error("not yet implemented")]
     Unimplemented,
@@ -379,11 +384,16 @@ fn validate_key_source_network(
 }
 
 /// Validate a PSBT against the master key.
+///
+/// When `registered_multisig` is provided, multisig inputs and change outputs
+/// must match that account. Without it, multisig accounts are discovered but
+/// their outputs are classified as external.
 pub fn validate<C>(
     secp: &Secp256k1<C>,
     master_key: &Xpriv,
     psbt: &Psbt,
     network: Network,
+    registered_multisig: Option<&MultiSigDetails>,
 ) -> Result<TransactionDetails, Error>
 where
     C: Signing + Verification,
@@ -553,16 +563,35 @@ where
                 }
 
                 if witness_script.is_multisig() {
-                    let required_signers = multisig::disassemble(witness_script)
-                        .map_err(|_| Error::InvalidMultisigScript { index: i })?;
-                    let multisig_descriptors = p2wsh::multisig_descriptor(
-                        required_signers,
-                        &psbt.xpub,
-                        &input.bip32_derivation,
-                    )?;
+                    match registered_multisig {
+                        Some(multisig) => {
+                            validate_registered_multisig_input(
+                                secp,
+                                multisig,
+                                fingerprint,
+                                &input.bip32_derivation,
+                                &funding_utxo.script_pubkey,
+                                i,
+                            )?;
+                            insert_registered_multisig_descriptors(
+                                secp,
+                                multisig,
+                                &mut descriptors,
+                            )?;
+                        }
+                        None => {
+                            let required_signers = multisig::disassemble(witness_script)
+                                .map_err(|_| Error::InvalidMultisigScript { index: i })?;
+                            let multisig_descriptors = p2wsh::multisig_descriptor(
+                                required_signers,
+                                &psbt.xpub,
+                                &input.bip32_derivation,
+                            )?;
 
-                    for descriptor in multisig_descriptors {
-                        descriptors.insert(descriptor);
+                            for descriptor in multisig_descriptors {
+                                descriptors.insert(descriptor);
+                            }
+                        }
                     }
                 } else {
                     return Err(Error::Unimplemented);
@@ -610,16 +639,35 @@ where
                         }
 
                         if witness_script.is_multisig() {
-                            let required_signers = multisig::disassemble(witness_script)
-                                .map_err(|_| Error::InvalidMultisigScript { index: i })?;
-                            let multisig_descriptors = p2sh::wsh_multisig_descriptor(
-                                required_signers,
-                                &psbt.xpub,
-                                &input.bip32_derivation,
-                            )?;
+                            match registered_multisig {
+                                Some(multisig) => {
+                                    validate_registered_multisig_input(
+                                        secp,
+                                        multisig,
+                                        fingerprint,
+                                        &input.bip32_derivation,
+                                        &funding_utxo.script_pubkey,
+                                        i,
+                                    )?;
+                                    insert_registered_multisig_descriptors(
+                                        secp,
+                                        multisig,
+                                        &mut descriptors,
+                                    )?;
+                                }
+                                None => {
+                                    let required_signers = multisig::disassemble(witness_script)
+                                        .map_err(|_| Error::InvalidMultisigScript { index: i })?;
+                                    let multisig_descriptors = p2sh::wsh_multisig_descriptor(
+                                        required_signers,
+                                        &psbt.xpub,
+                                        &input.bip32_derivation,
+                                    )?;
 
-                            for descriptor in multisig_descriptors {
-                                descriptors.insert(descriptor);
+                                    for descriptor in multisig_descriptors {
+                                        descriptors.insert(descriptor);
+                                    }
+                                }
                             }
                         } else {
                             return Err(Error::Unimplemented);
@@ -665,7 +713,15 @@ where
 
         let is_internal = has_our_public_keys || has_our_x_only_public_keys;
 
-        let output_details = validate_output(secp, output, txout, network, is_internal, i)?;
+        let output_details = validate_output(
+            secp,
+            output,
+            txout,
+            network,
+            is_internal,
+            i,
+            registered_multisig,
+        )?;
 
         total_with_self_send += output_details.amount;
         if output_details.is_self_send() {
@@ -871,9 +927,10 @@ fn validate_output<C>(
     network: Network,
     is_internal: bool,
     index: usize,
+    registered_multisig: Option<&MultiSigDetails>,
 ) -> Result<PsbtOutput, Error>
 where
-    C: Verification,
+    C: Signing + Verification,
 {
     if !is_internal {
         let kind = if txout.script_pubkey.is_op_return() {
@@ -896,11 +953,11 @@ where
     } else if txout.script_pubkey.is_p2wpkh() {
         p2wpkh::validate_output(output, txout, network, index)
     } else if txout.script_pubkey.is_p2wsh() {
-        p2wsh::validate_output(output, txout, network, index)
+        p2wsh::validate_output(secp, output, txout, network, index, registered_multisig)
     } else if txout.script_pubkey.is_p2pkh() {
         p2pkh::validate_output(output, txout, network, index)
     } else if txout.script_pubkey.is_p2sh() {
-        p2sh::validate_output(output, txout, network, index)
+        p2sh::validate_output(secp, output, txout, network, index, registered_multisig)
     } else if txout.script_pubkey.is_p2pk() {
         // Don't even try to validate this, just error out if the PSBT contains
         // this output type.
@@ -953,4 +1010,68 @@ pub(crate) fn sort_keys(keys: &mut [DescriptorPublicKey]) {
             .map(|(a, b)| a.cmp(&b))
             .unwrap_or(Ordering::Equal)
     });
+}
+
+fn validate_registered_multisig_input<C: Signing + Verification>(
+    secp: &Secp256k1<C>,
+    multisig: &MultiSigDetails,
+    fingerprint: Fingerprint,
+    bip32_derivations: &BTreeMap<PublicKey, KeySource>,
+    funding_script_pubkey: &ScriptBuf,
+    index: usize,
+) -> Result<(), Error> {
+    let our_path = bip32_derivations
+        .values()
+        .find(|(fp, _)| *fp == fingerprint)
+        .map(|(_, path)| path)
+        .ok_or(Error::FraudulentInput { index })?;
+
+    let (keychain, address_index) =
+        bip48_keychain_and_index(our_path).ok_or(Error::FraudulentInput { index })?;
+
+    let matches = registered_script_pubkey(secp, multisig, keychain, address_index)
+        .is_some_and(|script| script == *funding_script_pubkey);
+
+    if matches {
+        Ok(())
+    } else {
+        Err(Error::FraudulentInput { index })
+    }
+}
+
+#[allow(clippy::mutable_key_type)]
+fn insert_registered_multisig_descriptors<C: Signing + Verification>(
+    secp: &Secp256k1<C>,
+    multisig: &MultiSigDetails,
+    descriptors: &mut HashSet<ExtendedDescriptor>,
+) -> Result<(), Error> {
+    for keychain in [KeychainKind::External, KeychainKind::Internal] {
+        let (descriptor, _) = multisig
+            .to_descriptor(keychain, secp, None)
+            .map_err(|_| Error::InvalidMultisigDescriptor)?;
+        descriptors.insert(descriptor);
+    }
+    Ok(())
+}
+
+fn registered_script_pubkey<C: Signing + Verification>(
+    secp: &Secp256k1<C>,
+    multisig: &MultiSigDetails,
+    keychain: KeychainKind,
+    address_index: u32,
+) -> Option<ScriptBuf> {
+    let (descriptor, _) = multisig.to_descriptor(keychain, secp, None).ok()?;
+    descriptor
+        .derived_descriptor(secp, address_index)
+        .ok()
+        .map(|descriptor| descriptor.script_pubkey())
+}
+
+fn bip48_keychain_and_index(path: &DerivationPath) -> Option<(KeychainKind, u32)> {
+    let account_path = NgAccountPath::parse(path).ok()??;
+    if account_path.purpose != 48 || !account_path.is_for_address() {
+        return None;
+    }
+    // The derived script comparison validates the account's script type.
+    Some((account_path.keychain_kind()?, account_path.address_index?))
 }
