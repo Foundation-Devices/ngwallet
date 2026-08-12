@@ -7,7 +7,7 @@ mod p2wpkh;
 mod p2wsh;
 
 use crate::bip32::{NgAccountPath, ParsePathError};
-use crate::config::MultiSigDetails;
+use crate::config::{AddressType, MultiSigDetails};
 use bdk_wallet::KeychainKind;
 use bdk_wallet::bitcoin::bip32;
 use bdk_wallet::bitcoin::bip32::{
@@ -693,16 +693,35 @@ where
                         return Err(Error::MissingInputFundingUtxo { index: i });
                     }
 
-                    let required_signers = multisig::disassemble_sorted(redeem_script)
-                        .map_err(|_| Error::InvalidMultisigScript { index: i })?;
-                    let multisig_descriptors = p2sh::legacy_multisig_descriptor(
-                        required_signers,
-                        &psbt.xpub,
-                        &input.bip32_derivation,
-                    )?;
+                    match registered_multisig {
+                        Some(multisig) => {
+                            validate_registered_multisig_input(
+                                secp,
+                                multisig,
+                                fingerprint,
+                                &input.bip32_derivation,
+                                &funding_utxo.script_pubkey,
+                                i,
+                            )?;
+                            insert_registered_multisig_descriptors(
+                                secp,
+                                multisig,
+                                &mut descriptors,
+                            )?;
+                        }
+                        None => {
+                            let required_signers = multisig::disassemble_sorted(redeem_script)
+                                .map_err(|_| Error::InvalidMultisigScript { index: i })?;
+                            let multisig_descriptors = p2sh::legacy_multisig_descriptor(
+                                required_signers,
+                                &psbt.xpub,
+                                &input.bip32_derivation,
+                            )?;
 
-                    for descriptor in multisig_descriptors {
-                        descriptors.insert(descriptor);
+                            for descriptor in multisig_descriptors {
+                                descriptors.insert(descriptor);
+                            }
+                        }
                     }
                 } else {
                     // TODO: Change to UnknownInputScript

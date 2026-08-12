@@ -36,6 +36,7 @@ use regex::Regex;
 use serde::{Deserialize, Serialize};
 
 pub const MULTI_SIG_SIGNER_LIMIT: usize = 20;
+pub const LEGACY_P2SH_SIGNER_LIMIT: usize = 15;
 pub const ACCEPTED_FORMATS: &[AddressType] =
     &[AddressType::P2sh, AddressType::P2wsh, AddressType::P2ShWsh];
 
@@ -280,6 +281,13 @@ impl MultiSigDetails {
                 MULTI_SIG_SIGNER_LIMIT
             );
         }
+        if format == AddressType::P2sh && policy_total_keys > LEGACY_P2SH_SIGNER_LIMIT {
+            anyhow::bail!(
+                "legacy P2SH multisig has {} signers, limit is {}",
+                policy_total_keys,
+                LEGACY_P2SH_SIGNER_LIMIT
+            );
+        }
 
         if signers.len() < 2 {
             anyhow::bail!("Multisigs require at least 2 total signers (N)");
@@ -455,19 +463,40 @@ impl MultiSigDetails {
             .iter()
             .map(|pk| match pk {
                 DescriptorPublicKey::XPub(desc_xpub) => {
-                    let (fingerprint, derivation_path) = match &desc_xpub.origin {
-                        Some((f, d)) => (*f, d.clone()),
+                    let (fingerprint, origin_path) = match &desc_xpub.origin {
+                        Some((fingerprint, path)) => (*fingerprint, path.clone()),
                         None => anyhow::bail!(
                             "Descriptor xpub {} doesn't contain origin info",
                             desc_xpub.xkey
                         ),
                     };
-                    let xpub = desc_xpub.xkey;
-                    Ok(MultiSigSigner::new(&derivation_path, &fingerprint, &xpub))
+
+                    if format != AddressType::P2sh {
+                        return Ok(MultiSigSigner::new(
+                            &origin_path,
+                            &fingerprint,
+                            &desc_xpub.xkey,
+                        ));
+                    }
+
+                    let mut account_suffix = desc_xpub.derivation_path.as_ref().to_vec();
+                    match account_suffix.pop() {
+                        Some(ChildNumber::Normal { index: 0 | 1 }) => {}
+                        _ => anyhow::bail!(
+                            "Descriptor xpub {} must end in a receive/change branch before its wildcard",
+                            desc_xpub.xkey
+                        ),
+                    }
+                    Self::signer_from_xpub(
+                        desc_xpub.xkey,
+                        fingerprint,
+                        origin_path,
+                        &account_suffix,
+                    )
                 }
                 DescriptorPublicKey::MultiXPub(desc_xpub) => {
                     let (fingerprint, origin_path) = match &desc_xpub.origin {
-                        Some((f, d)) => (*f, d.clone()),
+                        Some((fingerprint, path)) => (*fingerprint, path.clone()),
                         None => anyhow::bail!(
                             "Descriptor xpub {} doesn't contain origin info",
                             desc_xpub.xkey
@@ -487,8 +516,7 @@ impl MultiSigDetails {
                             .take_while(|(left, right)| left == right)
                             .count()
                     });
-                    let common_path =
-                        DerivationPath::from(first_path.as_ref()[..common_len].to_vec());
+                    let common_path = &first_path.as_ref()[..common_len];
 
                     let keychains = paths
                         .iter()
@@ -1896,7 +1924,11 @@ Derivation: m/48'/1'/0'/2'
 
     #[test]
     fn multisig_from_legacy_p2sh_descriptor_round_trips() {
-        let descriptor = "sh(sortedmulti(2,[71C8BD85/45h]xpub6ESpvmZa75rCQWKik2KoCZrjTi6xhSubZKJ25rbtgZRk2g9tZTJqubhaGD3dJeqruw9KMCaanoEfJ1PVtBXiwTuuqLVwk9ucqkRv1sKWiEC/<0;1>/*,[AB88DE89/45h]xpub6EPJuK8Ejz82nKc7PsRgcYqdcQH9G1ZikCTasr9i79CbXxMMiPfxEyA14S6HPTHufmcQR7x8t5L3BP9tRfm9EBRBPic2xV892j9z4ePESae/<0;1>/*,[A9F9964A/45h]xpub6FQY5W8WygMVYY2nTP188jFHNdZfH2t9qtcS8SPpFatUGiciqUsGZpNvEa1oABEyeAsrUL2XSnvuRUdrhf5LcMXcjhrUFBcneBYYZzky3Mc/<0;1>/*))";
+        let descriptor = "sh(sortedmulti(2,[71C8BD85/45h]xpub6ESpvmZa75rCQWKik2KoCZrjTi6xhSubZKJ25rbtgZRk2g9tZTJqubhaGD3dJeqruw9KMCaanoEfJ1PVtBXiwTuuqLVwk9ucqkRv1sKWiEC/0/<0;1>/*,[AB88DE89/45h]xpub6EPJuK8Ejz82nKc7PsRgcYqdcQH9G1ZikCTasr9i79CbXxMMiPfxEyA14S6HPTHufmcQR7x8t5L3BP9tRfm9EBRBPic2xV892j9z4ePESae/0/<0;1>/*,[A9F9964A/45h]xpub6FQY5W8WygMVYY2nTP188jFHNdZfH2t9qtcS8SPpFatUGiciqUsGZpNvEa1oABEyeAsrUL2XSnvuRUdrhf5LcMXcjhrUFBcneBYYZzky3Mc/0/<0;1>/*))";
+        let expected_descriptors = BdkDescriptor::<DescriptorPublicKey>::from_str(descriptor)
+            .unwrap()
+            .into_single_descriptors()
+            .unwrap();
 
         let (multisig, name) = MultiSigDetails::from_descriptor(descriptor).unwrap();
         assert_eq!(multisig.format, AddressType::P2sh);
@@ -1920,6 +1952,26 @@ Derivation: m/48'/1'/0'/2'
             change_descriptor.desc_type(),
             bdk_wallet::miniscript::descriptor::DescriptorType::ShSortedMulti
         );
+        assert_eq!(
+            receive_descriptor
+                .derived_descriptor(&secp, 7)
+                .unwrap()
+                .script_pubkey(),
+            expected_descriptors[0]
+                .derived_descriptor(&secp, 7)
+                .unwrap()
+                .script_pubkey()
+        );
+        assert_eq!(
+            change_descriptor
+                .derived_descriptor(&secp, 7)
+                .unwrap()
+                .script_pubkey(),
+            expected_descriptors[1]
+                .derived_descriptor(&secp, 7)
+                .unwrap()
+                .script_pubkey()
+        );
 
         let (reloaded, _) =
             MultiSigDetails::from_descriptor(&receive_descriptor.to_string()).unwrap();
@@ -1928,6 +1980,22 @@ Derivation: m/48'/1'/0'/2'
         let descriptors = multisig.get_descriptors(&secp, None).unwrap();
         assert_eq!(descriptors[0].bip, "45");
         assert_eq!(descriptors[0].export_addr_hint, AddressType::P2sh);
+    }
+
+    #[test]
+    fn legacy_p2sh_rejects_more_than_fifteen_signers() {
+        let secp = Secp256k1::new();
+        let derivation = DerivationPath::from_str("m/45'").unwrap();
+        let signers = (1u8..=16)
+            .map(|seed_byte| {
+                let master = Xpriv::new_master(Network::Bitcoin, &[seed_byte; 32]).unwrap();
+                let fingerprint = master.fingerprint(&secp);
+                let xpub = Xpub::from_priv(&secp, &master.derive_priv(&secp, &derivation).unwrap());
+                MultiSigSigner::new(&derivation, &fingerprint, &xpub)
+            })
+            .collect::<Vec<_>>();
+
+        assert!(MultiSigDetails::new(2, 16, AddressType::P2sh, None, signers).is_err());
     }
 
     // Regression test for SFT-6907: BlueWallet emits P2WSH multisig exports
