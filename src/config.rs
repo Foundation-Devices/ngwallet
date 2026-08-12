@@ -3,7 +3,7 @@ use bdk_core::bitcoin::hex::DisplayHex;
 #[cfg(feature = "sha2")]
 use sha2::{Digest, Sha256};
 use std::cmp::Ordering;
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::fmt;
 use std::str::FromStr;
 use std::sync::Arc;
@@ -225,6 +225,14 @@ impl MultiSigDetails {
     ) -> Result<Self, anyhow::Error> {
         // Sort by xpubs
         signers.sort();
+
+        let unique_xpubs: HashSet<&str> =
+            signers.iter().map(MultiSigSigner::get_pubkey_str).collect();
+        if unique_xpubs.len() != signers.len() {
+            anyhow::bail!(
+                "Multisig config contains duplicate cosigner extended public keys; each cosigner must use a distinct xpub"
+            );
+        }
 
         if signers.len() != policy_total_keys {
             anyhow::bail!(
@@ -1564,6 +1572,36 @@ Derivation: m/48'/1'/0'/2'
         };
         assert_eq!(expected, multisig);
         assert_eq!(String::from("Multisig 2-of-2 Test"), name);
+    }
+
+    #[test]
+    fn multisig_from_config_rejects_duplicate_xpub_with_different_metadata() {
+        let xpub = "tpubDFUc8ddWCzA8kC195Zn6UitBcBGXbPbtjktU2dk2Deprnf6sR15GAyHLQKUjAPa3gqD74g7Eea3NSqkb9FfYRZzEm2MTbCtTDZAKSHezJwb";
+        let config = format!(
+            "Policy: 2 of 2\nFormat: P2WSH\n\nDerivation: m/48'/1'/0'/2'\nAB88DE89: {xpub}\n\nDerivation: m/48'/1'/1'/2'\n662A42E4: {xpub}"
+        );
+
+        let err = MultiSigDetails::from_config(&config).unwrap_err();
+        assert!(
+            err.to_string()
+                .contains("duplicate cosigner extended public keys")
+        );
+    }
+
+    #[test]
+    fn multisig_new_rejects_duplicate_xpub_with_different_metadata() {
+        let xpub = "tpubDFUc8ddWCzA8kC195Zn6UitBcBGXbPbtjktU2dk2Deprnf6sR15GAyHLQKUjAPa3gqD74g7Eea3NSqkb9FfYRZzEm2MTbCtTDZAKSHezJwb";
+        let signers = vec![
+            MultiSigSigner::new_from_strings("m/48'/1'/0'/2'", "AB88DE89", xpub).unwrap(),
+            MultiSigSigner::new_from_strings("m/48'/1'/1'/2'", "662A42E4", xpub).unwrap(),
+        ];
+
+        let err = MultiSigDetails::new(2, 2, AddressType::P2wsh, Some(NetworkKind::Test), signers)
+            .unwrap_err();
+        assert!(
+            err.to_string()
+                .contains("duplicate cosigner extended public keys")
+        );
     }
 
     #[test]
