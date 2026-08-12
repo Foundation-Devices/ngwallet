@@ -226,8 +226,10 @@ impl MultiSigDetails {
         // Sort by xpubs
         signers.sort();
 
-        let unique_xpubs: HashSet<&str> =
-            signers.iter().map(MultiSigSigner::get_pubkey_str).collect();
+        let unique_xpubs: HashSet<String> = signers
+            .iter()
+            .map(|signer| signer.get_pubkey().map(|xpub| xpub.to_string()))
+            .collect::<Result<_, _>>()?;
         if unique_xpubs.len() != signers.len() {
             anyhow::bail!(
                 "Multisig config contains duplicate cosigner extended public keys; each cosigner must use a distinct xpub"
