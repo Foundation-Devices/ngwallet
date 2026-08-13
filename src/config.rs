@@ -6,7 +6,7 @@ use std::cmp::Ordering;
 use std::collections::{BTreeMap, HashMap};
 use std::fmt;
 use std::str::FromStr;
-use std::sync::Arc;
+use std::sync::{Arc, LazyLock};
 
 use crate::account::{Descriptor, NgAccount, RemoteUpdate};
 use crate::bip39::{Descriptors, MasterKey};
@@ -25,7 +25,7 @@ use bdk_wallet::miniscript::{
     ForEachKey,
     descriptor::{
         DescriptorPublicKey, DescriptorSecretKey, DescriptorXKey, ShInner, SortedMultiVec,
-        Wildcard, WshInner,
+        Wildcard, WshInner, checksum::desc_checksum,
     },
 };
 use foundation_urtypes::registry::{
@@ -77,6 +77,22 @@ fn normalize_slip132(key: &str) -> String {
         }
     }
     key.to_string()
+}
+
+fn normalize_descriptor_slip132(descriptor: &str) -> anyhow::Result<String> {
+    let body = match descriptor.split_once('#') {
+        Some((body, checksum)) if checksum == desc_checksum(body)? => body,
+        Some(_) => anyhow::bail!("Invalid descriptor checksum"),
+        None => descriptor,
+    };
+
+    static SLIP132_KEY: LazyLock<Regex> =
+        LazyLock::new(|| Regex::new(r"[YZUV]pub[1-9A-HJ-NP-Za-km-z]+").unwrap());
+    Ok(SLIP132_KEY
+        .replace_all(body, |captures: &regex::Captures<'_>| {
+            normalize_slip132(&captures[0])
+        })
+        .into_owned())
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq)]
@@ -539,7 +555,8 @@ impl MultiSigDetails {
     }
 
     pub fn from_descriptor(descriptor: &str) -> Result<(Self, String), anyhow::Error> {
-        let descriptor = BdkDescriptor::<DescriptorPublicKey>::from_str(descriptor)?;
+        let descriptor = normalize_descriptor_slip132(descriptor)?;
+        let descriptor = BdkDescriptor::<DescriptorPublicKey>::from_str(&descriptor)?;
 
         match descriptor {
             BdkDescriptor::Sh(desc) => match desc.into_inner() {
@@ -1634,6 +1651,33 @@ Derivation: m/48'/1'/0'/2'
         assert_eq!(String::from("Multisig-2-of-3-Main"), name);
     }
 
+    #[test]
+    fn multisig_from_descriptor_accepts_slip132_and_validates_checksum() {
+        let ypub_1 = xpub_with_version(
+            "xpub6ESpvmZa75rCQWKik2KoCZrjTi6xhSubZKJ25rbtgZRk2g9tZTJqubhaGD3dJeqruw9KMCaanoEfJ1PVtBXiwTuuqLVwk9ucqkRv1sKWiEC",
+            [0x02, 0x95, 0xB4, 0x3F],
+        );
+        let ypub_2 = xpub_with_version(
+            "xpub6EPJuK8Ejz82nKc7PsRgcYqdcQH9G1ZikCTasr9i79CbXxMMiPfxEyA14S6HPTHufmcQR7x8t5L3BP9tRfm9EBRBPic2xV892j9z4ePESae",
+            [0x02, 0x95, 0xB4, 0x3F],
+        );
+        let body = format!(
+            "sh(wsh(sortedmulti(2,[71c8bd85/48h/0h/0h/1h]{ypub_1}/<0;1>/*,[ab88de89/48h/0h/0h/1h]{ypub_2}/<0;1>/*)))"
+        );
+        let checksum = desc_checksum(&body).unwrap();
+
+        let (multisig, _) =
+            MultiSigDetails::from_descriptor(&format!("{body}#{checksum}")).unwrap();
+        assert_eq!(multisig.format, AddressType::P2ShWsh);
+        assert!(
+            multisig
+                .signers
+                .iter()
+                .all(|signer| signer.pubkey.starts_with("xpub"))
+        );
+        assert!(MultiSigDetails::from_descriptor(&format!("{body}#deadbeef")).is_err());
+    }
+
     // Regression test for SFT-6907: BlueWallet emits P2WSH multisig exports
     // with SLIP-132 `Zpub` extended keys. Before the SLIP-132 normalization
     // step in `from_config`, `Xpub::from_str` rejected these prefixes and the
@@ -1708,10 +1752,14 @@ Format: P2WSH
     // running it back through normalize_slip132, and asserting we recover the
     // original. This exercises each mapping without needing hand-crafted
     // Ypub/Upub/Vpub fixtures.
-    fn roundtrip_through_prefix(canonical: &str, slip132_version: [u8; 4], prefix: &str) {
+    fn xpub_with_version(canonical: &str, version: [u8; 4]) -> String {
         let mut bytes = bitcoin::base58::decode_check(canonical).unwrap();
-        bytes[..4].copy_from_slice(&slip132_version);
-        let slip132 = bitcoin::base58::encode_check(&bytes);
+        bytes[..4].copy_from_slice(&version);
+        bitcoin::base58::encode_check(&bytes)
+    }
+
+    fn roundtrip_through_prefix(canonical: &str, slip132_version: [u8; 4], prefix: &str) {
+        let slip132 = xpub_with_version(canonical, slip132_version);
         assert!(
             slip132.starts_with(prefix),
             "expected {prefix}…, got {slip132}"
@@ -1735,6 +1783,25 @@ Format: P2WSH
     fn normalize_slip132_upub_roundtrips_to_tpub() {
         let tpub = "tpubDFUc8ddWCzA8kC195Zn6UitBcBGXbPbtjktU2dk2Deprnf6sR15GAyHLQKUjAPa3gqD74g7Eea3NSqkb9FfYRZzEm2MTbCtTDZAKSHezJwb";
         roundtrip_through_prefix(tpub, [0x02, 0x42, 0x89, 0xEF], "Upub");
+    }
+
+    #[test]
+    fn normalize_descriptor_slip132_keys() {
+        let main = "xpub6ESpvmZa75rCQWKik2KoCZrjTi6xhSubZKJ25rbtgZRk2g9tZTJqubhaGD3dJeqruw9KMCaanoEfJ1PVtBXiwTuuqLVwk9ucqkRv1sKWiEC";
+        let test = "tpubDFUc8ddWCzA8kC195Zn6UitBcBGXbPbtjktU2dk2Deprnf6sR15GAyHLQKUjAPa3gqD74g7Eea3NSqkb9FfYRZzEm2MTbCtTDZAKSHezJwb";
+        for (canonical, version) in [
+            (main, [0x02, 0x95, 0xB4, 0x3F]),
+            (main, [0x02, 0xAA, 0x7E, 0xD3]),
+            (test, [0x02, 0x42, 0x89, 0xEF]),
+            (test, [0x02, 0x57, 0x54, 0x83]),
+        ] {
+            let key = xpub_with_version(canonical, version);
+            let descriptor = format!("wsh(pk({key}))");
+            assert_eq!(
+                normalize_descriptor_slip132(&descriptor).unwrap(),
+                format!("wsh(pk({canonical}))")
+            );
+        }
     }
 
     // Singlesig SLIP-132 encodings (lowercase zpub here) are deliberately NOT
