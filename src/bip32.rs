@@ -45,35 +45,6 @@ impl NgAccountPath {
             return Ok(None);
         };
 
-        if purpose == 45 {
-            // BIP-0045 is network-independent and uses
-            // m/45'/cosigner_index/change/address rather than the
-            // BIP-0044 coin-type/account layout.
-            let cosigner_index = Self::expect_normal(&mut iter)?;
-            let change = if cosigner_index.is_some() {
-                Self::expect_normal(&mut iter)?
-            } else {
-                None
-            };
-            let address_index = if change.is_some() {
-                Self::expect_normal(&mut iter)?
-            } else {
-                None
-            };
-
-            return Ok(Some(Self {
-                purpose,
-                // BIP-0045 has no coin type or account component. Keep the
-                // public representation anchored to account zero while
-                // network validation is handled specially below.
-                coin_type: 0,
-                account: 0,
-                script_type: None,
-                change,
-                address_index,
-            }));
-        }
-
         if !matches!(purpose, 44 | 48 | 49 | 84 | 86) {
             return Ok(None);
         }
@@ -156,9 +127,6 @@ impl NgAccountPath {
 
     /// Returns true if the derivation path is valid for the given network kind.
     pub fn is_valid_for_network_kind(&self, network: NetworkKind) -> Option<bool> {
-        if self.purpose == 45 {
-            return Some(true);
-        }
         self.to_network_kind().map(|v| network == v)
     }
 
@@ -212,22 +180,6 @@ mod tests {
             .unwrap();
         assert!(account.matches(49, Network::Bitcoin));
         assert_eq!(account.is_change(), Some(true));
-    }
-
-    #[test]
-    fn parse_bip45_receive_and_change() {
-        let receive = NgAccountPath::parse(DerivationPath::from_str("m/45'/7/0/3").unwrap())
-            .unwrap()
-            .unwrap();
-        assert!(receive.matches(45, Network::Bitcoin));
-        assert!(receive.matches(45, Network::Testnet4));
-        assert_eq!(receive.account, 0);
-        assert_eq!(receive.is_change(), Some(false));
-
-        let change = NgAccountPath::parse(DerivationPath::from_str("m/45'/7/1/3").unwrap())
-            .unwrap()
-            .unwrap();
-        assert_eq!(change.is_change(), Some(true));
     }
 
     #[test]

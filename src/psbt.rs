@@ -7,7 +7,7 @@ mod p2wpkh;
 mod p2wsh;
 
 use crate::bip32::{NgAccountPath, ParsePathError};
-use crate::config::{AddressType, MultiSigDetails};
+use crate::config::MultiSigDetails;
 use bdk_wallet::KeychainKind;
 use bdk_wallet::bitcoin::bip32;
 use bdk_wallet::bitcoin::bip32::{
@@ -1207,4 +1207,20 @@ pub(crate) fn registered_multisig_output_kind<C: Signing + Verification>(
             OutputKind::Transfer { address, account }
         }
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::str::FromStr;
+
+    #[test]
+    fn bip45_path_does_not_infer_a_network() {
+        let source = (
+            Fingerprint::from([1, 2, 3, 4]),
+            DerivationPath::from_str("m/45'/2/0/7").unwrap(),
+        );
+
+        assert_eq!(validate_key_source_network(None, &source).unwrap(), None);
+    }
 }

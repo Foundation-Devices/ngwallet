@@ -538,7 +538,7 @@ impl MultiSigDetails {
                         desc_xpub.xkey,
                         fingerprint,
                         origin_path,
-                        common_path.as_ref(),
+                        common_path,
                     )
                 }
                 other => anyhow::bail!("Descriptor has {other:?} rather than xpub"),
