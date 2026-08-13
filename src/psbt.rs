@@ -1145,3 +1145,19 @@ fn bip48_keychain_and_index(path: &DerivationPath) -> Option<(KeychainKind, u32)
     // The derived script comparison validates the account's script type.
     Some((account_path.keychain_kind()?, account_path.address_index?))
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::str::FromStr;
+
+    #[test]
+    fn bip45_path_does_not_infer_a_network() {
+        let source = (
+            Fingerprint::from([1, 2, 3, 4]),
+            DerivationPath::from_str("m/45'/2/0/7").unwrap(),
+        );
+
+        assert_eq!(validate_key_source_network(None, &source).unwrap(), None);
+    }
+}

@@ -21,6 +21,8 @@ pub enum Error {
     MalformedScript,
     #[error("public keys are not strictly sorted")]
     PublicKeysNotSorted,
+    #[error("public keys must use compressed encoding")]
+    UncompressedPublicKey,
     #[error("invalid total public keys length")]
     InvalidTotalPublicKeysLength,
     #[error("unexpected end of script")]
@@ -40,6 +42,9 @@ pub fn disassemble(script: &Script) -> Result<u8, Error> {
 /// ordering, matching a `sortedmulti` descriptor.
 pub fn disassemble_sorted(script: &Script) -> Result<u8, Error> {
     let (required_signers, public_keys) = disassemble_inner(script)?;
+    if public_keys.iter().any(|key| !key.compressed) {
+        return Err(Error::UncompressedPublicKey);
+    }
     if !public_keys
         .windows(2)
         .all(|keys| keys[0].inner.serialize() < keys[1].inner.serialize())
@@ -125,6 +130,28 @@ mod tests {
     use bdk_wallet::bitcoin::script::Builder;
     use bdk_wallet::bitcoin::secp256k1::{Secp256k1, SecretKey};
 
+    fn sorted_keys() -> [PublicKey; 2] {
+        let secp = Secp256k1::new();
+        let mut keys = [1u8, 2].map(|byte| {
+            PublicKey::new(bdk_wallet::bitcoin::secp256k1::PublicKey::from_secret_key(
+                &secp,
+                &SecretKey::from_slice(&[byte; 32]).unwrap(),
+            ))
+        });
+        keys.sort_by_key(|key| key.inner.serialize());
+        keys
+    }
+
+    fn multisig_script(keys: &[PublicKey; 2]) -> ScriptBuf {
+        Builder::new()
+            .push_int(2)
+            .push_key(&keys[0])
+            .push_key(&keys[1])
+            .push_int(2)
+            .push_opcode(OP_CHECKMULTISIG)
+            .into_script()
+    }
+
     #[test]
     fn empty_script_does_not_panic() {
         let script = ScriptBuf::new();
@@ -155,30 +182,28 @@ mod tests {
 
     #[test]
     fn sorted_disassembly_rejects_unsorted_keys() {
-        let secp = Secp256k1::new();
-        let mut keys = [
-            PublicKey::new(bdk_wallet::bitcoin::secp256k1::PublicKey::from_secret_key(
-                &secp,
-                &SecretKey::from_slice(&[1u8; 32]).unwrap(),
-            )),
-            PublicKey::new(bdk_wallet::bitcoin::secp256k1::PublicKey::from_secret_key(
-                &secp,
-                &SecretKey::from_slice(&[2u8; 32]).unwrap(),
-            )),
-        ];
-        keys.sort_by_key(|key| key.inner.serialize());
+        let mut keys = sorted_keys();
         keys.reverse();
-        let script = Builder::new()
-            .push_int(2)
-            .push_key(&keys[0])
-            .push_key(&keys[1])
-            .push_int(2)
-            .push_opcode(OP_CHECKMULTISIG)
-            .into_script();
 
         assert!(matches!(
-            disassemble_sorted(&script),
+            disassemble_sorted(&multisig_script(&keys)),
             Err(Error::PublicKeysNotSorted)
         ));
+    }
+
+    #[test]
+    fn sorted_disassembly_accepts_sorted_compressed_keys() {
+        assert_eq!(disassemble_sorted(&multisig_script(&sorted_keys())), Ok(2));
+    }
+
+    #[test]
+    fn sorted_disassembly_rejects_uncompressed_keys() {
+        let keys = sorted_keys();
+        let keys = [keys[0], PublicKey::new_uncompressed(keys[1].inner)];
+
+        assert_eq!(
+            disassemble_sorted(&multisig_script(&keys)),
+            Err(Error::UncompressedPublicKey)
+        );
     }
 }

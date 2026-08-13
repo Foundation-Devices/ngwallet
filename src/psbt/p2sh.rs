@@ -272,34 +272,53 @@ fn multisig_descriptor_keys(
         .map(|(_, (subpath_fingerprint, subpath))| {
             global_xpubs
                 .iter()
-                .find(|(_, (global_fingerprint, global_path))| {
+                .filter(|(_, (global_fingerprint, global_path))| {
                     subpath_fingerprint == global_fingerprint
                         && subpath.as_ref().starts_with(global_path.as_ref())
                 })
+                .max_by_key(|(_, (_, global_path))| global_path.as_ref().len())
+                .map(|(xpub, source)| (xpub, source, subpath))
                 .ok_or_else(|| Error::MissingGlobalXpub(subpath.clone()))
         });
 
     let mut external_keys = Vec::new();
     let mut internal_keys = Vec::new();
     for maybe_xpub in xpubs {
-        let (xpub, source) = maybe_xpub?;
+        let (xpub, source, subpath) = maybe_xpub?;
+        let relative_path = subpath
+            .as_ref()
+            .strip_prefix(source.1.as_ref())
+            .ok_or(Error::InvalidMultisigDescriptor)?;
+        if relative_path.len() < 2
+            || !matches!(
+                relative_path[relative_path.len() - 2],
+                ChildNumber::Normal { index: 0 | 1 }
+            )
+            || !matches!(
+                relative_path[relative_path.len() - 1],
+                ChildNumber::Normal { .. }
+            )
+        {
+            return Err(Error::InvalidMultisigDescriptor);
+        }
+        let account_suffix = &relative_path[..relative_path.len() - 2];
+        let descriptor_key = |branch| {
+            DescriptorPublicKey::XPub(DescriptorXKey {
+                origin: Some(source.clone()),
+                xkey: *xpub,
+                derivation_path: DerivationPath::from(
+                    account_suffix
+                        .iter()
+                        .copied()
+                        .chain([ChildNumber::Normal { index: branch }])
+                        .collect::<Vec<_>>(),
+                ),
+                wildcard: Wildcard::Unhardened,
+            })
+        };
 
-        let external_key = DescriptorPublicKey::XPub(DescriptorXKey {
-            origin: Some(source.clone()),
-            xkey: *xpub,
-            derivation_path: DerivationPath::from(vec![ChildNumber::Normal { index: 0 }]),
-            wildcard: Wildcard::Unhardened,
-        });
-
-        let internal_key = DescriptorPublicKey::XPub(DescriptorXKey {
-            origin: Some(source.clone()),
-            xkey: *xpub,
-            derivation_path: DerivationPath::from(vec![ChildNumber::Normal { index: 1 }]),
-            wildcard: Wildcard::Unhardened,
-        });
-
-        external_keys.push(external_key);
-        internal_keys.push(internal_key);
+        external_keys.push(descriptor_key(0));
+        internal_keys.push(descriptor_key(1));
     }
 
     sort_keys(&mut external_keys);
@@ -406,6 +425,47 @@ mod tests {
         output.bip32_derivation = derivations;
 
         (output, txout, multisig)
+    }
+
+    #[test]
+    fn legacy_descriptor_preserves_bip45_cosigner_paths() {
+        let secp = Secp256k1::new();
+        let purpose_path = DerivationPath::from(vec![ChildNumber::Hardened { index: 45 }]);
+        let mut global_xpubs = BTreeMap::new();
+        let mut derivations = BTreeMap::new();
+
+        for (seed, cosigner_index) in [(1u8, 2u32), (2, 7)] {
+            let master = Xpriv::new_master(Network::Bitcoin, &[seed; 32]).unwrap();
+            let fingerprint = master.fingerprint(&secp);
+            let purpose_xpriv = master.derive_priv(&secp, &purpose_path).unwrap();
+            global_xpubs.insert(
+                Xpub::from_priv(&secp, &purpose_xpriv),
+                (fingerprint, purpose_path.clone()),
+            );
+
+            let address_path = DerivationPath::from(vec![
+                ChildNumber::Hardened { index: 45 },
+                ChildNumber::Normal {
+                    index: cosigner_index,
+                },
+                ChildNumber::Normal { index: 0 },
+                ChildNumber::Normal { index: 3 },
+            ]);
+            let public_key =
+                Xpub::from_priv(&secp, &master.derive_priv(&secp, &address_path).unwrap())
+                    .public_key;
+            derivations.insert(public_key, (fingerprint, address_path));
+        }
+
+        let [external, internal] =
+            legacy_multisig_descriptor(2, &global_xpubs, &derivations).unwrap();
+        let external = external.to_string();
+        let internal = internal.to_string();
+
+        for cosigner_index in [2, 7] {
+            assert!(external.contains(&format!("/{cosigner_index}/0/*")));
+            assert!(internal.contains(&format!("/{cosigner_index}/1/*")));
+        }
     }
 
     /// A nested P2SH-P2WSH with a malformed witness_script must not panic.
