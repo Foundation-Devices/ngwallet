@@ -494,6 +494,10 @@ where
         let funding_utxo =
             funding_utxo(input, txin, i)?.ok_or(Error::MissingInputFundingUtxo { index: i })?;
 
+        if !funding_utxo.script_pubkey.is_p2tr() && input.non_witness_utxo.is_none() {
+            return Err(Error::MissingInputFundingUtxo { index: i });
+        }
+
         if funding_utxo.script_pubkey.is_p2tr() {
             // Only single-sig P2TR supported for now.
             if input.tap_key_origins.len() != 1 {
@@ -530,12 +534,6 @@ where
             });
             descriptors.insert(p2wpkh::descriptor(secp, master_key, &source.1, network));
         } else if funding_utxo.script_pubkey.is_p2pkh() {
-            // Legacy inputs must supply the full previous transaction so the
-            // referenced output can be verified. witness_utxo alone is not
-            if input.non_witness_utxo.is_none() {
-                return Err(Error::MissingInputFundingUtxo { index: i });
-            }
-
             if input.bip32_derivation.len() != 1 {
                 return Err(Error::MultipleKeysNotExpected { index: i });
             }
