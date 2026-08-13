@@ -236,6 +236,10 @@ pub enum Error {
     #[error("the input number {index} is missing")]
     MissingInputFundingUtxo { index: usize },
 
+    /// Full previous transaction required by the signing policy.
+    #[error("the input number {index} is missing its non-witness UTXO")]
+    MissingNonWitnessUtxo { index: usize },
+
     #[error("the witness script of output number {index} is invalid")]
     InvalidWitnessScript { index: usize },
 
@@ -467,6 +471,19 @@ where
             }
         }
 
+        // Keep validation aligned with bdk_wallet's default signing policy. The
+        // signer checks every non-finalized input, including inputs that don't
+        // belong to this wallet, and identifies Taproot inputs by their PSBT
+        // metadata rather than by inspecting the funding output.
+        if input.final_script_witness.is_none()
+            && input.final_script_sig.is_none()
+            && input.tap_internal_key.is_none()
+            && input.tap_merkle_root.is_none()
+            && input.non_witness_utxo.is_none()
+        {
+            return Err(Error::MissingNonWitnessUtxo { index: i });
+        }
+
         let has_our_public_keys =
             validate_public_keys(secp, master_key, &input.bip32_derivation, fingerprint)
                 .map_err(Error::from)
@@ -493,10 +510,6 @@ where
 
         let funding_utxo =
             funding_utxo(input, txin, i)?.ok_or(Error::MissingInputFundingUtxo { index: i })?;
-
-        if !funding_utxo.script_pubkey.is_p2tr() && input.non_witness_utxo.is_none() {
-            return Err(Error::MissingInputFundingUtxo { index: i });
-        }
 
         if funding_utxo.script_pubkey.is_p2tr() {
             // Only single-sig P2TR supported for now.
@@ -709,7 +722,11 @@ where
                     None => Ok(false),
                 })?;
 
-        let is_internal = has_our_public_keys || has_our_x_only_public_keys;
+        let is_internal = if txout.script_pubkey.is_p2tr() {
+            has_our_x_only_public_keys
+        } else {
+            has_our_public_keys
+        };
 
         let output_details = validate_output(
             secp,
