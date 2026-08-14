@@ -29,7 +29,8 @@ use bdk_wallet::miniscript::{
     },
 };
 use foundation_urtypes::registry::{
-    ChildNumber as UrChildNumber, HDKeyRef, Key as UrKey, Terminal,
+    ChildNumber as UrChildNumber, HDKeyRef, Key as UrKey, PathComponent as UrPathComponent,
+    Terminal,
 };
 use regex::Regex;
 use serde::{Deserialize, Serialize};
@@ -493,17 +494,12 @@ impl MultiSigDetails {
                         );
                     }
 
-                    let secp = Secp256k1::verification_only();
-                    let xpub = desc_xpub.xkey.derive_pub(&secp, &common_path)?;
-                    let derivation_path = DerivationPath::from(
-                        origin_path
-                            .as_ref()
-                            .iter()
-                            .chain(common_path.as_ref())
-                            .copied()
-                            .collect::<Vec<_>>(),
-                    );
-                    Ok(MultiSigSigner::new(&derivation_path, &fingerprint, &xpub))
+                    Self::signer_from_xpub(
+                        desc_xpub.xkey,
+                        fingerprint,
+                        origin_path,
+                        common_path.as_ref(),
+                    )
                 }
                 other => anyhow::bail!("Descriptor has {other:?} rather than xpub"),
             })
@@ -514,6 +510,27 @@ impl MultiSigDetails {
         let name = res.default_name();
 
         Ok((res, name))
+    }
+
+    fn signer_from_xpub(
+        xpub: Xpub,
+        fingerprint: Fingerprint,
+        origin_path: DerivationPath,
+        account_suffix: &[ChildNumber],
+    ) -> Result<MultiSigSigner, anyhow::Error> {
+        let secp = Secp256k1::verification_only();
+        let account_xpub = xpub.derive_pub(&secp, &account_suffix)?;
+        let account_path = origin_path
+            .as_ref()
+            .iter()
+            .copied()
+            .chain(account_suffix.iter().copied())
+            .collect::<Vec<_>>();
+        Ok(MultiSigSigner::new(
+            &DerivationPath::from(account_path),
+            &fingerprint,
+            &account_xpub,
+        ))
     }
 
     /// Build a [`MultiSigDetails`] from a decoded `crypto-output`
@@ -805,21 +822,19 @@ fn hdkey_to_signer(key: &UrKey<'_>) -> Result<MultiSigSigner, anyhow::Error> {
         .context("crypto-output hdkey origin is missing source-fingerprint")?;
     let master_fingerprint = Fingerprint::from(src_fp.get().to_be_bytes());
 
-    let mut path_components: Vec<ChildNumber> = Vec::with_capacity(origin.components.len());
-    for comp in origin.components.iter() {
-        let index = match comp.number {
-            UrChildNumber::Number(n) => n,
-            UrChildNumber::Range(_) => {
-                anyhow::bail!("crypto-output hdkey origin contains a wildcard path component")
-            }
-        };
-        path_components.push(if comp.is_hardened {
-            ChildNumber::Hardened { index }
-        } else {
-            ChildNumber::Normal { index }
-        });
-    }
+    let path_components = origin
+        .components
+        .iter()
+        .map(|component| ur_fixed_child_number(component, "origin"))
+        .collect::<Result<Vec<_>, _>>()?;
     let derivation_path = DerivationPath::from(path_components.clone());
+
+    let account_suffix = derived
+        .children
+        .as_ref()
+        .map(crypto_output_account_suffix)
+        .transpose()?
+        .unwrap_or_default();
 
     let chain_code_bytes = derived
         .chain_code
@@ -862,11 +877,50 @@ fn hdkey_to_signer(key: &UrKey<'_>) -> Result<MultiSigSigner, anyhow::Error> {
         chain_code: ChainCode::from(chain_code_bytes),
     };
 
-    Ok(MultiSigSigner::new(
-        &derivation_path,
-        &master_fingerprint,
-        &xpub,
-    ))
+    MultiSigDetails::signer_from_xpub(xpub, master_fingerprint, derivation_path, &account_suffix)
+}
+
+fn crypto_output_account_suffix(
+    children: &foundation_urtypes::registry::KeypathRef<'_>,
+) -> Result<Vec<ChildNumber>, anyhow::Error> {
+    let components = children.components.iter().collect::<Vec<_>>();
+    let [account_prefix @ .., keychain, address_index] = components.as_slice() else {
+        anyhow::bail!(
+            "crypto-output hdkey children must end in receive/change and address components"
+        )
+    };
+
+    if keychain.is_hardened || address_index.is_hardened {
+        anyhow::bail!("crypto-output hdkey receive/change and address children must be public")
+    }
+    match &keychain.number {
+        UrChildNumber::Number(0 | 1) => {}
+        UrChildNumber::Range(range) if range.start == 0 && range.end == 1 => {}
+        _ => anyhow::bail!("crypto-output hdkey children contain an invalid receive/change branch"),
+    }
+
+    account_prefix
+        .iter()
+        .cloned()
+        .map(|component| ur_fixed_child_number(component, "children prefix"))
+        .collect()
+}
+
+fn ur_fixed_child_number(
+    component: UrPathComponent,
+    location: &str,
+) -> Result<ChildNumber, anyhow::Error> {
+    let index = match component.number {
+        UrChildNumber::Number(index) => index,
+        UrChildNumber::Range(_) => {
+            anyhow::bail!("crypto-output hdkey {location} contains a wildcard path component")
+        }
+    };
+    Ok(if component.is_hardened {
+        ChildNumber::Hardened { index }
+    } else {
+        ChildNumber::Normal { index }
+    })
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
@@ -1930,12 +1984,14 @@ Format: P2WSH
     }
 
     // Build a `Terminal::WitnessScriptHash(SortedMultisig(...))` tree from
-    // `(xpub_str, fingerprint_hex, derivation_str)` entries, encode it to
-    // CBOR, and return the bytes plus the byte-backing storage. Mirrors
-    // what `minicbor::to_vec(&Terminal)` gives us when the sender is
-    // e.g. Sparrow.
+    // `(xpub_str, fingerprint_hex, derivation_str, optional_children)`
+    // entries and encode it to CBOR. Mirrors what
+    // `minicbor::to_vec(&Terminal)` gives us when the sender is e.g. Sparrow.
     #[cfg(test)]
-    fn encode_wsh_sortedmulti_cbor(threshold: u8, entries: &[(&str, [u8; 4], &str)]) -> Vec<u8> {
+    fn encode_wsh_sortedmulti_cbor(
+        threshold: u8,
+        entries: &[(&str, [u8; 4], &str, Option<&[u32]>)],
+    ) -> Vec<u8> {
         use foundation_arena::boxed::Box as ArenaBox;
         use foundation_urtypes::registry::{
             CoinInfo, CoinType, DerivedKeyRef, HDKeyRef as UrHDKeyRef, Key, KeypathRef, Keys,
@@ -1952,10 +2008,11 @@ Format: P2WSH
             source_fingerprint: NonZeroU32,
             parent_fingerprint: Option<NonZeroU32>,
             depth: u8,
+            children: Option<Vec<u32>>,
         }
         let decomposed: Vec<Entry> = entries
             .iter()
-            .map(|(xpub_str, xfp, deriv)| {
+            .map(|(xpub_str, xfp, deriv, children)| {
                 let xpub = Xpub::from_str(xpub_str).unwrap();
                 let deriv_path = DerivationPath::from_str(deriv).unwrap();
                 let path_raw: Vec<u32> = deriv_path
@@ -1974,6 +2031,7 @@ Format: P2WSH
                         xpub.parent_fingerprint.to_bytes(),
                     )),
                     depth: xpub.depth,
+                    children: children.map(<[u32]>::to_vec),
                 }
             })
             .collect();
@@ -1992,7 +2050,11 @@ Format: P2WSH
                         source_fingerprint: Some(e.source_fingerprint),
                         depth: Some(e.depth),
                     }),
-                    children: None,
+                    children: e.children.as_deref().map(|components| KeypathRef {
+                        components: PathComponents::from(components),
+                        source_fingerprint: None,
+                        depth: None,
+                    }),
                     parent_fingerprint: e.parent_fingerprint,
                     name: None,
                     note: None,
@@ -2020,16 +2082,19 @@ Format: P2WSH
                 "xpub6ESpvmZa75rCQWKik2KoCZrjTi6xhSubZKJ25rbtgZRk2g9tZTJqubhaGD3dJeqruw9KMCaanoEfJ1PVtBXiwTuuqLVwk9ucqkRv1sKWiEC",
                 [0x71, 0xC8, 0xBD, 0x85],
                 "m/48'/0'/0'/2'",
+                None,
             ),
             (
                 "xpub6EPJuK8Ejz82nKc7PsRgcYqdcQH9G1ZikCTasr9i79CbXxMMiPfxEyA14S6HPTHufmcQR7x8t5L3BP9tRfm9EBRBPic2xV892j9z4ePESae",
                 [0xAB, 0x88, 0xDE, 0x89],
                 "m/48'/0'/0'/2'",
+                None,
             ),
             (
                 "xpub6FQY5W8WygMVYY2nTP188jFHNdZfH2t9qtcS8SPpFatUGiciqUsGZpNvEa1oABEyeAsrUL2XSnvuRUdrhf5LcMXcjhrUFBcneBYYZzky3Mc",
                 [0xA9, 0xF9, 0x96, 0x4A],
                 "m/48'/0'/0'/2'",
+                None,
             ),
         ];
 
@@ -2065,6 +2130,80 @@ Format: P2WSH
         .unwrap();
         assert_eq!(multisig, expected);
         assert_eq!("Multisig-2-of-3-Main", name);
+    }
+
+    #[test]
+    fn crypto_output_preserves_fixed_derivation_prefixes() {
+        use foundation_urtypes::registry::TerminalContext;
+        use foundation_urtypes::value::decode_output_descriptor;
+
+        let secp = Secp256k1::new();
+        let origin = DerivationPath::from_str("m/45'").unwrap();
+        let masters = [
+            Xpriv::new_master(Network::Bitcoin, &[1; 32]).unwrap(),
+            Xpriv::new_master(Network::Bitcoin, &[2; 32]).unwrap(),
+        ];
+        let xpubs = masters
+            .iter()
+            .map(|master| Xpub::from_priv(&secp, &master.derive_priv(&secp, &origin).unwrap()))
+            .collect::<Vec<_>>();
+        let xpub_strings = xpubs.iter().map(ToString::to_string).collect::<Vec<_>>();
+        let children = [[0, 0, 0], [1, 0, 0]];
+        let entries = xpub_strings
+            .iter()
+            .zip(&masters)
+            .zip(&children)
+            .map(|((xpub, master), children)| {
+                (
+                    xpub.as_str(),
+                    master.fingerprint(&secp).to_bytes(),
+                    "m/45'",
+                    Some(children.as_slice()),
+                )
+            })
+            .collect::<Vec<_>>();
+
+        let cbor = encode_wsh_sortedmulti_cbor(2, &entries);
+        let arena: TerminalContext<4> = TerminalContext::new();
+        let terminal = decode_output_descriptor("crypto-output", &cbor, &arena).unwrap();
+        let (details, _) = MultiSigDetails::from_crypto_output(&terminal).unwrap();
+        let imported = details
+            .to_descriptor(KeychainKind::External, &secp, None)
+            .unwrap()
+            .0;
+
+        let expected = BdkDescriptor::<DescriptorPublicKey>::new_wsh_sortedmulti(
+            2,
+            xpubs
+                .into_iter()
+                .enumerate()
+                .map(|(cosigner_index, xpub)| {
+                    DescriptorPublicKey::XPub(DescriptorXKey {
+                        origin: Some((masters[cosigner_index].fingerprint(&secp), origin.clone())),
+                        xkey: xpub,
+                        derivation_path: DerivationPath::from(vec![
+                            ChildNumber::Normal {
+                                index: cosigner_index as u32,
+                            },
+                            ChildNumber::Normal { index: 0 },
+                        ]),
+                        wildcard: Wildcard::Unhardened,
+                    })
+                })
+                .collect(),
+        )
+        .unwrap();
+
+        assert_eq!(
+            imported
+                .derived_descriptor(&secp, 7)
+                .unwrap()
+                .script_pubkey(),
+            expected
+                .derived_descriptor(&secp, 7)
+                .unwrap()
+                .script_pubkey(),
+        );
     }
 
     #[test]
@@ -2128,9 +2267,9 @@ Format: P2WSH
         // descriptor path catches this via miniscript's `sanity_check()`;
         // this path must reject it explicitly.
         let xpub = "xpub6ESpvmZa75rCQWKik2KoCZrjTi6xhSubZKJ25rbtgZRk2g9tZTJqubhaGD3dJeqruw9KMCaanoEfJ1PVtBXiwTuuqLVwk9ucqkRv1sKWiEC";
-        let entries: &[(&str, [u8; 4], &str)] = &[
-            (xpub, [0x71, 0xC8, 0xBD, 0x85], "m/48'/0'/0'/2'"),
-            (xpub, [0x71, 0xC8, 0xBD, 0x85], "m/48'/0'/0'/2'"),
+        let entries: &[(&str, [u8; 4], &str, Option<&[u32]>)] = &[
+            (xpub, [0x71, 0xC8, 0xBD, 0x85], "m/48'/0'/0'/2'", None),
+            (xpub, [0x71, 0xC8, 0xBD, 0x85], "m/48'/0'/0'/2'", None),
         ];
         let cbor = encode_wsh_sortedmulti_cbor(2, entries);
 
