@@ -72,6 +72,25 @@ fn multi_script(threshold: i64, keys: impl IntoIterator<Item = SecpPublicKey>) -
         .into_script()
 }
 
+/// Deliberately non-BIP67 multisig script, used to ensure discovery never
+/// normalizes an unsupported policy into a different `sortedmulti` wallet.
+fn unsorted_multi_script(
+    threshold: i64,
+    keys: impl IntoIterator<Item = SecpPublicKey>,
+) -> ScriptBuf {
+    let mut keys: Vec<_> = keys.into_iter().collect();
+    keys.sort_by_key(|k| k.serialize());
+    keys.reverse();
+    let mut builder = Builder::new().push_int(threshold);
+    for key in &keys {
+        builder = builder.push_key(&BitcoinPublicKey::new(*key));
+    }
+    builder
+        .push_int(keys.len() as i64)
+        .push_opcode(OP_CHECKMULTISIG)
+        .into_script()
+}
+
 fn script_pubkey_for(format: AddressType, script: &ScriptBuf) -> ScriptBuf {
     let p2wsh = ScriptBuf::new_p2wsh(&script.wscript_hash());
     match format {
@@ -330,6 +349,45 @@ fn discovery_mode_reports_descriptors_but_never_change() {
             result.display_total(),
             Amount::from_sat(CHANGE_SATS + PAYMENT_SATS)
         );
+    }
+}
+
+#[test]
+fn discovery_rejects_unsorted_multisig_inputs() {
+    for format in FORMATS {
+        let (mut psbt, _details) = honest_psbt(format);
+        let input = &mut psbt.inputs[0];
+        let script = unsorted_multi_script(2, input.bip32_derivation.keys().copied());
+        input.witness_script = Some(script.clone());
+        input.witness_utxo.as_mut().unwrap().script_pubkey = script_pubkey_for(format, &script);
+        with_redeem_script(format, &script, &mut input.redeem_script);
+
+        assert!(matches!(
+            validate(&Secp256k1::new(), &master(1), &psbt, NETWORK, None),
+            Err(Error::InvalidMultisigScript { index: 0 })
+        ));
+    }
+}
+
+#[test]
+fn discovery_rejects_derivation_keys_not_in_the_multisig_script() {
+    for format in FORMATS {
+        let secp = Secp256k1::new();
+        let account = account_path(format, 0);
+        let (mut psbt, _details) = honest_psbt(format);
+        let (key, fingerprint, path) = keys_at(&secp, &account, "0/0", &[master(3)]).remove(0);
+        psbt.inputs[0]
+            .bip32_derivation
+            .insert(key, (fingerprint, path));
+        psbt.xpub.insert(
+            xpub_at(&secp, &master(3), &account),
+            (master(3).fingerprint(&secp), account),
+        );
+
+        assert!(matches!(
+            validate(&Secp256k1::new(), &master(1), &psbt, NETWORK, None),
+            Err(Error::FraudulentInput { index: 0 })
+        ));
     }
 }
 

@@ -9,12 +9,12 @@ use bdk_wallet::bitcoin::{
 };
 use thiserror::Error;
 
-use crate::bip32::NgAccountPath;
+use crate::bip32::{Bip45Path, NgAccountPath};
 
 /// A signed Bitcoin message.
 ///
 /// The signature scheme depends on the address type:
-/// * legacy / SegWit (BIP-44/49/84/48) addresses use BIP-137 (recoverable ECDSA);
+/// * legacy / SegWit (BIP-44/45/49/84/48) addresses use BIP-137 (recoverable ECDSA);
 /// * Taproot (BIP-86) addresses use BIP-322 (Simple variant, Schnorr).
 #[derive(Debug, Clone)]
 pub struct SignedMessage {
@@ -71,18 +71,7 @@ pub fn sign_message(
 
     let path = DerivationPath::from_str(derivation_path)?;
 
-    let account_path = NgAccountPath::parse(&path)
-        .map_err(|_| SignMessageError::UnsupportedDerivationPath)?
-        .ok_or(SignMessageError::UnsupportedDerivationPath)?;
-
-    if !account_path.is_for_address() {
-        return Err(SignMessageError::IncompleteDerivationPath);
-    }
-
-    let purpose = account_path.purpose;
-    if !matches!(purpose, 44 | 48 | 49 | 84 | 86) {
-        return Err(SignMessageError::UnsupportedPurpose(purpose));
-    }
+    let purpose = signing_purpose(&path)?;
 
     let xpriv = Xpriv::new_master(network, seed)?.derive_priv(&secp, &path)?;
 
@@ -176,7 +165,7 @@ fn derive_address_from_purpose(
     secp: &Secp256k1<bdk_wallet::bitcoin::secp256k1::All>,
 ) -> Result<Address, SignMessageError> {
     match purpose {
-        44 | 48 => Ok(Address::p2pkh(public_key, network)),
+        44 | 45 | 48 => Ok(Address::p2pkh(public_key, network)),
         49 => Ok(Address::p2shwpkh(compressed_pubkey, network)),
         84 => Ok(Address::p2wpkh(compressed_pubkey, network)),
         86 => {
@@ -186,6 +175,29 @@ fn derive_address_from_purpose(
         }
         _ => Err(SignMessageError::UnsupportedPurpose(purpose)),
     }
+}
+
+fn signing_purpose(path: &DerivationPath) -> Result<u32, SignMessageError> {
+    if let Some(account_path) =
+        NgAccountPath::parse(path).map_err(|_| SignMessageError::UnsupportedDerivationPath)?
+    {
+        if !account_path.is_for_address() {
+            return Err(SignMessageError::IncompleteDerivationPath);
+        }
+        if !matches!(account_path.purpose, 44 | 48 | 49 | 84 | 86) {
+            return Err(SignMessageError::UnsupportedPurpose(account_path.purpose));
+        }
+        return Ok(account_path.purpose);
+    }
+
+    if Bip45Path::parse(path)
+        .map_err(|_| SignMessageError::UnsupportedDerivationPath)?
+        .is_some()
+    {
+        return Ok(Bip45Path::PURPOSE);
+    }
+
+    Err(SignMessageError::UnsupportedDerivationPath)
 }
 
 #[cfg(test)]
@@ -355,6 +367,34 @@ mod tests {
         .unwrap();
 
         assert!(!result.signature.is_empty());
+    }
+
+    #[test]
+    fn sign_bip45_member_address() {
+        let seed = test_seed();
+        let result = sign_message(
+            &seed,
+            "m/45'/1/0/7",
+            "Unchained device check",
+            Network::Bitcoin,
+        )
+        .unwrap();
+
+        assert!(result.address.starts_with('1'));
+        assert!(
+            verify_signed_message(&result.message, &result.address, &result.signature).unwrap()
+        );
+    }
+
+    #[test]
+    fn reject_incomplete_or_nonstandard_bip45_paths() {
+        let seed = test_seed();
+        for path in ["m/45'", "m/45'/1/2/7", "m/45'/1/0/7/0"] {
+            assert!(matches!(
+                sign_message(&seed, path, "test", Network::Bitcoin),
+                Err(SignMessageError::UnsupportedDerivationPath)
+            ));
+        }
     }
 
     #[test]

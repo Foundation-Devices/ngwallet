@@ -639,18 +639,20 @@ impl MultiSigDetails {
         // this path — `Self::new` does not dedupe and
         // `wsh(sortedmulti(2, X, X))` would otherwise import as a nominal
         // 2-of-2 that spends with a single signature from X, silently
-        // collapsing the effective threshold. Compare on the pubkey string
-        // (the encoded xpub) so repeats of the same key under a different
-        // derivation annotation are also rejected.
+        // collapsing the effective threshold. Compare the raw xpub key
+        // material rather than the derived signer xpub: legacy BIP45
+        // crypto-output encodes a per-cosigner child separately, so the same
+        // root xpub would otherwise look distinct after that child is
+        // applied.
         let mut signers: Vec<MultiSigSigner> = Vec::new();
+        let mut source_keys: Vec<([u8; 33], [u8; 32])> = Vec::new();
         for k in multikey.keys.iter() {
-            let signer = hdkey_to_signer(&k)?;
-            if signers
-                .iter()
-                .any(|existing| existing.pubkey == signer.pubkey)
-            {
+            let source_key = hdkey_key_material(&k)?;
+            let signer = hdkey_to_signer(&k, format)?;
+            if source_keys.contains(&source_key) {
                 anyhow::bail!("crypto-output multisig contains duplicate cosigner keys");
             }
+            source_keys.push(source_key);
             signers.push(signer);
         }
 
@@ -855,7 +857,27 @@ impl MultiSigDetails {
 /// reconstruct a `bitcoin::bip32::Xpub` from its raw bytes so downstream
 /// code can treat it identically to xpubs coming from text-config or
 /// string-descriptor imports.
-fn hdkey_to_signer(key: &UrKey<'_>) -> Result<MultiSigSigner, anyhow::Error> {
+fn hdkey_key_material(key: &UrKey<'_>) -> Result<([u8; 33], [u8; 32]), anyhow::Error> {
+    let hdkey = match key {
+        UrKey::HDKey(h) => h,
+        UrKey::ECKey(_) => {
+            anyhow::bail!("crypto-output multisig key is a bare EC pubkey; need an hdkey/xpub")
+        }
+    };
+    let derived = match hdkey {
+        HDKeyRef::DerivedKey(d) => d,
+        HDKeyRef::MasterKey(_) => {
+            anyhow::bail!("crypto-output multisig key is a master key; need a derived xpub")
+        }
+    };
+    let chain_code = derived
+        .chain_code
+        .context("crypto-output hdkey is missing chain code")?;
+
+    Ok((derived.key_data, chain_code))
+}
+
+fn hdkey_to_signer(key: &UrKey<'_>, format: AddressType) -> Result<MultiSigSigner, anyhow::Error> {
     let hdkey = match key {
         UrKey::HDKey(h) => h,
         UrKey::ECKey(_) => {
@@ -934,6 +956,52 @@ fn hdkey_to_signer(key: &UrKey<'_>) -> Result<MultiSigSigner, anyhow::Error> {
         child_number,
         public_key,
         chain_code: ChainCode::from(chain_code_bytes),
+    };
+
+    // A legacy BIP45 crypto-output starts with an xpub at m/45' and encodes
+    // the per-cosigner child path separately. Store the xpub at that child so
+    // `to_descriptor()` can append only the receive/change branch. Other
+    // formats retain their historical origin handling.
+    let is_bip45_root = format == AddressType::P2sh
+        && matches!(
+            path_components.as_slice(),
+            [ChildNumber::Hardened { index: 45 }]
+        );
+    let (derivation_path, xpub) = if is_bip45_root {
+        match derived
+            .children
+            .as_ref()
+            .and_then(|children| children.components.iter().next())
+        {
+            Some(component) if !component.is_hardened => match component.number {
+                UrChildNumber::Number(index) => {
+                    let cosigner = ChildNumber::Normal { index };
+                    let mut path = path_components;
+                    path.push(cosigner);
+                    let secp = Secp256k1::verification_only();
+                    (
+                        DerivationPath::from(path),
+                        xpub.derive_pub(&secp, &[cosigner])?,
+                    )
+                }
+                UrChildNumber::Range(_) => {
+                    anyhow::bail!(
+                        "legacy P2SH crypto-output must use a concrete cosigner child index"
+                    )
+                }
+            },
+            Some(_) => {
+                anyhow::bail!(
+                    "legacy P2SH crypto-output must use a non-hardened cosigner child index"
+                )
+            }
+            // `children` was absent in previously accepted crypto-output
+            // encodings. Preserve that representation rather than making
+            // stored/imported configurations incompatible.
+            None => (derivation_path, xpub),
+        }
+    } else {
+        (derivation_path, xpub)
     };
 
     Ok(MultiSigSigner::new(
@@ -1853,6 +1921,382 @@ Derivation: m/48'/1'/0'/2'
         let descriptors = multisig.get_descriptors(&secp, None).unwrap();
         assert_eq!(descriptors[0].bip, "45");
         assert_eq!(descriptors[0].export_addr_hint, AddressType::P2sh);
+    }
+
+    #[test]
+    fn p2sh_crypto_output_children_must_preserve_bip45_cosigner_indexes() {
+        use foundation_arena::boxed::Box as ArenaBox;
+        use foundation_urtypes::registry::{
+            CoinInfo, CoinType, DerivedKeyRef, HDKeyRef, Key, KeypathRef, Keys, Multikey,
+            PathComponents, Terminal, TerminalContext,
+        };
+        use std::num::NonZeroU32;
+
+        struct Entry {
+            xpub: Xpub,
+            fingerprint: Fingerprint,
+            key_data: [u8; 33],
+            chain_code: [u8; 32],
+            parent_fingerprint: Option<NonZeroU32>,
+            children: [u32; 3],
+        }
+
+        let secp = Secp256k1::new();
+        let purpose = DerivationPath::from_str("m/45'").unwrap();
+        let entries = [(1u8, 0u32), (2, 1)]
+            .into_iter()
+            .map(|(seed, cosigner_index)| {
+                let master = Xpriv::new_master(Network::Bitcoin, &[seed; 32]).unwrap();
+                let xpub = Xpub::from_priv(&secp, &master.derive_priv(&secp, &purpose).unwrap());
+                Entry {
+                    fingerprint: master.fingerprint(&secp),
+                    key_data: xpub.public_key.serialize(),
+                    chain_code: xpub.chain_code.to_bytes(),
+                    parent_fingerprint: NonZeroU32::new(u32::from_be_bytes(
+                        xpub.parent_fingerprint.to_bytes(),
+                    )),
+                    xpub,
+                    // BIP45's per-cosigner path prefix followed by receive and address branches.
+                    children: [cosigner_index, 0, 0],
+                }
+            })
+            .collect::<Vec<_>>();
+
+        let origin = [45 | (1 << 31)];
+        let keys_owned = entries
+            .iter()
+            .map(|entry| {
+                Key::HDKey(HDKeyRef::DerivedKey(DerivedKeyRef {
+                    is_private: false,
+                    key_data: entry.key_data,
+                    chain_code: Some(entry.chain_code),
+                    use_info: Some(CoinInfo::new(CoinType::BTC, CoinInfo::NETWORK_MAINNET)),
+                    origin: Some(KeypathRef {
+                        components: PathComponents::from(&origin),
+                        source_fingerprint: Some(
+                            NonZeroU32::new(u32::from_be_bytes(entry.fingerprint.to_bytes()))
+                                .unwrap(),
+                        ),
+                        depth: Some(1),
+                    }),
+                    children: Some(KeypathRef {
+                        components: PathComponents::from(&entry.children),
+                        source_fingerprint: None,
+                        depth: None,
+                    }),
+                    parent_fingerprint: entry.parent_fingerprint,
+                    name: None,
+                    note: None,
+                }))
+            })
+            .collect::<Vec<_>>();
+
+        let arena: TerminalContext<4> = TerminalContext::new();
+        let keys = Keys::from(keys_owned.as_slice());
+        let multisig = ArenaBox::new_in(
+            Terminal::SortedMultisig(Multikey { threshold: 2, keys }),
+            &arena,
+        )
+        .unwrap();
+        let terminal = Terminal::ScriptHash(multisig);
+
+        let (details, _) = MultiSigDetails::from_crypto_output(&terminal).unwrap();
+        let imported = details
+            .to_descriptor(KeychainKind::External, &secp, None)
+            .unwrap()
+            .0;
+
+        let expected = BdkDescriptor::<DescriptorPublicKey>::new_sh_sortedmulti(
+            2,
+            entries
+                .iter()
+                .enumerate()
+                .map(|(cosigner_index, entry)| {
+                    DescriptorPublicKey::XPub(DescriptorXKey {
+                        origin: Some((entry.fingerprint, purpose.clone())),
+                        xkey: entry.xpub,
+                        derivation_path: DerivationPath::from(vec![
+                            ChildNumber::Normal {
+                                index: cosigner_index as u32,
+                            },
+                            ChildNumber::Normal { index: 0 },
+                        ]),
+                        wildcard: Wildcard::Unhardened,
+                    })
+                })
+                .collect(),
+        )
+        .unwrap();
+
+        assert_eq!(
+            imported
+                .derived_descriptor(&secp, 7)
+                .unwrap()
+                .script_pubkey(),
+            expected
+                .derived_descriptor(&secp, 7)
+                .unwrap()
+                .script_pubkey(),
+        );
+    }
+
+    #[test]
+    fn p2sh_crypto_output_non_bip45_children_keep_the_historical_origin() {
+        use foundation_urtypes::registry::{
+            CoinInfo, CoinType, DerivedKeyRef, HDKeyRef, Key, KeypathRef, PathComponents,
+        };
+        use std::num::NonZeroU32;
+
+        let secp = Secp256k1::new();
+        let master = Xpriv::new_master(Network::Bitcoin, &[3; 32]).unwrap();
+        let origin_path = DerivationPath::from_str("m/48'/0'/0'/1'").unwrap();
+        let xpub = Xpub::from_priv(&secp, &master.derive_priv(&secp, &origin_path).unwrap());
+        let origin = [48 | (1 << 31), 1 << 31, 1 << 31, 1 | (1 << 31)];
+        let children = [0, 0];
+        let key = Key::HDKey(HDKeyRef::DerivedKey(DerivedKeyRef {
+            is_private: false,
+            key_data: xpub.public_key.serialize(),
+            chain_code: Some(xpub.chain_code.to_bytes()),
+            use_info: Some(CoinInfo::new(CoinType::BTC, CoinInfo::NETWORK_MAINNET)),
+            origin: Some(KeypathRef {
+                components: PathComponents::from(&origin),
+                source_fingerprint: Some(
+                    NonZeroU32::new(u32::from_be_bytes(master.fingerprint(&secp).to_bytes()))
+                        .unwrap(),
+                ),
+                depth: Some(4),
+            }),
+            children: Some(KeypathRef {
+                components: PathComponents::from(&children),
+                source_fingerprint: None,
+                depth: None,
+            }),
+            parent_fingerprint: NonZeroU32::new(u32::from_be_bytes(
+                xpub.parent_fingerprint.to_bytes(),
+            )),
+            name: None,
+            note: None,
+        }));
+
+        let signer = hdkey_to_signer(&key, AddressType::P2sh).unwrap();
+        assert_eq!(signer.get_derivation().unwrap(), origin_path);
+        assert_eq!(signer.get_pubkey().unwrap(), xpub);
+    }
+
+    #[test]
+    fn p2sh_crypto_output_rejects_a_reused_bip45_root_at_different_indexes() {
+        use foundation_arena::boxed::Box as ArenaBox;
+        use foundation_urtypes::registry::{
+            CoinInfo, CoinType, DerivedKeyRef, HDKeyRef, Key, KeypathRef, Keys, Multikey,
+            PathComponents, Terminal, TerminalContext,
+        };
+        use std::num::NonZeroU32;
+
+        let secp = Secp256k1::new();
+        let master = Xpriv::new_master(Network::Bitcoin, &[1; 32]).unwrap();
+        let root_xpub = Xpub::from_priv(
+            &secp,
+            &master
+                .derive_priv(&secp, &DerivationPath::from_str("m/45'").unwrap())
+                .unwrap(),
+        );
+        let origin = [45 | (1 << 31)];
+        let children = [[0, 0, 0], [1, 0, 0]];
+        let source_fingerprint =
+            NonZeroU32::new(u32::from_be_bytes(master.fingerprint(&secp).to_bytes())).unwrap();
+        let parent_fingerprint =
+            NonZeroU32::new(u32::from_be_bytes(root_xpub.parent_fingerprint.to_bytes()));
+        let keys_owned = children
+            .iter()
+            .map(|children| {
+                Key::HDKey(HDKeyRef::DerivedKey(DerivedKeyRef {
+                    is_private: false,
+                    key_data: root_xpub.public_key.serialize(),
+                    chain_code: Some(root_xpub.chain_code.to_bytes()),
+                    use_info: Some(CoinInfo::new(CoinType::BTC, CoinInfo::NETWORK_MAINNET)),
+                    origin: Some(KeypathRef {
+                        components: PathComponents::from(&origin),
+                        source_fingerprint: Some(source_fingerprint),
+                        depth: Some(1),
+                    }),
+                    children: Some(KeypathRef {
+                        components: PathComponents::from(children),
+                        source_fingerprint: None,
+                        depth: None,
+                    }),
+                    parent_fingerprint,
+                    name: None,
+                    note: None,
+                }))
+            })
+            .collect::<Vec<_>>();
+
+        let arena: TerminalContext<4> = TerminalContext::new();
+        let keys = Keys::from(keys_owned.as_slice());
+        let multisig = ArenaBox::new_in(
+            Terminal::SortedMultisig(Multikey { threshold: 2, keys }),
+            &arena,
+        )
+        .unwrap();
+        let terminal = Terminal::ScriptHash(multisig);
+
+        let err = MultiSigDetails::from_crypto_output(&terminal).unwrap_err();
+        assert!(err.to_string().contains("duplicate cosigner"), "err: {err}");
+    }
+
+    #[test]
+    fn imported_bip45_crypto_output_adds_the_local_member_signature() {
+        use bdk_core::{BlockId, ConfirmationBlockTime};
+        use bdk_wallet::{
+            SignOptions, Wallet,
+            bitcoin::{Address, Amount, BlockHash, Transaction, TxOut, hashes::Hash},
+            test_utils::{insert_anchor, insert_checkpoint, insert_tx, new_tx},
+        };
+        use foundation_arena::boxed::Box as ArenaBox;
+        use foundation_urtypes::registry::{
+            CoinInfo, CoinType, DerivedKeyRef, HDKeyRef, Key, KeypathRef, Keys, Multikey,
+            PathComponents, Terminal, TerminalContext,
+        };
+        use std::num::NonZeroU32;
+
+        struct Entry {
+            seed: [u8; 64],
+            xpub: Xpub,
+            fingerprint: Fingerprint,
+            key_data: [u8; 33],
+            chain_code: [u8; 32],
+            parent_fingerprint: Option<NonZeroU32>,
+            children: [u32; 3],
+        }
+
+        let secp = Secp256k1::new();
+        let purpose = DerivationPath::from_str("m/45'").unwrap();
+        let entries = [(1u8, 0u32), (2, 1)]
+            .into_iter()
+            .map(|(seed_byte, cosigner_index)| {
+                let seed = [seed_byte; 64];
+                let master = Xpriv::new_master(Network::Bitcoin, &seed).unwrap();
+                let xpub = Xpub::from_priv(&secp, &master.derive_priv(&secp, &purpose).unwrap());
+                Entry {
+                    seed,
+                    fingerprint: master.fingerprint(&secp),
+                    key_data: xpub.public_key.serialize(),
+                    chain_code: xpub.chain_code.to_bytes(),
+                    parent_fingerprint: NonZeroU32::new(u32::from_be_bytes(
+                        xpub.parent_fingerprint.to_bytes(),
+                    )),
+                    xpub,
+                    children: [cosigner_index, 0, 0],
+                }
+            })
+            .collect::<Vec<_>>();
+
+        let origin = [45 | (1 << 31)];
+        let keys_owned = entries
+            .iter()
+            .map(|entry| {
+                Key::HDKey(HDKeyRef::DerivedKey(DerivedKeyRef {
+                    is_private: false,
+                    key_data: entry.key_data,
+                    chain_code: Some(entry.chain_code),
+                    use_info: Some(CoinInfo::new(CoinType::BTC, CoinInfo::NETWORK_MAINNET)),
+                    origin: Some(KeypathRef {
+                        components: PathComponents::from(&origin),
+                        source_fingerprint: Some(
+                            NonZeroU32::new(u32::from_be_bytes(entry.fingerprint.to_bytes()))
+                                .unwrap(),
+                        ),
+                        depth: Some(1),
+                    }),
+                    children: Some(KeypathRef {
+                        components: PathComponents::from(&entry.children),
+                        source_fingerprint: None,
+                        depth: None,
+                    }),
+                    parent_fingerprint: entry.parent_fingerprint,
+                    name: None,
+                    note: None,
+                }))
+            })
+            .collect::<Vec<_>>();
+        let arena: TerminalContext<4> = TerminalContext::new();
+        let keys = Keys::from(keys_owned.as_slice());
+        let multisig = ArenaBox::new_in(
+            Terminal::SortedMultisig(Multikey { threshold: 2, keys }),
+            &arena,
+        )
+        .unwrap();
+        let terminal = Terminal::ScriptHash(multisig);
+
+        let (imported, _) = MultiSigDetails::from_crypto_output(&terminal).unwrap();
+        // KeyOS persists the multisig metadata separately and reconstructs
+        // the wallet (including its private keymap) on the next boot.
+        let imported: MultiSigDetails =
+            serde_json::from_str(&serde_json::to_string(&imported).unwrap()).unwrap();
+        let master_key = MasterKey {
+            mnemonic: String::new(),
+            key: crate::bip39::Key(entries[0].seed),
+            fingerprint: entries[0].fingerprint,
+        };
+        let (external, external_keymap) = imported
+            .to_descriptor(KeychainKind::External, &secp, Some(&master_key))
+            .unwrap();
+        let (internal, internal_keymap) = imported
+            .to_descriptor(KeychainKind::Internal, &secp, Some(&master_key))
+            .unwrap();
+        let mut wallet = Wallet::create((external, external_keymap), (internal, internal_keymap))
+            .network(Network::Bitcoin)
+            .create_wallet_no_persist()
+            .unwrap();
+
+        let receive_address = wallet.next_unused_address(KeychainKind::External).address;
+        let funding_tx = Transaction {
+            output: vec![TxOut {
+                value: Amount::from_sat(100_000),
+                script_pubkey: receive_address.script_pubkey(),
+            }],
+            ..new_tx(0)
+        };
+        let block = BlockId {
+            height: 1,
+            hash: BlockHash::all_zeros(),
+        };
+        insert_checkpoint(&mut wallet, block);
+        insert_tx(&mut wallet, funding_tx.clone());
+        insert_anchor(
+            &mut wallet,
+            funding_tx.compute_txid(),
+            ConfirmationBlockTime {
+                block_id: block,
+                confirmation_time: 1,
+            },
+        );
+
+        let destination = Address::p2pkh(
+            bitcoin::PublicKey::new(entries[1].xpub.public_key),
+            Network::Bitcoin,
+        );
+        let mut builder = wallet.build_tx();
+        builder.add_recipient(destination.script_pubkey(), Amount::from_sat(10_000));
+        let mut psbt = builder.finish().unwrap();
+
+        let master_xpriv = Xpriv::new_master(Network::Bitcoin, &entries[0].seed).unwrap();
+        let details = crate::psbt::validate(
+            &secp,
+            &master_xpriv,
+            &psbt,
+            Network::Bitcoin,
+            Some(&imported),
+        )
+        .unwrap();
+        let (registered_external, _) = imported
+            .to_descriptor(KeychainKind::External, &secp, None)
+            .unwrap();
+        assert!(details.descriptors.contains(&registered_external));
+
+        assert!(!wallet.sign(&mut psbt, SignOptions::default()).unwrap());
+        assert_eq!(psbt.inputs.len(), 1);
+        assert_eq!(psbt.inputs[0].partial_sigs.len(), 1);
     }
 
     #[test]

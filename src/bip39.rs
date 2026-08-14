@@ -293,7 +293,7 @@ pub fn get_descriptors(
 
 #[cfg(test)]
 mod test {
-    use crate::bip39::get_descriptors;
+    use crate::bip39::{Descriptors, get_descriptors};
 
     #[cfg(feature = "envoy")]
     use crate::bip39::get_random_seed;
@@ -310,6 +310,14 @@ mod test {
         .to_seed("");
 
         let descriptors = get_descriptors(&seed, Network::Bitcoin, 0).unwrap();
+
+        // KeyOS maps each entry's BIP label to a persisted wallet file. Keep
+        // BIP45 opt-in so loading an existing single-sig account never starts
+        // looking for a new `wallet_bip_45.json` file.
+        assert_eq!(
+            descriptors.iter().map(Descriptors::bip).collect::<Vec<_>>(),
+            ["49", "44", "84", "86", "48_1", "48_2"],
+        );
 
         assert_eq!(descriptors[0].descriptor_xprv(), "sh(wpkh(xprv9s21ZrQH143K4EyEi77g3rpPu5byQ3EnnMJ4Y2KRNFp5Z4hin7er2j1VEtW92DfDyLGaXvv7LAnMbeHLwWSkv3WJjNhXDhjV7up579LwqWK/49'/0'/0'/0/*))#ujfh5d2y".to_owned());
         assert_eq!(descriptors[0].change_descriptor_xprv(), "sh(wpkh(xprv9s21ZrQH143K4EyEi77g3rpPu5byQ3EnnMJ4Y2KRNFp5Z4hin7er2j1VEtW92DfDyLGaXvv7LAnMbeHLwWSkv3WJjNhXDhjV7up579LwqWK/49'/0'/0'/1/*))#63pj0qps".to_owned());

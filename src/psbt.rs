@@ -6,7 +6,7 @@ mod p2tr;
 mod p2wpkh;
 mod p2wsh;
 
-use crate::bip32::{NgAccountPath, ParsePathError};
+use crate::bip32::{Bip45Path, NgAccountPath, ParsePathError};
 use crate::config::{AddressType, MultiSigDetails};
 use bdk_wallet::KeychainKind;
 use bdk_wallet::bitcoin::bip32;
@@ -285,6 +285,17 @@ pub enum Error {
     #[error("the multisig descriptor could not be constructed from the PSBT metadata")]
     InvalidMultisigDescriptor,
 
+    /// Multisig inputs must all use the same supported script family.
+    #[error("the multisig signing paths for input number {index} use a different script type")]
+    MixedMultisigScriptType { index: usize },
+
+    /// Multisig inputs from the same account must use the same signer roots.
+    #[error("the multisig signing paths for input number {index} use different signer roots")]
+    MixedMultisigDerivationRoots { index: usize },
+
+    #[error("the multisig input number {index} has an unsupported signing path: {path}")]
+    UnsupportedMultisigDerivationPath { index: usize, path: DerivationPath },
+
     // TODO(jeandudey): Remove this.
     #[error("not yet implemented")]
     Unimplemented,
@@ -294,6 +305,111 @@ impl Error {
     fn invalid_path(path: DerivationPath, error: ParsePathError) -> Self {
         Self::InvalidDerivationPath { path, error }
     }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct MultisigInputPaths {
+    format: AddressType,
+    signer_roots: Vec<(Fingerprint, DerivationPath)>,
+}
+
+fn validate_multisig_signing_paths(
+    seen_paths: &mut Option<MultisigInputPaths>,
+    expected_format: AddressType,
+    bip32_derivations: &BTreeMap<PublicKey, KeySource>,
+    index: usize,
+) -> Result<(), Error> {
+    let mut signer_roots = Vec::with_capacity(bip32_derivations.len());
+    for (fingerprint, path) in bip32_derivations.values() {
+        let (format, root) = multisig_signing_path_root(path, index)?;
+        if format != expected_format {
+            return Err(Error::MixedMultisigScriptType { index });
+        }
+        signer_roots.push((*fingerprint, root));
+    }
+
+    signer_roots.sort_by(
+        |(left_fingerprint, left_path), (right_fingerprint, right_path)| {
+            left_fingerprint
+                .to_bytes()
+                .cmp(&right_fingerprint.to_bytes())
+                .then_with(|| left_path.as_ref().cmp(right_path.as_ref()))
+        },
+    );
+
+    let current_paths = MultisigInputPaths {
+        format: expected_format,
+        signer_roots,
+    };
+    match seen_paths {
+        Some(previous_paths) if previous_paths.format != current_paths.format => {
+            Err(Error::MixedMultisigScriptType { index })
+        }
+        Some(previous_paths) if previous_paths.signer_roots != current_paths.signer_roots => {
+            Err(Error::MixedMultisigDerivationRoots { index })
+        }
+        _ => {
+            *seen_paths = Some(current_paths);
+            Ok(())
+        }
+    }
+}
+
+fn validate_unregistered_multisig_bip32_derivations(
+    script_keys: &[bdk_wallet::bitcoin::PublicKey],
+    bip32_derivations: &BTreeMap<PublicKey, KeySource>,
+    index: usize,
+) -> Result<(), Error> {
+    if script_keys.len() != bip32_derivations.len()
+        || script_keys
+            .iter()
+            .any(|key| !bip32_derivations.contains_key(&key.inner))
+    {
+        return Err(Error::FraudulentInput { index });
+    }
+    Ok(())
+}
+
+fn multisig_signing_path_root(
+    path: &DerivationPath,
+    index: usize,
+) -> Result<(AddressType, DerivationPath), Error> {
+    if let Some(bip45_path) =
+        Bip45Path::parse(path).map_err(|error| Error::invalid_path(path.clone(), error))?
+    {
+        return Ok((AddressType::P2sh, bip45_path.member_derivation()));
+    }
+
+    let Some(account_path) =
+        NgAccountPath::parse(path).map_err(|error| Error::invalid_path(path.clone(), error))?
+    else {
+        return Err(Error::UnsupportedMultisigDerivationPath {
+            index,
+            path: path.clone(),
+        });
+    };
+    if account_path.purpose != 48 || !account_path.is_for_address() {
+        return Err(Error::UnsupportedMultisigDerivationPath {
+            index,
+            path: path.clone(),
+        });
+    }
+
+    let format = match account_path.script_type {
+        Some(1) => AddressType::P2ShWsh,
+        Some(2) => AddressType::P2wsh,
+        _ => {
+            return Err(Error::UnsupportedMultisigDerivationPath {
+                index,
+                path: path.clone(),
+            });
+        }
+    };
+    let root_len = path.as_ref().len() - 2;
+    Ok((
+        format,
+        DerivationPath::from(path.as_ref()[..root_len].to_vec()),
+    ))
 }
 
 /// Validate the network of a PSBT.
@@ -407,6 +523,7 @@ where
     let mut descriptors = HashSet::new();
     let mut inputs = Vec::new();
     let mut outputs = Vec::new();
+    let mut multisig_paths = None;
 
     let fingerprint = master_key.fingerprint(secp);
 
@@ -496,7 +613,7 @@ where
 
         if funding_utxo.script_pubkey.is_p2tr() {
             // Only single-sig P2TR supported for now.
-            if input.tap_key_origins.len() != 1 {
+            if input.tap_key_origins.len() != 1 || !input.bip32_derivation.is_empty() {
                 return Err(Error::MultipleKeysNotExpected { index: i });
             }
 
@@ -512,7 +629,7 @@ where
             });
             descriptors.insert(p2tr::descriptor(secp, master_key, &source.1, network));
         } else if funding_utxo.script_pubkey.is_p2wpkh() {
-            if input.bip32_derivation.len() != 1 {
+            if input.bip32_derivation.len() != 1 || !input.tap_key_origins.is_empty() {
                 return Err(Error::MultipleKeysNotExpected { index: i });
             }
 
@@ -536,7 +653,7 @@ where
                 return Err(Error::MissingInputFundingUtxo { index: i });
             }
 
-            if input.bip32_derivation.len() != 1 {
+            if input.bip32_derivation.len() != 1 || !input.tap_key_origins.is_empty() {
                 return Err(Error::MultipleKeysNotExpected { index: i });
             }
 
@@ -563,6 +680,9 @@ where
                 }
 
                 if witness_script.is_multisig() {
+                    if !input.tap_key_origins.is_empty() {
+                        return Err(Error::MixedMultisigScriptType { index: i });
+                    }
                     match registered_multisig {
                         Some(multisig) => {
                             validate_registered_multisig_input(
@@ -573,6 +693,12 @@ where
                                 &funding_utxo.script_pubkey,
                                 i,
                             )?;
+                            validate_multisig_signing_paths(
+                                &mut multisig_paths,
+                                AddressType::P2wsh,
+                                &input.bip32_derivation,
+                                i,
+                            )?;
                             insert_registered_multisig_descriptors(
                                 secp,
                                 multisig,
@@ -580,8 +706,20 @@ where
                             )?;
                         }
                         None => {
-                            let required_signers = multisig::disassemble(witness_script)
-                                .map_err(|_| Error::InvalidMultisigScript { index: i })?;
+                            validate_multisig_signing_paths(
+                                &mut multisig_paths,
+                                AddressType::P2wsh,
+                                &input.bip32_derivation,
+                                i,
+                            )?;
+                            let (required_signers, script_keys) =
+                                multisig::disassemble_sorted_with_keys(witness_script)
+                                    .map_err(|_| Error::InvalidMultisigScript { index: i })?;
+                            validate_unregistered_multisig_bip32_derivations(
+                                &script_keys,
+                                &input.bip32_derivation,
+                                i,
+                            )?;
                             let multisig_descriptors = p2wsh::multisig_descriptor(
                                 required_signers,
                                 &psbt.xpub,
@@ -609,7 +747,7 @@ where
                 }
 
                 if redeem_script.is_p2wpkh() {
-                    if input.bip32_derivation.len() != 1 {
+                    if input.bip32_derivation.len() != 1 || !input.tap_key_origins.is_empty() {
                         return Err(Error::MultipleKeysNotExpected { index: i });
                     }
 
@@ -639,6 +777,9 @@ where
                         }
 
                         if witness_script.is_multisig() {
+                            if !input.tap_key_origins.is_empty() {
+                                return Err(Error::MixedMultisigScriptType { index: i });
+                            }
                             match registered_multisig {
                                 Some(multisig) => {
                                     validate_registered_multisig_input(
@@ -649,6 +790,12 @@ where
                                         &funding_utxo.script_pubkey,
                                         i,
                                     )?;
+                                    validate_multisig_signing_paths(
+                                        &mut multisig_paths,
+                                        AddressType::P2ShWsh,
+                                        &input.bip32_derivation,
+                                        i,
+                                    )?;
                                     insert_registered_multisig_descriptors(
                                         secp,
                                         multisig,
@@ -656,8 +803,22 @@ where
                                     )?;
                                 }
                                 None => {
-                                    let required_signers = multisig::disassemble(witness_script)
-                                        .map_err(|_| Error::InvalidMultisigScript { index: i })?;
+                                    validate_multisig_signing_paths(
+                                        &mut multisig_paths,
+                                        AddressType::P2ShWsh,
+                                        &input.bip32_derivation,
+                                        i,
+                                    )?;
+                                    let (required_signers, script_keys) =
+                                        multisig::disassemble_sorted_with_keys(witness_script)
+                                            .map_err(|_| Error::InvalidMultisigScript {
+                                                index: i,
+                                            })?;
+                                    validate_unregistered_multisig_bip32_derivations(
+                                        &script_keys,
+                                        &input.bip32_derivation,
+                                        i,
+                                    )?;
                                     let multisig_descriptors = p2sh::wsh_multisig_descriptor(
                                         required_signers,
                                         &psbt.xpub,
@@ -682,6 +843,9 @@ where
                         return Err(Error::MissingInputFundingUtxo { index: i });
                     }
 
+                    if !input.tap_key_origins.is_empty() {
+                        return Err(Error::MixedMultisigScriptType { index: i });
+                    }
                     match registered_multisig {
                         Some(multisig) => {
                             validate_registered_multisig_input(
@@ -692,6 +856,12 @@ where
                                 &funding_utxo.script_pubkey,
                                 i,
                             )?;
+                            validate_multisig_signing_paths(
+                                &mut multisig_paths,
+                                AddressType::P2sh,
+                                &input.bip32_derivation,
+                                i,
+                            )?;
                             insert_registered_multisig_descriptors(
                                 secp,
                                 multisig,
@@ -699,8 +869,20 @@ where
                             )?;
                         }
                         None => {
-                            let required_signers = multisig::disassemble_sorted(redeem_script)
-                                .map_err(|_| Error::InvalidMultisigScript { index: i })?;
+                            validate_multisig_signing_paths(
+                                &mut multisig_paths,
+                                AddressType::P2sh,
+                                &input.bip32_derivation,
+                                i,
+                            )?;
+                            let (required_signers, script_keys) =
+                                multisig::disassemble_sorted_with_keys(redeem_script)
+                                    .map_err(|_| Error::InvalidMultisigScript { index: i })?;
+                            validate_unregistered_multisig_bip32_derivations(
+                                &script_keys,
+                                &input.bip32_derivation,
+                                i,
+                            )?;
                             let multisig_descriptors = p2sh::legacy_multisig_descriptor(
                                 required_signers,
                                 &psbt.xpub,
@@ -1149,7 +1331,24 @@ fn bip48_keychain_and_index(path: &DerivationPath) -> Option<(KeychainKind, u32)
 #[cfg(test)]
 mod tests {
     use super::*;
+    use bdk_wallet::bitcoin::secp256k1::{PublicKey as SecpPublicKey, Secp256k1, SecretKey};
     use std::str::FromStr;
+
+    fn multisig_paths(paths: &[(Fingerprint, &str)]) -> BTreeMap<PublicKey, KeySource> {
+        let secp = Secp256k1::new();
+        paths
+            .iter()
+            .enumerate()
+            .map(|(index, (fingerprint, path))| {
+                let secret_key = SecretKey::from_slice(&[(index + 1) as u8; 32]).unwrap();
+                let public_key = SecpPublicKey::from_secret_key(&secp, &secret_key);
+                (
+                    public_key,
+                    (*fingerprint, DerivationPath::from_str(path).unwrap()),
+                )
+            })
+            .collect()
+    }
 
     #[test]
     fn bip45_path_does_not_infer_a_network() {
@@ -1159,5 +1358,69 @@ mod tests {
         );
 
         assert_eq!(validate_key_source_network(None, &source).unwrap(), None);
+    }
+
+    #[test]
+    fn multisig_signing_paths_accept_common_bip48_roots_with_different_address_suffixes() {
+        let first = multisig_paths(&[
+            (Fingerprint::from([1, 1, 1, 1]), "m/48'/1'/0'/2'/0/3"),
+            (Fingerprint::from([2, 2, 2, 2]), "m/48'/1'/7'/2'/0/3"),
+        ]);
+        let second = multisig_paths(&[
+            (Fingerprint::from([1, 1, 1, 1]), "m/48'/1'/0'/2'/1/9"),
+            (Fingerprint::from([2, 2, 2, 2]), "m/48'/1'/7'/2'/1/9"),
+        ]);
+
+        let mut seen_paths = None;
+        validate_multisig_signing_paths(&mut seen_paths, AddressType::P2wsh, &first, 0).unwrap();
+        validate_multisig_signing_paths(&mut seen_paths, AddressType::P2wsh, &second, 1).unwrap();
+    }
+
+    #[test]
+    fn multisig_signing_paths_reject_mixed_script_types_within_an_input() {
+        let paths = multisig_paths(&[
+            (Fingerprint::from([1, 1, 1, 1]), "m/48'/1'/0'/2'/0/0"),
+            (Fingerprint::from([2, 2, 2, 2]), "m/48'/1'/0'/1'/0/0"),
+        ]);
+
+        assert!(matches!(
+            validate_multisig_signing_paths(&mut None, AddressType::P2wsh, &paths, 0),
+            Err(Error::MixedMultisigScriptType { index: 0 })
+        ));
+    }
+
+    #[test]
+    fn multisig_signing_paths_reject_different_roots_across_inputs() {
+        let first = multisig_paths(&[
+            (Fingerprint::from([1, 1, 1, 1]), "m/48'/1'/0'/2'/0/0"),
+            (Fingerprint::from([2, 2, 2, 2]), "m/48'/1'/0'/2'/0/0"),
+        ]);
+        let second = multisig_paths(&[
+            (Fingerprint::from([1, 1, 1, 1]), "m/48'/1'/1'/2'/0/1"),
+            (Fingerprint::from([2, 2, 2, 2]), "m/48'/1'/0'/2'/0/1"),
+        ]);
+
+        let mut seen_paths = None;
+        validate_multisig_signing_paths(&mut seen_paths, AddressType::P2wsh, &first, 0).unwrap();
+        assert!(matches!(
+            validate_multisig_signing_paths(&mut seen_paths, AddressType::P2wsh, &second, 1),
+            Err(Error::MixedMultisigDerivationRoots { index: 1 })
+        ));
+    }
+
+    #[test]
+    fn bip45_signing_paths_match_member_roots_not_address_suffixes() {
+        let first = multisig_paths(&[
+            (Fingerprint::from([1, 1, 1, 1]), "m/45'/0/0/3"),
+            (Fingerprint::from([2, 2, 2, 2]), "m/45'/1/0/3"),
+        ]);
+        let second = multisig_paths(&[
+            (Fingerprint::from([1, 1, 1, 1]), "m/45'/0/1/9"),
+            (Fingerprint::from([2, 2, 2, 2]), "m/45'/1/1/9"),
+        ]);
+
+        let mut seen_paths = None;
+        validate_multisig_signing_paths(&mut seen_paths, AddressType::P2sh, &first, 0).unwrap();
+        validate_multisig_signing_paths(&mut seen_paths, AddressType::P2sh, &second, 1).unwrap();
     }
 }

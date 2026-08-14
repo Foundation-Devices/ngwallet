@@ -1,5 +1,5 @@
 use bdk_wallet::KeychainKind;
-use bdk_wallet::bitcoin::bip32::ChildNumber;
+use bdk_wallet::bitcoin::bip32::{ChildNumber, DerivationPath};
 use bdk_wallet::bitcoin::{Network, NetworkKind};
 use thiserror::Error;
 
@@ -32,6 +32,18 @@ pub enum ParsePathError {
     ExpectedScriptType,
     #[error("expected a hardened child number in the derivation path")]
     ExpectedHardened,
+    #[error("expected BIP45 cosigner index in the derivation path")]
+    ExpectedCosignerIndex,
+    #[error("expected BIP45 change index in the derivation path")]
+    ExpectedChange,
+    #[error("expected BIP45 address index in the derivation path")]
+    ExpectedAddressIndex,
+    #[error("change index must be zero or one")]
+    InvalidChange,
+    #[error("BIP45 change index must be zero or one")]
+    InvalidBip45Change,
+    #[error("derivation path contains an unexpected child number")]
+    UnexpectedChild,
 }
 
 impl NgAccountPath {
@@ -63,12 +75,21 @@ impl NgAccountPath {
 
         // Change and address index are optional, but should still be valid.
         let change = Self::expect_normal(&mut iter)?;
+        if let Some(change) = change
+            && !matches!(change, 0 | 1)
+        {
+            return Err(ParsePathError::InvalidChange);
+        }
 
         let address_index = if change.is_some() {
             Self::expect_normal(&mut iter)?
         } else {
             None
         };
+
+        if iter.next().is_some() {
+            return Err(ParsePathError::UnexpectedChild);
+        }
 
         Ok(Some(Self {
             purpose,
@@ -157,6 +178,80 @@ impl NgAccountPath {
     }
 }
 
+/// A complete BIP45 member derivation path.
+///
+/// BIP45 deliberately has no coin-type or account level. Its full address
+/// paths are `m/45'/cosigner_index/change/address_index`, where every child
+/// after the purpose is unhardened and `change` is either zero or one.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Bip45Path {
+    /// Position of this member's root key in the lexicographically sorted
+    /// BIP45 cosigner set.
+    pub cosigner_index: u32,
+    /// Zero for receive addresses and one for change addresses.
+    pub change: u32,
+    /// Address index within the selected keychain.
+    pub address_index: u32,
+}
+
+impl Bip45Path {
+    pub const PURPOSE: u32 = 45;
+
+    /// Parse a complete standard BIP45 address path.
+    pub fn parse(path: impl AsRef<[ChildNumber]>) -> Result<Option<Self>, ParsePathError> {
+        let mut iter = path.as_ref().iter().copied();
+
+        let Ok(Some(purpose)) = NgAccountPath::expect_hardened(&mut iter) else {
+            return Ok(None);
+        };
+        if purpose != Self::PURPOSE {
+            return Ok(None);
+        }
+
+        let cosigner_index = NgAccountPath::expect_normal(&mut iter)?
+            .ok_or(ParsePathError::ExpectedCosignerIndex)?;
+        let change =
+            NgAccountPath::expect_normal(&mut iter)?.ok_or(ParsePathError::ExpectedChange)?;
+        if !matches!(change, 0 | 1) {
+            return Err(ParsePathError::InvalidBip45Change);
+        }
+        let address_index =
+            NgAccountPath::expect_normal(&mut iter)?.ok_or(ParsePathError::ExpectedAddressIndex)?;
+        if iter.next().is_some() {
+            return Err(ParsePathError::UnexpectedChild);
+        }
+
+        Ok(Some(Self {
+            cosigner_index,
+            change,
+            address_index,
+        }))
+    }
+
+    /// Return the keychain represented by this path.
+    pub fn keychain_kind(&self) -> KeychainKind {
+        match self.change {
+            0 => KeychainKind::External,
+            1 => KeychainKind::Internal,
+            // `parse` validates this invariant; retain a deterministic result
+            // if a caller constructs the public struct manually.
+            _ => KeychainKind::External,
+        }
+    }
+
+    /// Return the member-key origin which a BIP45 multisig descriptor stores.
+    pub fn member_derivation(&self) -> DerivationPath {
+        DerivationPath::from(vec![
+            ChildNumber::Hardened {
+                index: Self::PURPOSE,
+            },
+            ChildNumber::Normal {
+                index: self.cosigner_index,
+            },
+        ])
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -231,6 +326,15 @@ mod tests {
             NgAccountPath::parse(DerivationPath::from_str("m/49'/0'/0/0/1").unwrap()),
             Err(ParsePathError::ExpectedHardened)
         );
+
+        assert_eq!(
+            NgAccountPath::parse(DerivationPath::from_str("m/84'/0'/0'/2/0").unwrap()),
+            Err(ParsePathError::InvalidChange),
+        );
+        assert_eq!(
+            NgAccountPath::parse(DerivationPath::from_str("m/84'/0'/0'/0/0/1").unwrap()),
+            Err(ParsePathError::UnexpectedChild),
+        );
     }
 
     #[test]
@@ -249,5 +353,36 @@ mod tests {
             .unwrap();
         assert!(account.matches(49, Network::Bitcoin));
         assert!(!account.matches(49, Network::Testnet4));
+    }
+
+    #[test]
+    fn parse_bip45_member_path() {
+        let path = Bip45Path::parse(DerivationPath::from_str("m/45'/1/0/7").unwrap())
+            .unwrap()
+            .unwrap();
+        assert_eq!(path.cosigner_index, 1);
+        assert_eq!(path.address_index, 7);
+        assert_eq!(path.keychain_kind(), KeychainKind::External);
+        assert_eq!(
+            path.member_derivation(),
+            DerivationPath::from_str("m/45'/1").unwrap()
+        );
+
+        let change = Bip45Path::parse(DerivationPath::from_str("m/45'/1/1/7").unwrap())
+            .unwrap()
+            .unwrap();
+        assert_eq!(change.keychain_kind(), KeychainKind::Internal);
+    }
+
+    #[test]
+    fn parse_bip45_rejects_nonstandard_children() {
+        assert_eq!(
+            Bip45Path::parse(DerivationPath::from_str("m/45'/1/2/7").unwrap()),
+            Err(ParsePathError::InvalidBip45Change),
+        );
+        assert_eq!(
+            Bip45Path::parse(DerivationPath::from_str("m/45'/1/0/7/0").unwrap()),
+            Err(ParsePathError::UnexpectedChild),
+        );
     }
 }

@@ -34,6 +34,7 @@ pub enum Error {
 /// # Return
 ///
 /// This returns the number of signers required on success.
+#[cfg(test)]
 pub fn disassemble(script: &Script) -> Result<u8, Error> {
     disassemble_inner(script).map(|(required_signers, _)| required_signers)
 }
@@ -41,6 +42,12 @@ pub fn disassemble(script: &Script) -> Result<u8, Error> {
 /// Disassemble a multisig script and require BIP-67 lexicographic public-key
 /// ordering, matching a `sortedmulti` descriptor.
 pub fn disassemble_sorted(script: &Script) -> Result<u8, Error> {
+    disassemble_sorted_with_keys(script).map(|(required_signers, _)| required_signers)
+}
+
+/// Disassemble a BIP-67 `sortedmulti` script, returning its threshold and
+/// the public keys committed to by the script.
+pub fn disassemble_sorted_with_keys(script: &Script) -> Result<(u8, Vec<PublicKey>), Error> {
     let (required_signers, public_keys) = disassemble_inner(script)?;
     if public_keys.iter().any(|key| !key.compressed) {
         return Err(Error::UncompressedPublicKey);
@@ -52,7 +59,7 @@ pub fn disassemble_sorted(script: &Script) -> Result<u8, Error> {
         return Err(Error::PublicKeysNotSorted);
     }
 
-    Ok(required_signers)
+    Ok((required_signers, public_keys))
 }
 
 fn disassemble_inner(script: &Script) -> Result<(u8, Vec<PublicKey>), Error> {
