@@ -440,41 +440,74 @@ impl MultiSigDetails {
         let signers = sorted_multi
             .pks()
             .iter()
-            .filter_map(|pk| match pk {
+            .map(|pk| match pk {
                 DescriptorPublicKey::XPub(desc_xpub) => {
                     let (fingerprint, derivation_path) = match &desc_xpub.origin {
                         Some((f, d)) => (*f, d.clone()),
-                        None => {
-                            log::error!(
-                                "Descriptor xpub {} doesn't contain origin info",
-                                desc_xpub.xkey
-                            );
-                            return None;
-                        }
+                        None => anyhow::bail!(
+                            "Descriptor xpub {} doesn't contain origin info",
+                            desc_xpub.xkey
+                        ),
                     };
                     let xpub = desc_xpub.xkey;
-                    Some(MultiSigSigner::new(&derivation_path, &fingerprint, &xpub))
+                    Ok(MultiSigSigner::new(&derivation_path, &fingerprint, &xpub))
                 }
                 DescriptorPublicKey::MultiXPub(desc_xpub) => {
-                    let (fingerprint, derivation_path) = match &desc_xpub.origin {
+                    let (fingerprint, origin_path) = match &desc_xpub.origin {
                         Some((f, d)) => (*f, d.clone()),
-                        None => {
-                            log::error!(
-                                "Descriptor xpub {} doesn't contain origin info",
-                                desc_xpub.xkey
-                            );
-                            return None;
-                        }
+                        None => anyhow::bail!(
+                            "Descriptor xpub {} doesn't contain origin info",
+                            desc_xpub.xkey
+                        ),
                     };
-                    let xpub = desc_xpub.xkey;
-                    Some(MultiSigSigner::new(&derivation_path, &fingerprint, &xpub))
+
+                    let paths = desc_xpub.derivation_paths.paths();
+                    let first_path = paths
+                        .first()
+                        .context("Multisig descriptor contains no derivation paths")?;
+                    let common_len = paths.iter().skip(1).fold(first_path.len(), |len, path| {
+                        first_path
+                            .as_ref()
+                            .iter()
+                            .zip(path.as_ref())
+                            .take(len)
+                            .take_while(|(left, right)| left == right)
+                            .count()
+                    });
+                    let common_path =
+                        DerivationPath::from(first_path.as_ref()[..common_len].to_vec());
+
+                    let keychains = paths
+                        .iter()
+                        .map(|path| match &path.as_ref()[common_len..] {
+                            [ChildNumber::Normal { index: 0 }] => Ok(0),
+                            [ChildNumber::Normal { index: 1 }] => Ok(1),
+                            _ => anyhow::bail!(
+                                "Multisig multipath keys must branch only over receive and change"
+                            ),
+                        })
+                        .collect::<Result<HashSet<_>, anyhow::Error>>()?;
+                    if keychains != HashSet::from([0, 1]) {
+                        anyhow::bail!(
+                            "Multisig multipath keys must contain both receive and change branches"
+                        );
+                    }
+
+                    let secp = Secp256k1::verification_only();
+                    let xpub = desc_xpub.xkey.derive_pub(&secp, &common_path)?;
+                    let derivation_path = DerivationPath::from(
+                        origin_path
+                            .as_ref()
+                            .iter()
+                            .chain(common_path.as_ref())
+                            .copied()
+                            .collect::<Vec<_>>(),
+                    );
+                    Ok(MultiSigSigner::new(&derivation_path, &fingerprint, &xpub))
                 }
-                other => {
-                    println!("Descriptor has {other:?} rather than xpub");
-                    None
-                }
+                other => anyhow::bail!("Descriptor has {other:?} rather than xpub"),
             })
-            .collect::<Vec<MultiSigSigner>>();
+            .collect::<Result<Vec<MultiSigSigner>, anyhow::Error>>()?;
 
         let res = Self::new(sorted_multi.k(), sorted_multi.n(), format, None, signers)?;
 
@@ -1553,6 +1586,44 @@ Derivation: m/48'/1'/0'/2'
             multisig.to_config(String::from("Multisig 2-of-2 Test")),
             expected_config
         );
+    }
+
+    #[test]
+    fn multipath_descriptor_preserves_fixed_public_derivation_prefix() {
+        let secp = Secp256k1::new();
+        let origin = DerivationPath::from_str("m/45'").unwrap();
+        let public_suffix = DerivationPath::from_str("m/1/0").unwrap();
+        let account_origin = DerivationPath::from_str("m/45'/1/0").unwrap();
+        let masters = [
+            Xpriv::new_master(Network::Testnet4, &[1; 32]).unwrap(),
+            Xpriv::new_master(Network::Testnet4, &[2; 32]).unwrap(),
+        ];
+        let keys = masters
+            .iter()
+            .map(|master| {
+                let fingerprint = master.fingerprint(&secp);
+                let xpub = Xpub::from_priv(&secp, &master.derive_priv(&secp, &origin).unwrap());
+                format!("[{fingerprint}/45']{xpub}/1/0/<0;1>/*")
+            })
+            .collect::<Vec<_>>();
+        let descriptor = format!("sh(wsh(sortedmulti(2,{},{})))", keys[0], keys[1]);
+
+        let (multisig, _) = MultiSigDetails::from_descriptor(&descriptor).unwrap();
+
+        for master in masters {
+            let fingerprint = master.fingerprint(&secp);
+            let signer = multisig
+                .get_signers()
+                .iter()
+                .find(|signer| signer.get_fingerprint() == fingerprint)
+                .unwrap();
+            let origin_xpub = Xpub::from_priv(&secp, &master.derive_priv(&secp, &origin).unwrap());
+            assert_eq!(signer.get_derivation().unwrap(), account_origin);
+            assert_eq!(
+                signer.get_pubkey().unwrap(),
+                origin_xpub.derive_pub(&secp, &public_suffix).unwrap()
+            );
+        }
     }
 
     #[test]
