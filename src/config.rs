@@ -2077,7 +2077,7 @@ Format: P2WSH
         use foundation_urtypes::value::decode_output_descriptor;
 
         // Same signer set as `multisig_from_descriptor_1`.
-        let entries: &[(&str, [u8; 4], &str)] = &[
+        let entries: &[(&str, [u8; 4], &str, Option<&[u32]>)] = &[
             (
                 "xpub6ESpvmZa75rCQWKik2KoCZrjTi6xhSubZKJ25rbtgZRk2g9tZTJqubhaGD3dJeqruw9KMCaanoEfJ1PVtBXiwTuuqLVwk9ucqkRv1sKWiEC",
                 [0x71, 0xC8, 0xBD, 0x85],
