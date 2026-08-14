@@ -11,9 +11,9 @@ mod psbt_security_tests {
     use bdk_wallet::bitcoin::transaction::Version;
     use bdk_wallet::bitcoin::{
         Address, Amount, CompressedPublicKey, Network, OutPoint, ScriptBuf, Sequence, Transaction,
-        TxIn, TxOut, Txid, Witness,
+        TxIn, TxOut, Txid, Witness, hashes::Hash as _, taproot::TapNodeHash,
     };
-    use ngwallet::psbt::{Error, validate};
+    use ngwallet::psbt::{Error, OutputKind, validate};
     use std::str::FromStr;
 
     const TEST_MASTER_XPRIV: &str = "tprv8ZgxMBicQKsPeLx4U7UmbcYU5VhS4BRxv86o1gNqNqxEEJL47F9ZZhvBi1EVbKPmmFYnTEZ6uArarK6zZyrZf7mSyWZRAuNKQp4dHfxBdMM";
@@ -184,7 +184,203 @@ mod psbt_security_tests {
         );
     }
 
-    //legacy P2PKH requires non_witness_utxo
+    #[test]
+    fn psbt_cross_map_decoys_are_external() {
+        let secp = test_secp();
+        let master = test_master_key();
+        let (input_pk, input_path, fp) = derive_test_key(&secp, "m/84'/1'/0'/0/0");
+        let input_out = TxOut {
+            value: Amount::from_sat(100_000),
+            script_pubkey: Address::p2wpkh(&CompressedPublicKey(input_pk), Network::Testnet)
+                .script_pubkey(),
+        };
+        let (prev_tx, txid) = prev_tx_with_output(input_out.clone());
+
+        let validate_output = |txout, output| {
+            let mut unsigned_tx = dummy_unsigned_tx(txid);
+            unsigned_tx.output[0] = txout;
+            let mut psbt = Psbt::from_unsigned_tx(unsigned_tx).unwrap();
+            psbt.inputs[0] = psbt::Input {
+                non_witness_utxo: Some(prev_tx.clone()),
+                witness_utxo: Some(input_out.clone()),
+                bip32_derivation: [(input_pk, (fp, input_path.clone()))].into(),
+                ..Default::default()
+            };
+            psbt.outputs[0] = output;
+
+            let details = validate(&secp, &master, &psbt, Network::Testnet, None).unwrap();
+            assert!(matches!(details.outputs[0].kind, OutputKind::External(_)));
+            assert_eq!(details.display_total(), Amount::from_sat(99_000));
+        };
+
+        let attacker = Xpriv::new_master(Network::Testnet, &[42; 32]).unwrap();
+        let attacker_fp = attacker.fingerprint(&secp);
+
+        let tap_path: DerivationPath = "m/86'/1'/0'/1/0".parse().unwrap();
+        let tap_key = Xpub::from_priv(&secp, &attacker.derive_priv(&secp, &tap_path).unwrap())
+            .public_key
+            .x_only_public_key()
+            .0;
+        validate_output(
+            TxOut {
+                value: Amount::from_sat(99_000),
+                script_pubkey: Address::p2tr(&secp, tap_key, None, Network::Testnet)
+                    .script_pubkey(),
+            },
+            psbt::Output {
+                bip32_derivation: [(input_pk, (fp, input_path.clone()))].into(),
+                tap_key_origins: [(tap_key, (vec![], (attacker_fp, tap_path)))].into(),
+                ..Default::default()
+            },
+        );
+
+        let (tap_decoy, tap_decoy_path, _) = derive_test_key(&secp, "m/86'/1'/0'/1/0");
+        let tap_decoy = tap_decoy.x_only_public_key().0;
+        let segwit_path: DerivationPath = "m/84'/1'/0'/1/0".parse().unwrap();
+        let segwit_key =
+            Xpub::from_priv(&secp, &attacker.derive_priv(&secp, &segwit_path).unwrap()).public_key;
+        validate_output(
+            TxOut {
+                value: Amount::from_sat(99_000),
+                script_pubkey: Address::p2wpkh(&CompressedPublicKey(segwit_key), Network::Testnet)
+                    .script_pubkey(),
+            },
+            psbt::Output {
+                bip32_derivation: [(segwit_key, (attacker_fp, segwit_path))].into(),
+                tap_key_origins: [(tap_decoy, (vec![], (fp, tap_decoy_path)))].into(),
+                ..Default::default()
+            },
+        );
+    }
+
+    // non-taproot inputs require non_witness_utxo
+
+    #[test]
+    fn psbt_rejects_p2wpkh_without_non_witness_utxo() {
+        let secp = test_secp();
+        let master = test_master_key();
+        let (pk, path, fp) = derive_test_key(&secp, "m/84'/1'/0'/0/0");
+
+        let address = Address::p2wpkh(&CompressedPublicKey(pk), Network::Testnet);
+        let fake_txid =
+            Txid::from_str("1212121212121212121212121212121212121212121212121212121212121212")
+                .unwrap();
+        let mut psbt = Psbt::from_unsigned_tx(dummy_unsigned_tx(fake_txid)).unwrap();
+        let mut input = psbt::Input {
+            witness_utxo: Some(TxOut {
+                value: Amount::from_sat(100_000),
+                script_pubkey: address.script_pubkey(),
+            }),
+            ..Default::default()
+        };
+        input.bip32_derivation.insert(pk, (fp, path));
+        psbt.inputs = vec![input];
+
+        assert!(matches!(
+            validate(&secp, &master, &psbt, Network::Testnet, None),
+            Err(Error::MissingNonWitnessUtxo { index: 0 })
+        ));
+    }
+
+    #[test]
+    fn psbt_accepts_p2tr_without_non_witness_utxo() {
+        let secp = test_secp();
+        let master = test_master_key();
+        let (pk, path, fp) = derive_test_key(&secp, "m/86'/1'/0'/0/0");
+
+        let x_only_pk = pk.x_only_public_key().0;
+        let address = Address::p2tr(&secp, x_only_pk, None, Network::Testnet);
+        let fake_txid =
+            Txid::from_str("5656565656565656565656565656565656565656565656565656565656565656")
+                .unwrap();
+        let mut psbt = Psbt::from_unsigned_tx(dummy_unsigned_tx(fake_txid)).unwrap();
+        let mut input = psbt::Input {
+            witness_utxo: Some(TxOut {
+                value: Amount::from_sat(100_000),
+                script_pubkey: address.script_pubkey(),
+            }),
+            tap_internal_key: Some(x_only_pk),
+            ..Default::default()
+        };
+        input
+            .tap_key_origins
+            .insert(x_only_pk, (vec![], (fp, path)));
+        psbt.inputs = vec![input];
+
+        assert!(validate(&secp, &master, &psbt, Network::Testnet, None).is_ok());
+
+        psbt.inputs[0].tap_internal_key = None;
+        psbt.inputs[0].tap_merkle_root = Some(TapNodeHash::all_zeros());
+        assert!(validate(&secp, &master, &psbt, Network::Testnet, None).is_ok());
+    }
+
+    #[test]
+    fn psbt_rejects_p2tr_without_taproot_signing_metadata() {
+        let secp = test_secp();
+        let master = test_master_key();
+        let (pk, path, fp) = derive_test_key(&secp, "m/86'/1'/0'/0/0");
+
+        let x_only_pk = pk.x_only_public_key().0;
+        let address = Address::p2tr(&secp, x_only_pk, None, Network::Testnet);
+        let fake_txid =
+            Txid::from_str("7878787878787878787878787878787878787878787878787878787878787878")
+                .unwrap();
+        let mut psbt = Psbt::from_unsigned_tx(dummy_unsigned_tx(fake_txid)).unwrap();
+        let mut input = psbt::Input {
+            witness_utxo: Some(TxOut {
+                value: Amount::from_sat(100_000),
+                script_pubkey: address.script_pubkey(),
+            }),
+            ..Default::default()
+        };
+        input
+            .tap_key_origins
+            .insert(x_only_pk, (vec![], (fp, path)));
+        psbt.inputs = vec![input];
+
+        assert!(matches!(
+            validate(&secp, &master, &psbt, Network::Testnet, None),
+            Err(Error::MissingNonWitnessUtxo { index: 0 })
+        ));
+    }
+
+    #[test]
+    fn psbt_rejects_foreign_input_without_non_witness_utxo() {
+        let secp = test_secp();
+        let master = test_master_key();
+        let (pk, path, fp) = derive_test_key(&secp, "m/84'/1'/0'/0/0");
+
+        let address = Address::p2wpkh(&CompressedPublicKey(pk), Network::Testnet);
+        let funding_out = TxOut {
+            value: Amount::from_sat(100_000),
+            script_pubkey: address.script_pubkey(),
+        };
+        let (prev_tx, txid) = prev_tx_with_output(funding_out.clone());
+        let mut unsigned_tx = dummy_unsigned_tx(txid);
+        unsigned_tx.input.push(dummy_txin(
+            Txid::from_str("9090909090909090909090909090909090909090909090909090909090909090")
+                .unwrap(),
+        ));
+        let mut psbt = Psbt::from_unsigned_tx(unsigned_tx).unwrap();
+        psbt.inputs[0] = psbt::Input {
+            non_witness_utxo: Some(prev_tx),
+            witness_utxo: Some(funding_out),
+            bip32_derivation: [(pk, (fp, path))].into(),
+            ..Default::default()
+        };
+        psbt.inputs[1].witness_utxo = Some(TxOut {
+            value: Amount::from_sat(50_000),
+            script_pubkey: ScriptBuf::new(),
+        });
+
+        assert!(matches!(
+            validate(&secp, &master, &psbt, Network::Testnet, None),
+            Err(Error::MissingNonWitnessUtxo { index: 1 })
+        ));
+
+        psbt.inputs[1].final_script_sig = Some(ScriptBuf::new());
+        assert!(validate(&secp, &master, &psbt, Network::Testnet, None).is_ok());
+    }
 
     #[test]
     fn psbt_rejects_p2pkh_without_non_witness_utxo() {
@@ -214,7 +410,7 @@ mod psbt_security_tests {
         assert!(
             matches!(
                 validate(&secp, &master, &psbt, Network::Testnet, None),
-                Err(Error::MissingInputFundingUtxo { index: 0 })
+                Err(Error::MissingNonWitnessUtxo { index: 0 })
             ),
             "P2PKH input without non_witness_utxo must be rejected"
         );
@@ -240,17 +436,17 @@ mod psbt_security_tests {
         };
         let real_spk = ScriptBuf::new_p2wsh(&real_witness_script.wscript_hash());
 
-        let fake_txid =
-            Txid::from_str("cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd")
-                .unwrap();
-        let unsigned_tx = dummy_unsigned_tx(fake_txid);
+        let funding_out = TxOut {
+            value: Amount::from_sat(100_000),
+            script_pubkey: real_spk,
+        };
+        let (prev_tx, txid) = prev_tx_with_output(funding_out.clone());
+        let unsigned_tx = dummy_unsigned_tx(txid);
         let mut psbt = Psbt::from_unsigned_tx(unsigned_tx).unwrap();
 
         let mut inp = psbt::Input {
-            witness_utxo: Some(TxOut {
-                value: Amount::from_sat(100_000),
-                script_pubkey: real_spk,
-            }),
+            non_witness_utxo: Some(prev_tx),
+            witness_utxo: Some(funding_out),
             witness_script: Some(ScriptBuf::new()), // wrong — empty script
             ..Default::default()
         };
@@ -288,17 +484,17 @@ mod psbt_security_tests {
         let real_p2sh_spk = ScriptBuf::new_p2sh(&real_redeem_script.script_hash());
         let forged_redeem_script = ScriptBuf::new_p2wsh(&ScriptBuf::new().wscript_hash()); // different hash
 
-        let fake_txid =
-            Txid::from_str("efefefefefefefefefefefefefefefefefefefefefefefefefefefefefefefef")
-                .unwrap();
-        let unsigned_tx = dummy_unsigned_tx(fake_txid);
+        let funding_out = TxOut {
+            value: Amount::from_sat(100_000),
+            script_pubkey: real_p2sh_spk,
+        };
+        let (prev_tx, txid) = prev_tx_with_output(funding_out.clone());
+        let unsigned_tx = dummy_unsigned_tx(txid);
         let mut psbt = Psbt::from_unsigned_tx(unsigned_tx).unwrap();
 
         let mut inp = psbt::Input {
-            witness_utxo: Some(TxOut {
-                value: Amount::from_sat(100_000),
-                script_pubkey: real_p2sh_spk,
-            }),
+            non_witness_utxo: Some(prev_tx),
+            witness_utxo: Some(funding_out),
             redeem_script: Some(forged_redeem_script),
             witness_script: Some(witness_script),
             ..Default::default()
@@ -334,17 +530,17 @@ mod psbt_security_tests {
         let real_redeem_script = ScriptBuf::new_p2wsh(&real_witness_script.wscript_hash());
         let real_p2sh_spk = ScriptBuf::new_p2sh(&real_redeem_script.script_hash());
 
-        let fake_txid =
-            Txid::from_str("0101010101010101010101010101010101010101010101010101010101010101")
-                .unwrap();
-        let unsigned_tx = dummy_unsigned_tx(fake_txid);
+        let funding_out = TxOut {
+            value: Amount::from_sat(100_000),
+            script_pubkey: real_p2sh_spk,
+        };
+        let (prev_tx, txid) = prev_tx_with_output(funding_out.clone());
+        let unsigned_tx = dummy_unsigned_tx(txid);
         let mut psbt = Psbt::from_unsigned_tx(unsigned_tx).unwrap();
 
         let mut inp = psbt::Input {
-            witness_utxo: Some(TxOut {
-                value: Amount::from_sat(100_000),
-                script_pubkey: real_p2sh_spk,
-            }),
+            non_witness_utxo: Some(prev_tx),
+            witness_utxo: Some(funding_out),
             redeem_script: Some(real_redeem_script), // correct outer binding
             witness_script: Some(ScriptBuf::new()),  // wrong inner — empty
             ..Default::default()

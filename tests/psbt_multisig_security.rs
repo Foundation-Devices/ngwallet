@@ -1,9 +1,8 @@
 use ngwallet::bdk_wallet::bitcoin::{
     Address, Amount, CompressedPublicKey, Network, NetworkKind, OutPoint,
-    PublicKey as BitcoinPublicKey, ScriptBuf, Sequence, Transaction, TxIn, TxOut, Txid, Witness,
+    PublicKey as BitcoinPublicKey, ScriptBuf, Sequence, Transaction, TxIn, TxOut, Witness,
     absolute::LockTime,
     bip32::{DerivationPath, Fingerprint, Xpriv, Xpub},
-    hashes::Hash as _,
     opcodes::all::OP_CHECKMULTISIG,
     psbt::{self, Psbt},
     script::Builder,
@@ -100,27 +99,28 @@ fn with_redeem_script(format: AddressType, script: &ScriptBuf, nested: &mut Opti
     }
 }
 
-fn txin(txid_byte: u8) -> TxIn {
-    TxIn {
-        previous_output: OutPoint {
-            txid: Txid::from_byte_array([txid_byte; 32]),
-            vout: 0,
-        },
-        script_sig: ScriptBuf::new(),
-        sequence: Sequence::MAX,
-        witness: Witness::new(),
-    }
-}
-
 type Keys = [(SecpPublicKey, Fingerprint, DerivationPath)];
 
 /// A multisig input spending `script` with the given derivation metadata.
-fn input_for(format: AddressType, script: &ScriptBuf, sats: u64, keys: &Keys) -> psbt::Input {
+fn input_for(
+    format: AddressType,
+    script: &ScriptBuf,
+    sats: u64,
+    keys: &Keys,
+) -> (TxIn, psbt::Input) {
+    let funding_out = TxOut {
+        value: Amount::from_sat(sats),
+        script_pubkey: script_pubkey_for(format, script),
+    };
+    let funding_tx = Transaction {
+        version: Version::TWO,
+        lock_time: LockTime::ZERO,
+        input: vec![],
+        output: vec![funding_out.clone()],
+    };
     let mut input = psbt::Input {
-        witness_utxo: Some(TxOut {
-            value: Amount::from_sat(sats),
-            script_pubkey: script_pubkey_for(format, script),
-        }),
+        non_witness_utxo: Some(funding_tx.clone()),
+        witness_utxo: Some(funding_out),
         witness_script: Some(script.clone()),
         ..Default::default()
     };
@@ -128,7 +128,18 @@ fn input_for(format: AddressType, script: &ScriptBuf, sats: u64, keys: &Keys) ->
     for (key, fp, path) in keys {
         input.bip32_derivation.insert(*key, (*fp, path.clone()));
     }
-    input
+    (
+        TxIn {
+            previous_output: OutPoint {
+                txid: funding_tx.compute_txid(),
+                vout: 0,
+            },
+            script_sig: ScriptBuf::new(),
+            sequence: Sequence::MAX,
+            witness: Witness::new(),
+        },
+        input,
+    )
 }
 
 /// A multisig output paying to `script` with the given derivation metadata.
@@ -167,6 +178,7 @@ fn honest_psbt_with_roots(
     let input_keys = keys_at_roots(&secp, &accounts, "0/0", &masters);
     let change_keys = keys_at_roots(&secp, &accounts, "1/0", &masters);
     let input_script = multi_script(2, [input_keys[0].0, input_keys[1].0]);
+    let (txin, input) = input_for(format, &input_script, INPUT_SATS, &input_keys);
     let (change_txout, change_output) = output_for(
         format,
         &multi_script(2, [change_keys[0].0, change_keys[1].0]),
@@ -177,7 +189,7 @@ fn honest_psbt_with_roots(
     let tx = Transaction {
         version: Version::TWO,
         lock_time: LockTime::ZERO,
-        input: vec![txin(0x11)],
+        input: vec![txin],
         output: vec![
             change_txout,
             TxOut {
@@ -188,7 +200,7 @@ fn honest_psbt_with_roots(
         ],
     };
     let mut psbt = Psbt::from_unsigned_tx(tx).unwrap();
-    psbt.inputs = vec![input_for(format, &input_script, INPUT_SATS, &input_keys)];
+    psbt.inputs = vec![input];
     psbt.outputs = vec![change_output, psbt::Output::default()];
     for (master, account) in masters.iter().zip(&accounts) {
         psbt.xpub.insert(
@@ -365,8 +377,9 @@ fn poisoned_input_policy_is_rejected() {
         let (mut psbt, details) = honest_psbt(format);
         let keys = keys_at(&secp, &acct, "0/0", &[master(1), master(3)]);
         let script = multi_script(1, [keys[0].0, keys[1].0]);
-        psbt.unsigned_tx.input.push(txin(0x22));
-        psbt.inputs.push(input_for(format, &script, 1_000, &keys));
+        let (txin, input) = input_for(format, &script, 1_000, &keys);
+        psbt.unsigned_tx.input.push(txin);
+        psbt.inputs.push(input);
         psbt.xpub.insert(
             xpub_at(&secp, &master(3), &acct),
             (master(3).fingerprint(&secp), acct.clone()),
@@ -426,14 +439,15 @@ fn env3050_inconsistent_metadata_never_panics() {
             (multi_script(2, [keys[0].0]), &keys[..1]),
         ];
         for (script, declared) in &cases {
+            let (txin, input) = input_for(format, script, INPUT_SATS, declared);
             let mut psbt = Psbt::from_unsigned_tx(Transaction {
                 version: Version::TWO,
                 lock_time: LockTime::ZERO,
-                input: vec![txin(0x11)],
+                input: vec![txin],
                 output: vec![],
             })
             .unwrap();
-            psbt.inputs = vec![input_for(format, script, INPUT_SATS, declared)];
+            psbt.inputs = vec![input];
             for m in [master(1), master(2)] {
                 psbt.xpub.insert(
                     xpub_at(&secp, &m, &acct),
