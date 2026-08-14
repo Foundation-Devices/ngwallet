@@ -243,11 +243,22 @@ impl MultiSigDetails {
         // Sort by xpubs
         signers.sort();
 
-        let unique_xpubs: HashSet<String> = signers
+        // A signer authority is its BIP32 parent private scalar.  Both `P`
+        // and `-P` are derived from scalars controlled by the same party, so
+        // use the parity-independent x coordinate rather than the serialized
+        // compressed public key.
+        let unique_xpub_authorities: HashSet<[u8; 32]> = signers
             .iter()
-            .map(|signer| signer.get_pubkey().map(|xpub| xpub.to_string()))
+            .map(|signer| {
+                signer.get_pubkey().map(|xpub| {
+                    let serialized = xpub.public_key.serialize_uncompressed();
+                    let mut x_coordinate = [0; 32];
+                    x_coordinate.copy_from_slice(&serialized[1..33]);
+                    x_coordinate
+                })
+            })
             .collect::<Result<_, _>>()?;
-        if unique_xpubs.len() != signers.len() {
+        if unique_xpub_authorities.len() != signers.len() {
             anyhow::bail!(
                 "Multisig config contains duplicate cosigner extended public keys; each cosigner must use a distinct xpub"
             );
@@ -1738,6 +1749,37 @@ Derivation: m/48'/1'/0'/2'
         let signers = vec![
             MultiSigSigner::new_from_strings("m/48'/1'/0'/2'", "AB88DE89", xpub).unwrap(),
             MultiSigSigner::new_from_strings("m/48'/1'/1'/2'", "662A42E4", xpub).unwrap(),
+        ];
+
+        let err = MultiSigDetails::new(2, 2, AddressType::P2wsh, Some(NetworkKind::Test), signers)
+            .unwrap_err();
+        assert!(
+            err.to_string()
+                .contains("duplicate cosigner extended public keys")
+        );
+    }
+
+    #[test]
+    fn multisig_new_rejects_negated_cosigner_public_key() {
+        let xpub = Xpub::from_str(
+            "tpubDFUc8ddWCzA8kC195Zn6UitBcBGXbPbtjktU2dk2Deprnf6sR15GAyHLQKUjAPa3gqD74g7Eea3NSqkb9FfYRZzEm2MTbCtTDZAKSHezJwb",
+        )
+        .unwrap();
+        let negated_xpub = Xpub {
+            public_key: xpub.public_key.negate(&Secp256k1::new()),
+            ..xpub
+        };
+        let signers = vec![
+            MultiSigSigner::new(
+                &DerivationPath::from_str("m/48'/1'/0'/2'").unwrap(),
+                &Fingerprint::from_str("AB88DE89").unwrap(),
+                &xpub,
+            ),
+            MultiSigSigner::new(
+                &DerivationPath::from_str("m/48'/1'/1'/2'").unwrap(),
+                &Fingerprint::from_str("662A42E4").unwrap(),
+                &negated_xpub,
+            ),
         ];
 
         let err = MultiSigDetails::new(2, 2, AddressType::P2wsh, Some(NetworkKind::Test), signers)
