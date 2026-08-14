@@ -1,0 +1,49 @@
+name: Claude Code Review
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
+
+jobs:
+  claude-review:
+    # Review every non-draft PR (open / push / reopen / marked ready-for-review).
+    if: github.event.pull_request.draft == false
+
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: write
+      issues: write
+      id-token: write
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Run Claude Code Review
+        id: claude-review
+        uses: anthropics/claude-code-action@v1
+        with:
+          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          prompt: |
+            You are reviewing a pull request in ngwallet, Foundation Devices' Rust Bitcoin wallet core. It owns account and key derivation, descriptors, PSBT construction and validation, signing, fee handling, RBF, UTXO selection, persistence, and remote wallet updates.
+
+            Read `docs/automatic-code-review.md` and `docs/architecture-faq.md` from the checkout and follow them in full. The review policy is shared with every other review bot; it covers scope, priorities, what to look for, and what to leave alone. The FAQ records intentional behavior that could otherwise look like a bug. This file adds only how to post the review.
+
+            This run reviews pull request #${{ github.event.pull_request.number }} in `${{ github.repository }}`. The CI runner checks out a detached merge ref, so `gh` can't infer the PR on its own — pass this repo and number explicitly in every `gh` command below, and fetch the diff yourself with `gh pr diff -R ${{ github.repository }} ${{ github.event.pull_request.number }}`. To check whether you have reviewed this PR before, as the policy's review-scope section requires, use `gh api repos/${{ github.repository }}/pulls/${{ github.event.pull_request.number }}/reviews` and `.../comments`.
+
+            ### Delivering the review
+
+            Deliver the whole review as a single GitHub pull request review, so the summary and every finding render together as one threaded review instead of scattered comments. Do not post findings one at a time, and do not post a separate top-level summary comment — assemble everything and submit it in one `gh api` call.
+
+            - Gather every inline finding into a `comments` array. Each entry needs `path`, `line`, `side` (`RIGHT` for added or context lines, `LEFT` for removed lines), and `body`. For a finding that spans a multi-line range, also set `start_line` and `start_side` (the side of the start line) — GitHub 422s a multi-line comment that omits `start_side`, and because the review is submitted atomically that one error sinks the whole review; when in doubt, keep the comment single-line. Anchor each to the exact line it concerns and write it in the `[Priority] Prefix: ...` format from the policy: the problem, then the fix, in one short paragraph. Only anchor to lines that actually appear in the diff; if a finding can't be tied to a changed line, fold it into the summary instead of dropping it.
+            - The review `body` is one short paragraph: the overall verdict, optionally a count of findings by priority. Do not restate the individual findings there — they live in the inline comments.
+            - Submit once, with `event` set to `COMMENT` (never `APPROVE` or `REQUEST_CHANGES`). Write the payload to a file and post it: `gh api --method POST repos/${{ github.repository }}/pulls/${{ github.event.pull_request.number }}/reviews --input review.json`. The payload shape is `{"event":"COMMENT","body":"<verdict>","comments":[{"path":"src/foo.rs","line":42,"side":"RIGHT","body":"[High] <problem>. <fix>."}]}`.
+
+            If you find nothing to flag, still submit one review: an empty `comments` array and a one- or two-line `body` verdict (for example, "Reviewed the diff — no issues found."), never just a reaction or emoji. On a re-review where the new commits introduce no new findings, make the `body` a single line saying so (for example, "Re-reviewed the new commits — no new issues.") with no `comments`, and say nothing about earlier findings.
+          claude_args: |
+            --model claude-opus-5
+            --effort max
+            --allowedTools "Read,Grep,Glob,LS,Write,Bash(gh pr diff:*),Bash(gh pr view:*),Bash(gh api:*)"
