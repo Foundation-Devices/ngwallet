@@ -1987,11 +1987,10 @@ Format: P2WSH
     // `(xpub_str, fingerprint_hex, derivation_str, optional_children)`
     // entries and encode it to CBOR. Mirrors what
     // `minicbor::to_vec(&Terminal)` gives us when the sender is e.g. Sparrow.
+    type CryptoOutputEntry<'a> = (&'a str, [u8; 4], &'a str, Option<&'a [u32]>);
+
     #[cfg(test)]
-    fn encode_wsh_sortedmulti_cbor(
-        threshold: u8,
-        entries: &[(&str, [u8; 4], &str, Option<&[u32]>)],
-    ) -> Vec<u8> {
+    fn encode_wsh_sortedmulti_cbor(threshold: u8, entries: &[CryptoOutputEntry<'_>]) -> Vec<u8> {
         use foundation_arena::boxed::Box as ArenaBox;
         use foundation_urtypes::registry::{
             CoinInfo, CoinType, DerivedKeyRef, HDKeyRef as UrHDKeyRef, Key, KeypathRef, Keys,
@@ -2077,7 +2076,7 @@ Format: P2WSH
         use foundation_urtypes::value::decode_output_descriptor;
 
         // Same signer set as `multisig_from_descriptor_1`.
-        let entries: &[(&str, [u8; 4], &str, Option<&[u32]>)] = &[
+        let entries = &[
             (
                 "xpub6ESpvmZa75rCQWKik2KoCZrjTi6xhSubZKJ25rbtgZRk2g9tZTJqubhaGD3dJeqruw9KMCaanoEfJ1PVtBXiwTuuqLVwk9ucqkRv1sKWiEC",
                 [0x71, 0xC8, 0xBD, 0x85],
@@ -2267,7 +2266,7 @@ Format: P2WSH
         // descriptor path catches this via miniscript's `sanity_check()`;
         // this path must reject it explicitly.
         let xpub = "xpub6ESpvmZa75rCQWKik2KoCZrjTi6xhSubZKJ25rbtgZRk2g9tZTJqubhaGD3dJeqruw9KMCaanoEfJ1PVtBXiwTuuqLVwk9ucqkRv1sKWiEC";
-        let entries: &[(&str, [u8; 4], &str, Option<&[u32]>)] = &[
+        let entries = &[
             (xpub, [0x71, 0xC8, 0xBD, 0x85], "m/48'/0'/0'/2'", None),
             (xpub, [0x71, 0xC8, 0xBD, 0x85], "m/48'/0'/0'/2'", None),
         ];
