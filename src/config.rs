@@ -251,9 +251,9 @@ impl MultiSigDetails {
             .map(|signer| {
                 signer.get_pubkey().map(|xpub| {
                     let serialized = xpub.public_key.serialize_uncompressed();
-                    serialized[1..33]
-                        .try_into()
-                        .expect("x coordinate is 32 bytes")
+                    let mut x_coordinate = [0; 32];
+                    x_coordinate.copy_from_slice(&serialized[1..33]);
+                    x_coordinate
                 })
             })
             .collect::<Result<_, _>>()?;
