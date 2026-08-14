@@ -1,7 +1,5 @@
 use crate::config::MultiSigDetails;
-use crate::psbt::{
-    Error, OutputKind, PsbtOutput, bip48_keychain_and_index, registered_script_pubkey, sort_keys,
-};
+use crate::psbt::{Error, OutputKind, PsbtOutput, registered_multisig_output_kind, sort_keys};
 use bdk_wallet::bitcoin::bip32::{ChildNumber, DerivationPath, KeySource, Xpub};
 use bdk_wallet::bitcoin::psbt;
 use bdk_wallet::bitcoin::secp256k1::{PublicKey, Secp256k1, Signing, Verification};
@@ -45,22 +43,17 @@ pub fn validate_output<C: Signing + Verification>(
         return Err(Error::FraudulentOutput { index });
     }
 
-    let path = registered_multisig.and_then(|multisig| {
-        let mut paths = output.bip32_derivation.values();
-        let (_, path) = paths.next()?;
-        if !paths.all(|(_, other_path)| other_path == path) {
-            return None;
-        }
-
-        let (keychain, address_index) = bip48_keychain_and_index(path)?;
-        let script = registered_script_pubkey(secp, multisig, keychain, address_index)?;
-        (script == txout.script_pubkey).then_some(path)
-    });
-
-    let kind = match path {
-        Some(path) => OutputKind::from_derivation_path(path, 48, network, address)?,
-        None => OutputKind::External(address),
-    };
+    let kind = registered_multisig
+        .and_then(|multisig| {
+            registered_multisig_output_kind(
+                secp,
+                multisig,
+                &output.bip32_derivation,
+                &txout.script_pubkey,
+                address.clone(),
+            )
+        })
+        .unwrap_or(OutputKind::External(address));
 
     Ok(PsbtOutput {
         amount: txout.value,

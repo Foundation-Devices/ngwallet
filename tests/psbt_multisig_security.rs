@@ -45,14 +45,26 @@ fn keys_at(
     suffix: &str,
     masters: &[Xpriv],
 ) -> Vec<(SecpPublicKey, Fingerprint, DerivationPath)> {
-    let path = DerivationPath::from_str(&format!("{account}/{suffix}")).unwrap();
-    masters
+    let accounts = vec![account.clone(); masters.len()];
+    keys_at_roots(secp, &accounts, suffix, masters)
+}
+
+fn keys_at_roots(
+    secp: &Secp256k1<All>,
+    accounts: &[DerivationPath],
+    suffix: &str,
+    masters: &[Xpriv],
+) -> Vec<(SecpPublicKey, Fingerprint, DerivationPath)> {
+    assert_eq!(accounts.len(), masters.len());
+    accounts
         .iter()
-        .map(|m| {
+        .zip(masters)
+        .map(|(account, master)| {
+            let path = DerivationPath::from_str(&format!("{account}/{suffix}")).unwrap();
             (
-                xpub_at(secp, m, &path).public_key,
-                m.fingerprint(secp),
-                path.clone(),
+                xpub_at(secp, master, &path).public_key,
+                master.fingerprint(secp),
+                path,
             )
         })
         .collect()
@@ -141,11 +153,19 @@ fn output_for(format: AddressType, script: &ScriptBuf, keys: &Keys) -> (TxOut, p
 /// An honest spend from the registered 2-of-2 wallet (device = seed 1,
 /// cosigner = seed 2): input at `/0/0`, change at `/1/0`, external payment.
 fn honest_psbt(format: AddressType) -> (Psbt, MultiSigDetails) {
-    let secp = Secp256k1::new();
     let acct = account_path(format, 0);
+    honest_psbt_with_roots(format, [acct.clone(), acct])
+}
 
-    let input_keys = keys_at(&secp, &acct, "0/0", &[master(1), master(2)]);
-    let change_keys = keys_at(&secp, &acct, "1/0", &[master(1), master(2)]);
+fn honest_psbt_with_roots(
+    format: AddressType,
+    accounts: [DerivationPath; 2],
+) -> (Psbt, MultiSigDetails) {
+    let secp = Secp256k1::new();
+    let masters = [master(1), master(2)];
+
+    let input_keys = keys_at_roots(&secp, &accounts, "0/0", &masters);
+    let change_keys = keys_at_roots(&secp, &accounts, "1/0", &masters);
     let input_script = multi_script(2, [input_keys[0].0, input_keys[1].0]);
     let (change_txout, change_output) = output_for(
         format,
@@ -153,7 +173,7 @@ fn honest_psbt(format: AddressType) -> (Psbt, MultiSigDetails) {
         &change_keys,
     );
 
-    let payment = keys_at(&secp, &acct, "0/0", &[master(3)]);
+    let payment = keys_at(&secp, &account_path(format, 0), "0/0", &[master(3)]);
     let tx = Transaction {
         version: Version::TWO,
         lock_time: LockTime::ZERO,
@@ -170,20 +190,77 @@ fn honest_psbt(format: AddressType) -> (Psbt, MultiSigDetails) {
     let mut psbt = Psbt::from_unsigned_tx(tx).unwrap();
     psbt.inputs = vec![input_for(format, &input_script, INPUT_SATS, &input_keys)];
     psbt.outputs = vec![change_output, psbt::Output::default()];
-    for m in [master(1), master(2)] {
+    for (master, account) in masters.iter().zip(&accounts) {
         psbt.xpub.insert(
-            xpub_at(&secp, &m, &acct),
-            (m.fingerprint(&secp), acct.clone()),
+            xpub_at(&secp, master, account),
+            (master.fingerprint(&secp), account.clone()),
         );
     }
 
-    let signers = [master(1), master(2)]
+    let signers = masters
         .iter()
-        .map(|m| MultiSigSigner::new(&acct, &m.fingerprint(&secp), &xpub_at(&secp, m, &acct)))
+        .zip(&accounts)
+        .map(|(master, account)| {
+            MultiSigSigner::new(
+                account,
+                &master.fingerprint(&secp),
+                &xpub_at(&secp, master, account),
+            )
+        })
         .collect();
     let details =
         MultiSigDetails::new(2, 2, format, Some(NetworkKind::Test.into()), signers).unwrap();
     (psbt, details)
+}
+
+#[test]
+fn registered_vendor_paths_validate_against_saved_signer_roots() {
+    let cases = [
+        (
+            AddressType::P2ShWsh,
+            [
+                DerivationPath::from_str("m/49/1/0").unwrap(),
+                DerivationPath::from_str("m/49/1/0").unwrap(),
+            ],
+        ),
+        (
+            AddressType::P2ShWsh,
+            [
+                DerivationPath::from_str("m/45'/1/0").unwrap(),
+                DerivationPath::from_str("m/45'/1/0").unwrap(),
+            ],
+        ),
+        (
+            AddressType::P2wsh,
+            [
+                DerivationPath::from_str("m/45'/1'/11'/2").unwrap(),
+                DerivationPath::from_str("m/45'/1'/12'/2").unwrap(),
+            ],
+        ),
+    ];
+
+    for (format, accounts) in cases {
+        let (mut psbt, details) = honest_psbt_with_roots(format, accounts.clone());
+        let result = validate_with(&details, &psbt).expect("registered spend must validate");
+        assert!(
+            matches!(result.outputs[0].kind, OutputKind::Change(_)),
+            "format {format:?}"
+        );
+        assert_eq!(result.display_total(), Amount::from_sat(PAYMENT_SATS));
+
+        let receive_keys =
+            keys_at_roots(&Secp256k1::new(), &accounts, "0/7", &[master(1), master(2)]);
+        let receive_script = multi_script(2, [receive_keys[0].0, receive_keys[1].0]);
+        let (receive_txout, receive_output) = output_for(format, &receive_script, &receive_keys);
+        psbt.unsigned_tx.output[0] = receive_txout;
+        psbt.outputs[0] = receive_output;
+
+        let result = validate_with(&details, &psbt).expect("registered transfer must validate");
+        assert!(
+            matches!(result.outputs[0].kind, OutputKind::Transfer { .. }),
+            "format {format:?}"
+        );
+    }
 }
 
 fn validate_with(details: &MultiSigDetails, psbt: &Psbt) -> Result<TransactionDetails, Error> {

@@ -1020,14 +1020,13 @@ fn validate_registered_multisig_input<C: Signing + Verification>(
     funding_script_pubkey: &ScriptBuf,
     index: usize,
 ) -> Result<(), Error> {
-    let our_path = bip32_derivations
-        .values()
-        .find(|(fp, _)| *fp == fingerprint)
-        .map(|(_, path)| path)
+    let (keychain, address_index) = bip32_derivations
+        .iter()
+        .filter(|(_, (candidate, _))| *candidate == fingerprint)
+        .find_map(|(public_key, source)| {
+            registered_multisig_signer_path(secp, multisig, public_key, source)
+        })
         .ok_or(Error::FraudulentInput { index })?;
-
-    let (keychain, address_index) =
-        bip48_keychain_and_index(our_path).ok_or(Error::FraudulentInput { index })?;
 
     let matches = registered_script_pubkey(secp, multisig, keychain, address_index)
         .is_some_and(|script| script == *funding_script_pubkey);
@@ -1067,11 +1066,93 @@ fn registered_script_pubkey<C: Signing + Verification>(
         .map(|descriptor| descriptor.script_pubkey())
 }
 
-fn bip48_keychain_and_index(path: &DerivationPath) -> Option<(KeychainKind, u32)> {
-    let account_path = NgAccountPath::parse(path).ok()??;
-    if account_path.purpose != 48 || !account_path.is_for_address() {
+pub(crate) fn registered_multisig_keychain_and_index<C: Verification>(
+    secp: &Secp256k1<C>,
+    multisig: &MultiSigDetails,
+    bip32_derivations: &BTreeMap<PublicKey, KeySource>,
+) -> Option<(KeychainKind, u32)> {
+    if bip32_derivations.len() != multisig.get_signers().len() {
         return None;
     }
-    // The derived script comparison validates the account's script type.
-    Some((account_path.keychain_kind()?, account_path.address_index?))
+
+    let mut resolved = None;
+    for (public_key, source) in bip32_derivations {
+        let path = registered_multisig_signer_path(secp, multisig, public_key, source)?;
+        match resolved {
+            Some(previous) if previous != path => return None,
+            None => resolved = Some(path),
+            _ => {}
+        }
+    }
+
+    resolved
+}
+
+fn registered_multisig_signer_path<C: Verification>(
+    secp: &Secp256k1<C>,
+    multisig: &MultiSigDetails,
+    public_key: &PublicKey,
+    (fingerprint, path): &KeySource,
+) -> Option<(KeychainKind, u32)> {
+    multisig.get_signers().iter().find_map(|signer| {
+        if signer.get_fingerprint() != *fingerprint {
+            return None;
+        }
+
+        let signer_origin = signer.get_derivation().ok()?;
+        let suffix = path.as_ref().strip_prefix(signer_origin.as_ref())?;
+        let [
+            ChildNumber::Normal { index: keychain },
+            ChildNumber::Normal {
+                index: address_index,
+            },
+        ] = suffix
+        else {
+            return None;
+        };
+
+        let derived = signer
+            .get_pubkey()
+            .ok()?
+            .derive_pub(secp, &DerivationPath::from(suffix.to_vec()))
+            .ok()?;
+        if derived.public_key != *public_key {
+            return None;
+        }
+
+        let keychain = match keychain {
+            0 => KeychainKind::External,
+            1 => KeychainKind::Internal,
+            _ => return None,
+        };
+        Some((keychain, *address_index))
+    })
+}
+
+pub(crate) fn registered_multisig_output_kind<C: Signing + Verification>(
+    secp: &Secp256k1<C>,
+    multisig: &MultiSigDetails,
+    bip32_derivations: &BTreeMap<PublicKey, KeySource>,
+    script_pubkey: &ScriptBuf,
+    address: Address,
+) -> Option<OutputKind> {
+    let (keychain, address_index) =
+        registered_multisig_keychain_and_index(secp, multisig, bip32_derivations)?;
+    let registered_script = registered_script_pubkey(secp, multisig, keychain, address_index)?;
+    if registered_script != *script_pubkey {
+        return None;
+    }
+
+    Some(match keychain {
+        KeychainKind::Internal => OutputKind::Change(address),
+        KeychainKind::External => {
+            let account = bip32_derivations
+                .values()
+                .find_map(|(_, path)| NgAccountPath::parse(path).ok().flatten())
+                .filter(|path| path.purpose == 48 && path.is_for_address())
+                .map(|path| path.account)
+                .unwrap_or_default();
+            OutputKind::Transfer { address, account }
+        }
+    })
 }
