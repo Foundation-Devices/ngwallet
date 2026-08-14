@@ -471,14 +471,17 @@ where
             }
         }
 
+        let funding_utxo =
+            funding_utxo(input, txin, i)?.ok_or(Error::MissingInputFundingUtxo { index: i })?;
+
         // Keep validation aligned with bdk_wallet's default signing policy. The
-        // signer checks every non-finalized input, including inputs that don't
-        // belong to this wallet, and identifies Taproot inputs by their PSBT
-        // metadata rather than by inspecting the funding output.
+        // Taproot fields are untrusted and may be attached to a non-Taproot
+        // input, so only exempt them when the funding output is actually P2TR.
+        let has_taproot_metadata =
+            input.tap_internal_key.is_some() || input.tap_merkle_root.is_some();
         if input.final_script_witness.is_none()
             && input.final_script_sig.is_none()
-            && input.tap_internal_key.is_none()
-            && input.tap_merkle_root.is_none()
+            && !(funding_utxo.script_pubkey.is_p2tr() && has_taproot_metadata)
             && input.non_witness_utxo.is_none()
         {
             return Err(Error::MissingNonWitnessUtxo { index: i });
@@ -507,9 +510,6 @@ where
         if !is_our_input {
             continue;
         }
-
-        let funding_utxo =
-            funding_utxo(input, txin, i)?.ok_or(Error::MissingInputFundingUtxo { index: i })?;
 
         if funding_utxo.script_pubkey.is_p2tr() {
             // Only single-sig P2TR supported for now.
