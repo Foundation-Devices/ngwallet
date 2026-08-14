@@ -256,7 +256,7 @@ mod psbt_security_tests {
     // non-taproot inputs require non_witness_utxo
 
     #[test]
-    fn psbt_rejects_p2wpkh_without_non_witness_utxo() {
+    fn psbt_rejects_p2wpkh_with_spurious_taproot_metadata() {
         let secp = test_secp();
         let master = test_master_key();
         let (pk, path, fp) = derive_test_key(&secp, "m/84'/1'/0'/0/0");
@@ -271,6 +271,7 @@ mod psbt_security_tests {
                 value: Amount::from_sat(100_000),
                 script_pubkey: address.script_pubkey(),
             }),
+            tap_merkle_root: Some(TapNodeHash::all_zeros()),
             ..Default::default()
         };
         input.bip32_derivation.insert(pk, (fp, path));
