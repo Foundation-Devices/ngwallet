@@ -758,6 +758,11 @@ impl<P: WalletPersister> NgAccount<P> {
                 if m.multisig != config.multisig {
                     return Err(anyhow!("RemoteUpdate metadata multisig change rejected"));
                 }
+                if m.wallet_policy != config.wallet_policy {
+                    return Err(anyhow!(
+                        "RemoteUpdate metadata wallet-policy change rejected"
+                    ));
+                }
             }
         }
 
@@ -770,7 +775,8 @@ impl<P: WalletPersister> NgAccount<P> {
             if let Some(m) = update.metadata {
                 // Only copy cosmetic / sync-state fields; security-critical
                 // fields (id, network, descriptors, preferred_address_type,
-                // index, multisig) are validated above and never overwritten here.
+                // index, multisig, wallet policy) are validated above and
+                // never overwritten here.
                 config.name = m.name;
                 config.color = m.color;
                 config.date_synced = m.date_synced;
