@@ -1104,6 +1104,7 @@ mod tests {
             network: Network::Bitcoin,
             id: "test_id".to_string(),
             multisig: None,
+            wallet_policy: None,
             archived: false,
             last_remote_sequence: 0,
         };

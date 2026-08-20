@@ -11,6 +11,7 @@ use std::sync::{Arc, LazyLock};
 use crate::account::{Descriptor, NgAccount, RemoteUpdate};
 use crate::bip39::{Descriptors, MasterKey};
 use crate::db::RedbMetaStorage;
+use crate::policy::WalletPolicy;
 use crate::store::MetaStorage;
 use crate::utils::get_address_type;
 use bdk_wallet::KeychainKind;
@@ -1090,6 +1091,11 @@ pub struct NgAccountConfig {
     pub network: Network,
     pub id: String,
     pub multisig: Option<MultiSigDetails>,
+    /// Registered Miniscript wallet policy. Absent for legacy singlesig and
+    /// multisig accounts. Policy accounts are device-local and must not be
+    /// published through remote account updates.
+    #[serde(default)]
+    pub wallet_policy: Option<WalletPolicy>,
     #[serde(default)]
     pub archived: bool,
     /// Monotonic counter incremented by each accepted `RemoteUpdate`. Used to
@@ -1114,6 +1120,10 @@ impl fmt::Debug for NgAccountConfig {
             .field("network", &self.network)
             .field("id", &self.id)
             .field("multisig", &self.multisig)
+            .field(
+                "wallet_policy",
+                &self.wallet_policy.as_ref().map(|_| "<registered policy>"),
+            )
             .field("archived", &self.archived)
             .field("last_remote_sequence", &self.last_remote_sequence)
             .finish()
@@ -1397,6 +1407,7 @@ impl<P: WalletPersister> Default for NgAccountBuilder<P> {
             date_synced: None,
             seed_has_passphrase: None,
             multisig: None,
+            wallet_policy: None,
             archived: None,
         }
     }
@@ -1416,6 +1427,7 @@ pub struct NgAccountBuilder<P: WalletPersister> {
     date_synced: Option<String>,
     seed_has_passphrase: Option<bool>,
     multisig: Option<MultiSigDetails>,
+    wallet_policy: Option<WalletPolicy>,
     archived: Option<bool>,
 }
 
@@ -1485,6 +1497,11 @@ impl<P: WalletPersister> NgAccountBuilder<P> {
         self
     }
 
+    pub fn wallet_policy(mut self, wallet_policy: WalletPolicy) -> Self {
+        self.wallet_policy = Some(wallet_policy);
+        self
+    }
+
     pub fn build_in_memory(self) -> anyhow::Result<NgAccount<P>> {
         let meta_storage = Arc::new(crate::store::InMemoryMetaStorage::default());
         self.build(meta_storage)
@@ -1537,6 +1554,7 @@ impl<P: WalletPersister> NgAccountBuilder<P> {
             date_synced: self.date_synced,
             seed_has_passphrase: self.seed_has_passphrase.unwrap_or(false),
             multisig: self.multisig,
+            wallet_policy: self.wallet_policy,
             archived: self.archived.unwrap_or_default(),
             last_remote_sequence: 0,
         };
