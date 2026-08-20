@@ -94,6 +94,10 @@ pub struct PolicySigner {
     pub fingerprint: String,
     pub derivation_path: String,
     pub xpub: String,
+    /// Device-local display alias. It is not part of the descriptor or policy
+    /// registration identity.
+    #[serde(default)]
+    pub name: String,
     pub owned_by_device: bool,
 }
 
@@ -449,6 +453,7 @@ fn collect_signers<C: Signing>(
             fingerprint: fingerprint.to_string(),
             derivation_path: format!("m/{path}"),
             xpub: xpub.to_string(),
+            name: String::new(),
             owned_by_device: owned,
         });
         true
@@ -691,5 +696,28 @@ mod tests {
             WalletPolicy::from_registration(&json, Network::Testnet, &master, &secp).unwrap();
         assert_eq!(imported.descriptor, policy.descriptor);
         assert_eq!(imported.policy_id, registration.policy_id);
+    }
+
+    #[test]
+    fn signer_aliases_are_backward_compatible_and_do_not_change_policy_identity() {
+        let (descriptor, master, secp) = fixture(true, 0);
+        let mut policy =
+            WalletPolicy::from_descriptor("Liana", Network::Testnet, &descriptor, &master, &secp)
+                .unwrap();
+        let account_hash = policy.account_hash();
+
+        policy.signers[0].name = "Primary signer".into();
+        assert_eq!(policy.account_hash(), account_hash);
+        let round_trip: WalletPolicy =
+            serde_json::from_slice(&serde_json::to_vec(&policy).unwrap()).unwrap();
+        assert_eq!(round_trip.signers[0].name, "Primary signer");
+
+        let mut legacy = serde_json::to_value(&policy).unwrap();
+        for signer in legacy["signers"].as_array_mut().unwrap() {
+            signer.as_object_mut().unwrap().remove("name");
+        }
+        let legacy: WalletPolicy = serde_json::from_value(legacy).unwrap();
+        assert!(legacy.signers.iter().all(|signer| signer.name.is_empty()));
+        assert_eq!(legacy.account_hash(), account_hash);
     }
 }
