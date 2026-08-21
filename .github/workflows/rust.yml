@@ -22,3 +22,7 @@ jobs:
 
     - name: Run tests
       run: cargo test --verbose --all-targets --all-features
+
+  dependencies:
+    uses: ./.github/workflows/dependencies.yml
+    secrets: inherit

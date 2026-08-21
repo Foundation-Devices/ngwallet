@@ -97,10 +97,6 @@ fn normalize_descriptor_slip132(descriptor: &str) -> anyhow::Result<String> {
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq)]
-#[cfg_attr(
-    feature = "rkyv",
-    derive(rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)
-)]
 pub struct MultiSigSigner {
     derivation: String,
     fingerprint: [u8; 4],
@@ -177,10 +173,6 @@ impl MultiSigSigner {
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
-#[cfg_attr(
-    feature = "rkyv",
-    derive(rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)
-)]
 pub struct MultiSigDetails {
     pub policy_threshold: usize,  // aka M
     pub policy_total_keys: usize, // aka N
@@ -935,10 +927,6 @@ fn ur_fixed_child_number(
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
-#[cfg_attr(
-    feature = "rkyv",
-    derive(rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)
-)]
 #[non_exhaustive]
 pub enum AddressType {
     /// Pay to pubkey hash.
@@ -1040,10 +1028,6 @@ impl AddressType {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
-#[cfg_attr(
-    feature = "rkyv",
-    derive(rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)
-)]
 pub enum NetworkKind {
     Main,
     Test,
