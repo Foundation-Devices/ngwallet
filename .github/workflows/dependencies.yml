@@ -18,5 +18,8 @@ jobs:
       - name: Setup Git Credentials via gh CLI
         run: |
           gh auth setup-git
+      - name: Select Rust toolchain
+        run: |
+          rustup default stable
       - run: |
           cargo audit
