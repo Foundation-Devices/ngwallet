@@ -1,0 +1,25 @@
+# SPDX-FileCopyrightText: 2023 Foundation Devices, Inc. <hello@foundation.xyz>
+# SPDX-License-Identifier: GPL-3.0-or-later
+
+name: Dependencies
+on:
+  workflow_call:
+env:
+  GH_TOKEN: ${{ secrets.GH_TOKEN }}
+jobs:
+  pass-security-audit:
+    name: Pass security audit?
+    runs-on: ubuntu-latest
+    container:
+      image: foundationdevices/keyos-build:latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v3
+      - name: Setup Git Credentials via gh CLI
+        run: |
+          gh auth setup-git
+      - name: Select Rust toolchain
+        run: |
+          rustup default stable
+      - run: |
+          cargo audit
