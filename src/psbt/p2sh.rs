@@ -1,7 +1,7 @@
 use crate::bip32::NgAccountPath;
 use crate::config::MultiSigDetails;
 use crate::psbt::{
-    Error, OutputKind, PsbtOutput, derive_account_xpub, derive_full_descriptor_pubkey,
+    Error, OutputKind, PsbtOutput, derive_account_xpub, derive_full_descriptor_pubkey, multisig,
     registered_multisig_output_kind, sort_keys,
 };
 use bdk_wallet::bitcoin::bip32::{ChildNumber, DerivationPath, KeySource, Xpriv, Xpub};
@@ -76,10 +76,53 @@ pub fn validate_output<C: Signing + Verification>(
             amount: txout.value,
             kind,
         })
+    } else if redeem_script.is_multisig() {
+        validate_legacy_multisig_output(
+            secp,
+            output,
+            txout,
+            redeem_script,
+            network,
+            index,
+            registered_multisig,
+        )
     } else {
-        // TODO: Legacy P2SH (e.g. BIP45).
-        Err(Error::Unimplemented)
+        Err(Error::InvalidRedeemScript { index })
     }
+}
+
+fn validate_legacy_multisig_output<C: Signing + Verification>(
+    secp: &Secp256k1<C>,
+    output: &psbt::Output,
+    txout: &TxOut,
+    redeem_script: &bdk_wallet::bitcoin::Script,
+    network: Network,
+    index: usize,
+    registered_multisig: Option<&MultiSigDetails>,
+) -> Result<PsbtOutput, Error> {
+    multisig::disassemble_sorted(redeem_script)
+        .map_err(|_| Error::InvalidMultisigScript { index })?;
+    let address =
+        Address::p2sh(redeem_script, network).map_err(|_| Error::InvalidRedeemScript { index })?;
+    if !address.matches_script_pubkey(&txout.script_pubkey) {
+        return Err(Error::FraudulentOutput { index });
+    }
+
+    let kind = registered_multisig
+        .and_then(|multisig| {
+            registered_multisig_output_kind(
+                secp,
+                multisig,
+                &output.bip32_derivation,
+                &txout.script_pubkey,
+                address.clone(),
+            )
+        })
+        .unwrap_or(OutputKind::External(address));
+    Ok(PsbtOutput {
+        amount: txout.value,
+        kind,
+    })
 }
 
 fn validate_p2wpkh_nested_in_p2sh_output(
@@ -157,44 +200,7 @@ pub fn wsh_multisig_descriptor(
     global_xpubs: &BTreeMap<Xpub, KeySource>,
     bip32_derivations: &BTreeMap<PublicKey, KeySource>,
 ) -> Result<[ExtendedDescriptor; 2], Error> {
-    // Find the account Xpubs in the global Xpub map of the PSBT.
-    let xpubs = bip32_derivations
-        .iter()
-        .map(|(_, (subpath_fingerprint, subpath))| {
-            global_xpubs
-                .iter()
-                .find(|(_, (global_fingerprint, global_path))| {
-                    subpath_fingerprint == global_fingerprint
-                        && subpath.as_ref().starts_with(global_path.as_ref())
-                })
-                .ok_or_else(|| Error::MissingGlobalXpub(subpath.clone()))
-        });
-
-    let mut external_keys = Vec::new();
-    let mut internal_keys = Vec::new();
-    for maybe_xpub in xpubs {
-        let (xpub, source) = maybe_xpub?;
-
-        let external_key = DescriptorPublicKey::XPub(DescriptorXKey {
-            origin: Some(source.clone()),
-            xkey: *xpub,
-            derivation_path: DerivationPath::from(vec![ChildNumber::Normal { index: 0 }]),
-            wildcard: Wildcard::Unhardened,
-        });
-
-        let internal_key = DescriptorPublicKey::XPub(DescriptorXKey {
-            origin: Some(source.clone()),
-            xkey: *xpub,
-            derivation_path: DerivationPath::from(vec![ChildNumber::Normal { index: 1 }]),
-            wildcard: Wildcard::Unhardened,
-        });
-
-        external_keys.push(external_key);
-        internal_keys.push(internal_key);
-    }
-
-    sort_keys(&mut external_keys);
-    sort_keys(&mut internal_keys);
+    let (external_keys, internal_keys) = multisig_descriptor_keys(global_xpubs, bip32_derivations)?;
 
     let external_descriptor =
         ExtendedDescriptor::new_sh_wsh_sortedmulti(usize::from(required_signers), external_keys)
@@ -206,9 +212,95 @@ pub fn wsh_multisig_descriptor(
     Ok([external_descriptor, internal_descriptor])
 }
 
+/// Returns the external and internal descriptors for a legacy P2SH
+/// `sortedmulti` account.
+pub fn legacy_multisig_descriptor(
+    required_signers: u8,
+    global_xpubs: &BTreeMap<Xpub, KeySource>,
+    bip32_derivations: &BTreeMap<PublicKey, KeySource>,
+) -> Result<[ExtendedDescriptor; 2], Error> {
+    let (external_keys, internal_keys) = multisig_descriptor_keys(global_xpubs, bip32_derivations)?;
+
+    let external_descriptor =
+        ExtendedDescriptor::new_sh_sortedmulti(usize::from(required_signers), external_keys)
+            .map_err(|_| Error::InvalidMultisigDescriptor)?;
+    let internal_descriptor =
+        ExtendedDescriptor::new_sh_sortedmulti(usize::from(required_signers), internal_keys)
+            .map_err(|_| Error::InvalidMultisigDescriptor)?;
+
+    Ok([external_descriptor, internal_descriptor])
+}
+
+fn multisig_descriptor_keys(
+    global_xpubs: &BTreeMap<Xpub, KeySource>,
+    bip32_derivations: &BTreeMap<PublicKey, KeySource>,
+) -> Result<(Vec<DescriptorPublicKey>, Vec<DescriptorPublicKey>), Error> {
+    // Find the account Xpubs in the global Xpub map of the PSBT.
+    let xpubs = bip32_derivations
+        .iter()
+        .map(|(_, (subpath_fingerprint, subpath))| {
+            global_xpubs
+                .iter()
+                .filter(|(_, (global_fingerprint, global_path))| {
+                    subpath_fingerprint == global_fingerprint
+                        && subpath.as_ref().starts_with(global_path.as_ref())
+                })
+                .max_by_key(|(_, (_, global_path))| global_path.as_ref().len())
+                .map(|(xpub, source)| (xpub, source, subpath))
+                .ok_or_else(|| Error::MissingGlobalXpub(subpath.clone()))
+        });
+
+    let mut external_keys = Vec::new();
+    let mut internal_keys = Vec::new();
+    for maybe_xpub in xpubs {
+        let (xpub, source, subpath) = maybe_xpub?;
+        let relative_path = subpath
+            .as_ref()
+            .strip_prefix(source.1.as_ref())
+            .ok_or(Error::InvalidMultisigDescriptor)?;
+        if relative_path.len() < 2
+            || !matches!(
+                relative_path[relative_path.len() - 2],
+                ChildNumber::Normal { index: 0 | 1 }
+            )
+            || !matches!(
+                relative_path[relative_path.len() - 1],
+                ChildNumber::Normal { .. }
+            )
+        {
+            return Err(Error::InvalidMultisigDescriptor);
+        }
+        let account_suffix = &relative_path[..relative_path.len() - 2];
+        let descriptor_key = |branch| {
+            DescriptorPublicKey::XPub(DescriptorXKey {
+                origin: Some(source.clone()),
+                xkey: *xpub,
+                derivation_path: DerivationPath::from(
+                    account_suffix
+                        .iter()
+                        .copied()
+                        .chain([ChildNumber::Normal { index: branch }])
+                        .collect::<Vec<_>>(),
+                ),
+                wildcard: Wildcard::Unhardened,
+            })
+        };
+
+        external_keys.push(descriptor_key(0));
+        internal_keys.push(descriptor_key(1));
+    }
+
+    sort_keys(&mut external_keys);
+    sort_keys(&mut internal_keys);
+
+    Ok((external_keys, internal_keys))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::config::{AddressType, MultiSigSigner};
+    use bdk_wallet::KeychainKind;
     use bdk_wallet::bitcoin::hashes::{Hash, sha256};
     use bdk_wallet::bitcoin::opcodes::all::{OP_EQUAL, OP_HASH160, OP_PUSHBYTES_0, OP_RETURN};
     use bdk_wallet::bitcoin::{Amount, Script, ScriptBuf, WScriptHash};
@@ -244,6 +336,105 @@ mod tests {
         TxOut {
             value: Amount::from_sat(1000),
             script_pubkey: p2sh_script_pubkey(),
+        }
+    }
+
+    fn registered_legacy_output(
+        seed_offset: u8,
+        keychain: KeychainKind,
+    ) -> (psbt::Output, TxOut, MultiSigDetails) {
+        let secp = Secp256k1::new();
+        let address_index = 7;
+        let mut signers = Vec::new();
+        let mut derivations = BTreeMap::new();
+
+        for cosigner in 0..2 {
+            let master =
+                Xpriv::new_master(Network::Bitcoin, &[seed_offset + cosigner as u8; 32]).unwrap();
+            let fingerprint = master.fingerprint(&secp);
+            let account_path = DerivationPath::from(vec![
+                ChildNumber::Hardened { index: 45 },
+                ChildNumber::Normal { index: cosigner },
+            ]);
+            let account_xpriv = master.derive_priv(&secp, &account_path).unwrap();
+            signers.push(MultiSigSigner::new(
+                &account_path,
+                &fingerprint,
+                &Xpub::from_priv(&secp, &account_xpriv),
+            ));
+
+            let mut address_path = account_path.as_ref().to_vec();
+            address_path.extend([
+                ChildNumber::Normal {
+                    index: keychain as u32,
+                },
+                ChildNumber::Normal {
+                    index: address_index,
+                },
+            ]);
+            let address_path = DerivationPath::from(address_path);
+            let public_key =
+                Xpub::from_priv(&secp, &master.derive_priv(&secp, &address_path).unwrap())
+                    .public_key;
+            derivations.insert(public_key, (fingerprint, address_path));
+        }
+
+        let multisig = MultiSigDetails::new(2, 2, AddressType::P2sh, None, signers).unwrap();
+        let descriptor = multisig
+            .to_descriptor(keychain, &secp, None)
+            .unwrap()
+            .0
+            .derived_descriptor(&secp, address_index)
+            .unwrap();
+        let redeem_script = descriptor.explicit_script().unwrap();
+        let txout = TxOut {
+            value: Amount::from_sat(1000),
+            script_pubkey: descriptor.script_pubkey(),
+        };
+        let mut output = output_with_scripts(redeem_script, None);
+        output.bip32_derivation = derivations;
+
+        (output, txout, multisig)
+    }
+
+    #[test]
+    fn legacy_descriptor_preserves_bip45_cosigner_paths() {
+        let secp = Secp256k1::new();
+        let purpose_path = DerivationPath::from(vec![ChildNumber::Hardened { index: 45 }]);
+        let mut global_xpubs = BTreeMap::new();
+        let mut derivations = BTreeMap::new();
+
+        for (seed, cosigner_index) in [(1u8, 2u32), (2, 7)] {
+            let master = Xpriv::new_master(Network::Bitcoin, &[seed; 32]).unwrap();
+            let fingerprint = master.fingerprint(&secp);
+            let purpose_xpriv = master.derive_priv(&secp, &purpose_path).unwrap();
+            global_xpubs.insert(
+                Xpub::from_priv(&secp, &purpose_xpriv),
+                (fingerprint, purpose_path.clone()),
+            );
+
+            let address_path = DerivationPath::from(vec![
+                ChildNumber::Hardened { index: 45 },
+                ChildNumber::Normal {
+                    index: cosigner_index,
+                },
+                ChildNumber::Normal { index: 0 },
+                ChildNumber::Normal { index: 3 },
+            ]);
+            let public_key =
+                Xpub::from_priv(&secp, &master.derive_priv(&secp, &address_path).unwrap())
+                    .public_key;
+            derivations.insert(public_key, (fingerprint, address_path));
+        }
+
+        let [external, internal] =
+            legacy_multisig_descriptor(2, &global_xpubs, &derivations).unwrap();
+        let external = external.to_string();
+        let internal = internal.to_string();
+
+        for cosigner_index in [2, 7] {
+            assert!(external.contains(&format!("/{cosigner_index}/0/*")));
+            assert!(internal.contains(&format!("/{cosigner_index}/1/*")));
         }
     }
 
@@ -346,10 +537,41 @@ mod tests {
         ));
     }
 
-    /// An unsupported (legacy) P2SH redeem_script must return Unimplemented,
+    #[test]
+    fn registered_legacy_p2sh_change_is_recognized() {
+        let (output, txout, multisig) = registered_legacy_output(1, KeychainKind::Internal);
+        let result = validate_output(
+            &Secp256k1::new(),
+            &output,
+            &txout,
+            Network::Bitcoin,
+            0,
+            Some(&multisig),
+        )
+        .unwrap();
+        assert!(matches!(result.kind, OutputKind::Change(_)));
+    }
+
+    #[test]
+    fn unregistered_legacy_p2sh_output_is_external() {
+        let (output, txout, _) = registered_legacy_output(1, KeychainKind::Internal);
+        let (_, _, different_multisig) = registered_legacy_output(3, KeychainKind::Internal);
+        let result = validate_output(
+            &Secp256k1::new(),
+            &output,
+            &txout,
+            Network::Bitcoin,
+            0,
+            Some(&different_multisig),
+        )
+        .unwrap();
+        assert!(matches!(result.kind, OutputKind::External(_)));
+    }
+
+    /// An unsupported P2SH redeem_script must return a structured error,
     /// not panic.
     #[test]
-    fn legacy_p2sh_returns_unimplemented() {
+    fn non_multisig_p2sh_returns_invalid_redeem_script() {
         // Use a tiny non-segwit redeem script.
         let redeem_script = Script::builder()
             .push_opcode(OP_PUSHBYTES_0)
@@ -365,6 +587,9 @@ mod tests {
             0,
             None,
         );
-        assert!(matches!(result, Err(Error::Unimplemented)));
+        assert!(matches!(
+            result,
+            Err(Error::InvalidRedeemScript { index: 0 })
+        ));
     }
 }
