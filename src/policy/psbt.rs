@@ -29,6 +29,46 @@ pub struct MatchResult {
     pub reasons: Vec<String>,
 }
 
+/// Return whether every input is structurally owned by a registered policy.
+///
+/// This deliberately ignores transaction-level authorization constraints such
+/// as sighash mode, timelocks, and outputs. Callers may use it only to decide
+/// whether an invalid PSBT refers to an existing policy; [`match_psbt`] remains
+/// the signing authorization boundary.
+pub fn matches_policy_inputs(
+    psbt: &Psbt,
+    policy: &WalletPolicy,
+    passport_fp: Fingerprint,
+) -> Result<()> {
+    let descriptor = policy
+        .descriptor
+        .parse::<Descriptor<DescriptorPublicKey>>()
+        .map_err(|error| Error::Match(format!("registered descriptor: {error}")))?;
+    let singles = descriptor
+        .into_single_descriptors()
+        .map_err(|error| Error::Match(format!("multipath split: {error}")))?;
+    if psbt.inputs.is_empty() || psbt.inputs.len() != psbt.unsigned_tx.input.len() {
+        return Err(Error::Match(
+            "PSBT input maps do not match the unsigned transaction".into(),
+        ));
+    }
+    for (index, input) in psbt.inputs.iter().enumerate() {
+        let utxo = input
+            .witness_utxo
+            .as_ref()
+            .ok_or_else(|| Error::Match(format!("input {index}: missing witness_utxo")))?;
+        if !utxo.script_pubkey.is_p2wsh() || input.redeem_script.is_some() {
+            return Err(Error::Match(format!(
+                "input {index}: only native P2WSH policy inputs are supported"
+            )));
+        }
+        match_input(input, &singles, passport_fp)
+            .map_err(|reason| Error::Match(format!("input {index}: {reason}")))?;
+        validate_non_witness_utxo(index, psbt, input, utxo)?;
+    }
+    Ok(())
+}
+
 pub fn match_psbt(
     psbt: &Psbt,
     policy: &WalletPolicy,
@@ -531,6 +571,16 @@ mod tests {
         let (policy, master, secp) = fixture(true, false);
         let mut psbt = psbt_for(&policy, Sequence::MAX, absolute::LockTime::ZERO);
         psbt.inputs[0].witness_script = Some(ScriptBuf::new());
+        assert!(match_psbt(&psbt, &policy, master.fingerprint(&secp)).is_err());
+    }
+
+    #[test]
+    fn identifies_registered_policy_before_rejecting_unsupported_sighash() {
+        let (policy, master, secp) = fixture(true, false);
+        let mut psbt = psbt_for(&policy, Sequence::MAX, absolute::LockTime::ZERO);
+        psbt.inputs[0].sighash_type = Some(EcdsaSighashType::None.into());
+
+        assert!(matches_policy_inputs(&psbt, &policy, master.fingerprint(&secp)).is_ok());
         assert!(match_psbt(&psbt, &policy, master.fingerprint(&secp)).is_err());
     }
 
