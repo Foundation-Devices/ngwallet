@@ -11,6 +11,7 @@ use std::sync::{Arc, LazyLock};
 use crate::account::{Descriptor, NgAccount, RemoteUpdate};
 use crate::bip39::{Descriptors, MasterKey};
 use crate::db::RedbMetaStorage;
+use crate::policy::WalletPolicy;
 use crate::store::MetaStorage;
 use crate::utils::get_address_type;
 use bdk_wallet::KeychainKind;
@@ -1076,6 +1077,19 @@ impl fmt::Debug for NgDescriptor {
     }
 }
 
+/// Semantic class of a Bitcoin account.
+///
+/// This is deliberately derived from the durable account metadata instead of
+/// serialized as a separate discriminator. Existing account files and Magic
+/// Backups therefore restore without migration, while a restored wallet policy
+/// cannot be mislabeled as multisig merely because it uses a P2WSH descriptor.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AccountKind {
+    SingleSig,
+    MultiSig,
+    WalletPolicy,
+}
+
 #[derive(Serialize, Deserialize, Clone)]
 pub struct NgAccountConfig {
     pub name: String,
@@ -1090,6 +1104,12 @@ pub struct NgAccountConfig {
     pub network: Network,
     pub id: String,
     pub multisig: Option<MultiSigDetails>,
+    /// Registered Miniscript wallet policy. Absent for legacy singlesig and
+    /// multisig accounts. Policy accounts are device-local and must not be
+    /// published through remote account updates. The field remains part of the
+    /// stored config and encrypted Magic Backup payload.
+    #[serde(default)]
+    pub wallet_policy: Option<WalletPolicy>,
     #[serde(default)]
     pub archived: bool,
     /// Monotonic counter incremented by each accepted `RemoteUpdate`. Used to
@@ -1114,6 +1134,10 @@ impl fmt::Debug for NgAccountConfig {
             .field("network", &self.network)
             .field("id", &self.id)
             .field("multisig", &self.multisig)
+            .field(
+                "wallet_policy",
+                &self.wallet_policy.as_ref().map(|_| "<registered policy>"),
+            )
             .field("archived", &self.archived)
             .field("last_remote_sequence", &self.last_remote_sequence)
             .finish()
@@ -1163,6 +1187,18 @@ struct LegacyRemoteUpdate {
 }
 
 impl NgAccountConfig {
+    /// Return the account's semantic class from its authoritative metadata.
+    pub fn account_kind(&self) -> anyhow::Result<AccountKind> {
+        match (self.multisig.is_some(), self.wallet_policy.is_some()) {
+            (false, false) => Ok(AccountKind::SingleSig),
+            (true, false) => Ok(AccountKind::MultiSig),
+            (false, true) => Ok(AccountKind::WalletPolicy),
+            (true, true) => anyhow::bail!(
+                "account config cannot contain both multisig and wallet-policy metadata"
+            ),
+        }
+    }
+
     /// SHA-256 of all descriptor strings, sorted by address type.
     /// Used as a binding field in `RemoteUpdate` to ensure updates are applied
     /// only to the account they were created for.
@@ -1397,6 +1433,7 @@ impl<P: WalletPersister> Default for NgAccountBuilder<P> {
             date_synced: None,
             seed_has_passphrase: None,
             multisig: None,
+            wallet_policy: None,
             archived: None,
         }
     }
@@ -1416,6 +1453,7 @@ pub struct NgAccountBuilder<P: WalletPersister> {
     date_synced: Option<String>,
     seed_has_passphrase: Option<bool>,
     multisig: Option<MultiSigDetails>,
+    wallet_policy: Option<WalletPolicy>,
     archived: Option<bool>,
 }
 
@@ -1485,6 +1523,11 @@ impl<P: WalletPersister> NgAccountBuilder<P> {
         self
     }
 
+    pub fn wallet_policy(mut self, wallet_policy: WalletPolicy) -> Self {
+        self.wallet_policy = Some(wallet_policy);
+        self
+    }
+
     pub fn build_in_memory(self) -> anyhow::Result<NgAccount<P>> {
         let meta_storage = Arc::new(crate::store::InMemoryMetaStorage::default());
         self.build(meta_storage)
@@ -1537,6 +1580,7 @@ impl<P: WalletPersister> NgAccountBuilder<P> {
             date_synced: self.date_synced,
             seed_has_passphrase: self.seed_has_passphrase.unwrap_or(false),
             multisig: self.multisig,
+            wallet_policy: self.wallet_policy,
             archived: self.archived.unwrap_or_default(),
             last_remote_sequence: 0,
         };
@@ -1548,6 +1592,130 @@ impl<P: WalletPersister> NgAccountBuilder<P> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn account_config(
+        multisig: Option<MultiSigDetails>,
+        wallet_policy: Option<WalletPolicy>,
+    ) -> NgAccountConfig {
+        NgAccountConfig {
+            name: "Test account".into(),
+            color: "#000000".into(),
+            seed_has_passphrase: false,
+            device_serial: Some("prime".into()),
+            date_added: None,
+            preferred_address_type: AddressType::P2wsh,
+            index: 0,
+            descriptors: vec![],
+            date_synced: None,
+            network: Network::Testnet4,
+            id: "test-account".into(),
+            multisig,
+            wallet_policy,
+            archived: false,
+            last_remote_sequence: 0,
+        }
+    }
+
+    fn wallet_policy() -> WalletPolicy {
+        use crate::policy::{POLICY_SCHEMA_VERSION, PolicySigner, SpendPath, SpendPathKind};
+
+        WalletPolicy {
+            schema_version: POLICY_SCHEMA_VERSION,
+            name: "Inheritance".into(),
+            network: Network::Testnet4.to_string(),
+            descriptor: "wsh(pk(key))#checksum".into(),
+            descriptor_checksum: "checksum".into(),
+            template: "wsh(pk(@0/**))".into(),
+            keys: vec!["[12345678/48'/1'/0'/2']tpub/**".into()],
+            policy_id: "policy-id".into(),
+            signers: vec![PolicySigner {
+                fingerprint: "12345678".into(),
+                derivation_path: "m/48'/1'/0'/2'".into(),
+                xpub: "tpub".into(),
+                name: "Primary key".into(),
+                owned_by_device: true,
+            }],
+            paths: vec![SpendPath {
+                kind: SpendPathKind::Primary,
+                threshold: 1,
+                total_keys: 1,
+                relative_timelock: None,
+                absolute_timelock: None,
+                signer_fingerprints: vec!["12345678".into()],
+            }],
+        }
+    }
+
+    #[test]
+    fn account_kind_is_derived_from_backward_compatible_metadata() {
+        let single = account_config(None, None);
+        assert_eq!(single.account_kind().unwrap(), AccountKind::SingleSig);
+
+        // Firmware predating wallet policies has no `wallet_policy` key at
+        // all. Its backup must continue to deserialize as singlesig.
+        let mut legacy_single = serde_json::to_value(&single).unwrap();
+        legacy_single
+            .as_object_mut()
+            .unwrap()
+            .remove("wallet_policy");
+        let legacy_single: NgAccountConfig = serde_json::from_value(legacy_single).unwrap();
+        assert_eq!(
+            legacy_single.account_kind().unwrap(),
+            AccountKind::SingleSig
+        );
+
+        let multisig = MultiSigDetails {
+            policy_threshold: 1,
+            policy_total_keys: 1,
+            format: AddressType::P2wsh,
+            network_kind: NetworkKind::Test,
+            signers: vec![],
+        };
+        let multi = account_config(Some(multisig.clone()), None);
+        assert_eq!(multi.account_kind().unwrap(), AccountKind::MultiSig);
+
+        let mut legacy_multi = serde_json::to_value(&multi).unwrap();
+        legacy_multi
+            .as_object_mut()
+            .unwrap()
+            .remove("wallet_policy");
+        let legacy_multi: NgAccountConfig = serde_json::from_value(legacy_multi).unwrap();
+        assert_eq!(legacy_multi.account_kind().unwrap(), AccountKind::MultiSig);
+
+        let policy = account_config(None, Some(wallet_policy()));
+        assert_eq!(policy.account_kind().unwrap(), AccountKind::WalletPolicy);
+
+        let conflicting = account_config(Some(multisig), Some(wallet_policy()));
+        assert!(conflicting.account_kind().is_err());
+    }
+
+    #[test]
+    fn wallet_policy_and_aliases_survive_magic_backup_json_roundtrip() {
+        let config = account_config(None, Some(wallet_policy()));
+        let backup = NgAccountBackup {
+            ng_account_config: config,
+            xfp: "12345678".into(),
+            public_descriptors: vec![],
+            last_used_index: vec![],
+            notes: HashMap::new(),
+            tags: HashMap::new(),
+            do_not_spend: HashMap::new(),
+        };
+
+        let json = backup.serialize();
+        assert!(json.contains("\"wallet_policy\""));
+        assert!(!json.contains("account_kind"));
+
+        let restored = NgAccountBackup::deserialize(&json).unwrap();
+        assert_eq!(
+            restored.ng_account_config.account_kind().unwrap(),
+            AccountKind::WalletPolicy
+        );
+        let restored_policy = restored.ng_account_config.wallet_policy.unwrap();
+        assert_eq!(restored_policy.name, "Inheritance");
+        assert_eq!(restored_policy.signers[0].name, "Primary key");
+        assert_eq!(restored_policy.policy_id, "policy-id");
+    }
 
     #[test]
     fn multisig_from_config_1() {
