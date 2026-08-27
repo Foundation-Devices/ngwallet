@@ -449,7 +449,11 @@ mod tests {
     };
 
     fn key(secp: &Secp256k1<All>, master: &Xpriv) -> String {
-        let path = DerivationPath::from_str("48'/1'/1'/2'").unwrap();
+        key_at(secp, master, "48'/1'/1'/2'")
+    }
+
+    fn key_at(secp: &Secp256k1<All>, master: &Xpriv, path: &str) -> String {
+        let path = DerivationPath::from_str(path).unwrap();
         let account = master.derive_priv(secp, &path).unwrap();
         format!(
             "[{}/{}]{}/<0;1>/*",
@@ -533,6 +537,42 @@ mod tests {
         assert_eq!(matched.expected_signatures, 1);
         crate::policy::signing::sign(&mut psbt, &master, &secp, 1).unwrap();
         assert_eq!(psbt.inputs[0].partial_sigs.len(), 1);
+    }
+
+    #[test]
+    fn signs_distinct_device_keys_used_by_decaying_paths() {
+        let secp = Secp256k1::new();
+        let device = Xpriv::new_master(Network::Testnet, &[31; 32]).unwrap();
+        let other_a = Xpriv::new_master(Network::Testnet, &[32; 32]).unwrap();
+        let other_b = Xpriv::new_master(Network::Testnet, &[33; 32]).unwrap();
+        let raw = format!(
+            "wsh(or_d(multi(2,{},{},{}),and_v(v:multi(1,{},{}),after(500))))",
+            key_at(&secp, &device, "48'/1'/0'/2'"),
+            key_at(&secp, &other_a, "48'/1'/0'/2'"),
+            key_at(&secp, &other_b, "48'/1'/0'/2'"),
+            key_at(&secp, &device, "48'/1'/1'/2'"),
+            key_at(&secp, &other_a, "48'/1'/1'/2'"),
+        );
+        let descriptor = raw
+            .parse::<Descriptor<DescriptorPublicKey>>()
+            .unwrap()
+            .to_string();
+        let policy = WalletPolicy::from_descriptor(
+            "Nunchuk decaying",
+            Network::Testnet,
+            &descriptor,
+            &device,
+            &secp,
+        )
+        .unwrap();
+        let mut psbt = psbt_for(&policy, Sequence::MAX, absolute::LockTime::ZERO);
+
+        let matched = match_psbt(&psbt, &policy, device.fingerprint(&secp)).unwrap();
+        assert_eq!(matched.active_path, Some(SpendPathKind::Primary));
+        assert_eq!(matched.expected_signatures, 2);
+        crate::policy::signing::sign(&mut psbt, &device, &secp, matched.expected_signatures)
+            .unwrap();
+        assert_eq!(psbt.inputs[0].partial_sigs.len(), 2);
     }
 
     #[test]

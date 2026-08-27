@@ -133,7 +133,8 @@ fn default_schema_version() -> u32 {
 
 impl WalletPolicy {
     /// Register a checksummed descriptor after validating its supported
-    /// Miniscript shape and proving ownership of exactly one extended key.
+    /// Miniscript shape and proving ownership of every key attributed to this
+    /// device fingerprint.
     pub fn from_descriptor<C: Signing>(
         name: impl Into<String>,
         network: Network,
@@ -151,11 +152,6 @@ impl WalletPolicy {
             .count();
         if owned == 0 {
             return Err(Error::NoDeviceKey);
-        }
-        if owned != 1 {
-            return Err(Error::Unsupported(
-                "a policy must contain exactly one extended key owned by this Passport".into(),
-            ));
         }
         let paths = analyze_paths(&parsed)?;
         let fingerprint_text = fingerprint.to_string();
@@ -195,7 +191,7 @@ impl WalletPolicy {
         };
         // The native Bitcoin app deliberately binds coordinator exports and
         // imported policies to the selected BIP48 account number.
-        policy.device_account_index()?;
+        policy.device_account_indices()?;
         Ok(policy)
     }
 
@@ -267,31 +263,85 @@ impl WalletPolicy {
         sha256::Hash::from_engine(engine).to_byte_array()
     }
 
-    /// Account index from the device-owned BIP48 key origin.
-    pub fn device_account_index(&self) -> Result<u32> {
+    /// Account indices from all device-owned BIP48 key origins.
+    ///
+    /// Coordinators such as Nunchuk may deliberately use a different Passport
+    /// account key in each spending path. Every device-owned key remains bound
+    /// to the standard BIP48 P2WSH origin.
+    pub fn device_account_indices(&self) -> Result<Vec<u32>> {
         let owned = self
             .signers
             .iter()
-            .find(|signer| signer.owned_by_device)
-            .ok_or(Error::NoDeviceKey)?;
-        let path = DerivationPath::from_str(owned.derivation_path.trim_start_matches("m/"))
-            .map_err(|_| Error::Parse("invalid device signer derivation path".into()))?;
+            .filter(|signer| signer.owned_by_device)
+            .collect::<Vec<_>>();
+        if owned.is_empty() {
+            return Err(Error::NoDeviceKey);
+        }
         let expected_coin = if self.network == Network::Bitcoin.to_string() {
             0
         } else {
             1
         };
-        match path.as_ref() {
-            [
-                ChildNumber::Hardened { index: 48 },
-                ChildNumber::Hardened { index: coin },
-                ChildNumber::Hardened { index: account },
-                ChildNumber::Hardened { index: 2 },
-            ] if *coin == expected_coin => Ok(*account),
-            _ => Err(Error::Unsupported(
-                "device policy key must use m/48'/coin_type'/account'/2'".into(),
-            )),
+        let mut indices = Vec::with_capacity(owned.len());
+        for signer in owned {
+            let path = DerivationPath::from_str(signer.derivation_path.trim_start_matches("m/"))
+                .map_err(|_| Error::Parse("invalid device signer derivation path".into()))?;
+            match path.as_ref() {
+                [
+                    ChildNumber::Hardened { index: 48 },
+                    ChildNumber::Hardened { index: coin },
+                    ChildNumber::Hardened { index: account },
+                    ChildNumber::Hardened { index: 2 },
+                ] if *coin == expected_coin => indices.push(*account),
+                _ => {
+                    return Err(Error::Unsupported(
+                        "device policy keys must use m/48'/coin_type'/account'/2'".into(),
+                    ));
+                }
+            }
         }
+        indices.sort_unstable();
+        indices.dedup();
+        Ok(indices)
+    }
+
+    /// Primary account index retained in account metadata for UI compatibility.
+    /// Policy signing always uses the full registered descriptor and therefore
+    /// is not limited to this one index.
+    pub fn device_account_index(&self) -> Result<u32> {
+        self.device_account_indices()?
+            .into_iter()
+            .next()
+            .ok_or(Error::NoDeviceKey)
+    }
+
+    /// Signer indexes participating in one analyzed spending path.
+    ///
+    /// Fingerprints alone are not unique when one Passport contributes
+    /// distinct account keys to different paths, so UI callers should use
+    /// these descriptor-key identities when presenting signer names.
+    pub fn signer_indices_for_path(&self, path_index: usize) -> Result<Vec<usize>> {
+        let descriptor = parse_descriptor(&self.descriptor, true)?;
+        let singles = descriptor
+            .into_single_descriptors()
+            .map_err(|error| Error::Parse(format!("invalid multipath descriptor: {error}")))?;
+        let semantic = singles[0]
+            .lift()
+            .map_err(|error| Error::Parse(format!("could not lift descriptor policy: {error}")))?;
+        let mut branches = Vec::new();
+        collect_branches(&semantic, &mut branches);
+        let branch = branches
+            .get(path_index)
+            .ok_or_else(|| Error::Parse("spending path index is out of range".into()))?;
+        let identities = collect_key_identities(branch);
+        Ok(identities
+            .iter()
+            .filter_map(|identity| {
+                self.signers
+                    .iter()
+                    .position(|signer| signer_identity(signer) == *identity)
+            })
+            .collect())
     }
 }
 
@@ -537,6 +587,36 @@ fn collect_keys(semantic: &Sem) -> Vec<String> {
     }
 }
 
+fn collect_key_identities(semantic: &Sem) -> Vec<String> {
+    match semantic {
+        Semantic::Key(key) => descriptor_key_identity(key).into_iter().collect(),
+        Semantic::Thresh(threshold) => threshold
+            .iter()
+            .flat_map(|child| collect_key_identities(child.as_ref()))
+            .collect(),
+        _ => Vec::new(),
+    }
+}
+
+fn descriptor_key_identity(key: &DescriptorPublicKey) -> Option<String> {
+    let (origin, xpub) = match key {
+        DescriptorPublicKey::XPub(key) => (&key.origin, &key.xkey),
+        DescriptorPublicKey::MultiXPub(key) => (&key.origin, &key.xkey),
+        DescriptorPublicKey::Single(_) => return None,
+    };
+    let (fingerprint, path) = origin.as_ref()?;
+    Some(format!("{fingerprint}:{path}:{xpub}"))
+}
+
+fn signer_identity(signer: &PolicySigner) -> String {
+    format!(
+        "{}:{}:{}",
+        signer.fingerprint,
+        signer.derivation_path.trim_start_matches("m/"),
+        signer.xpub
+    )
+}
+
 fn key_threshold(semantic: &Sem) -> (usize, usize) {
     match semantic {
         Semantic::Key(_) => (1, 1),
@@ -658,6 +738,59 @@ mod tests {
             WalletPolicy::from_descriptor("Nunchuk", Network::Testnet, &descriptor, &master, &secp)
                 .unwrap();
         assert_eq!(policy.paths[1].absolute_timelock, Some(1_785_542_400));
+    }
+
+    #[test]
+    fn registers_distinct_device_keys_in_primary_and_recovery_paths() {
+        let secp = Secp256k1::new();
+        let device = Xpriv::new_master(Network::Testnet, &[1; 32]).unwrap();
+        let signer_a = Xpriv::new_master(Network::Testnet, &[2; 32]).unwrap();
+        let signer_b = Xpriv::new_master(Network::Testnet, &[3; 32]).unwrap();
+        let primary_device = key_expression(&secp, &device, "48'/1'/0'/2'");
+        let recovery_device = key_expression(&secp, &device, "48'/1'/1'/2'");
+        let primary_a = key_expression(&secp, &signer_a, "48'/1'/0'/2'");
+        let primary_b = key_expression(&secp, &signer_b, "48'/1'/0'/2'");
+        let recovery_a = key_expression(&secp, &signer_a, "48'/1'/1'/2'");
+        let recovery_b = key_expression(&secp, &signer_b, "48'/1'/1'/2'");
+        let raw = format!(
+            "wsh(or_d(multi(2,{primary_device},{primary_a},{primary_b}),and_v(v:multi(1,{recovery_device},{recovery_a},{recovery_b}),after(1790410829))))"
+        );
+        let descriptor = Descriptor::<DescriptorPublicKey>::from_str(&raw)
+            .unwrap()
+            .to_string();
+
+        let policy = WalletPolicy::from_descriptor(
+            "Nunchuk decaying",
+            Network::Testnet,
+            &descriptor,
+            &device,
+            &secp,
+        )
+        .unwrap();
+
+        assert_eq!(
+            policy
+                .signers
+                .iter()
+                .filter(|signer| signer.owned_by_device)
+                .count(),
+            2
+        );
+        assert_eq!(policy.device_account_indices().unwrap(), vec![0, 1]);
+        assert_eq!(policy.device_account_index().unwrap(), 0);
+        assert_eq!(policy.paths.len(), 2);
+        assert_eq!(policy.paths[0].kind, SpendPathKind::Primary);
+        assert_eq!(policy.paths[1].absolute_timelock, Some(1_790_410_829));
+        let primary_signers = policy.signer_indices_for_path(0).unwrap();
+        let recovery_signers = policy.signer_indices_for_path(1).unwrap();
+        assert!(primary_signers.iter().any(|index| {
+            policy.signers[*index].owned_by_device
+                && policy.signers[*index].derivation_path == "m/48'/1'/0'/2'"
+        }));
+        assert!(recovery_signers.iter().any(|index| {
+            policy.signers[*index].owned_by_device
+                && policy.signers[*index].derivation_path == "m/48'/1'/1'/2'"
+        }));
     }
 
     #[test]
