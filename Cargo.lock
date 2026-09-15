@@ -320,12 +320,17 @@ version = "0.1.0"
 source = "git+https://github.com/Foundation-Devices/foundation-rs.git?tag=0.6.1#32c1aece5435b97a3e0816d7d5359a7bd5207a20"
 
 [[package]]
+name = "foundation-arena"
+version = "0.1.0"
+source = "git+https://github.com/Foundation-Devices/foundation-rs.git?tag=0.6.2#34ad1acd6863c60f82e1b851e22951a0994425a3"
+
+[[package]]
 name = "foundation-urtypes"
 version = "0.5.0"
-source = "git+https://github.com/Foundation-Devices/foundation-rs.git?tag=0.6.1#32c1aece5435b97a3e0816d7d5359a7bd5207a20"
+source = "git+https://github.com/Foundation-Devices/foundation-rs.git?tag=0.6.2#34ad1acd6863c60f82e1b851e22951a0994425a3"
 dependencies = [
  "faster-hex",
- "foundation-arena",
+ "foundation-arena 0.1.0 (git+https://github.com/Foundation-Devices/foundation-rs.git?tag=0.6.2)",
  "heapless",
  "minicbor 0.24.4",
  "uuid",
@@ -525,7 +530,7 @@ dependencies = [
  "bip39",
  "bip85",
  "bitcoin",
- "foundation-arena",
+ "foundation-arena 0.1.0 (git+https://github.com/Foundation-Devices/foundation-rs.git?tag=0.6.1)",
  "foundation-urtypes",
  "log",
  "minicbor 0.24.4",
