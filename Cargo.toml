@@ -28,7 +28,8 @@ minicbor = { version = "0.24", features = ["alloc"] }
 # Only used inside `#[cfg(test)]` helpers in `src/config.rs` (the
 # crypto-output CBOR encoder/decoder tests); keep it out of the
 # production dep graph.
-foundation-arena = { git = "https://github.com/Foundation-Devices/foundation-rs.git", tag = "0.6.1" }
+# Keep this tag aligned with foundation-urtypes so their arena types match.
+foundation-arena = { git = "https://github.com/Foundation-Devices/foundation-rs.git", tag = "0.6.2" }
 
 [lints.rust]
 unexpected_cfgs = { level = "warn", check-cfg = ['cfg(frb_expand)'] }
