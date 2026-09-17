@@ -25,6 +25,15 @@ use std::cmp::Ordering;
 use std::collections::{BTreeMap, HashSet};
 use thiserror::Error;
 
+/// options controlling PSBT validation.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct ValidationOptions<'a> {
+    /// registered multisig configuration used to validate inputs and change.
+    pub registered_multisig: Option<&'a MultiSigDetails>,
+    /// whether `witness_utxo` may be trusted without the full previous transaction.
+    pub trust_witness_utxo: bool,
+}
+
 /// Details of a PSBT.
 #[derive(Debug, Clone)]
 pub struct TransactionDetails {
@@ -240,6 +249,10 @@ pub enum Error {
     #[error("the input number {index} is missing its non-witness UTXO")]
     MissingNonWitnessUtxo { index: usize },
 
+    /// Witness UTXO rejected by the validation policy.
+    #[error("the witness UTXO for input number {index} is not trusted")]
+    UntrustedWitnessUtxo { index: usize },
+
     #[error("the witness script of output number {index} is invalid")]
     InvalidWitnessScript { index: usize },
 
@@ -388,20 +401,18 @@ fn validate_key_source_network(
 }
 
 /// Validate a PSBT against the master key.
-///
-/// When `registered_multisig` is provided, multisig inputs and change outputs
-/// must match that account. Without it, multisig accounts are discovered but
-/// their outputs are classified as external.
 pub fn validate<C>(
     secp: &Secp256k1<C>,
     master_key: &Xpriv,
     psbt: &Psbt,
     network: Network,
-    registered_multisig: Option<&MultiSigDetails>,
+    options: ValidationOptions<'_>,
 ) -> Result<TransactionDetails, Error>
 where
     C: Signing + Verification,
 {
+    let registered_multisig = options.registered_multisig;
+
     // SAFETY: This is allowed because the implementation of ExtendedDescriptor
     // correctly implements hash with interior mutability as Tr does not hash
     // the spend_info field which can be mutated.
@@ -474,17 +485,24 @@ where
         let funding_utxo =
             funding_utxo(input, txin, i)?.ok_or(Error::MissingInputFundingUtxo { index: i })?;
 
+        // legacy signatures do not commit to the input amount, so witness_utxo
+        // alone cannot protect against a fraudulent fee calculation.
+        if funding_utxo.script_pubkey.is_p2pkh() && input.non_witness_utxo.is_none() {
+            return Err(Error::MissingNonWitnessUtxo { index: i });
+        }
+
         // Keep validation aligned with bdk_wallet's default signing policy. The
         // Taproot fields are untrusted and may be attached to a non-Taproot
         // input, so only exempt them when the funding output is actually P2TR.
         let has_taproot_metadata =
             input.tap_internal_key.is_some() || input.tap_merkle_root.is_some();
-        if input.final_script_witness.is_none()
+        if !options.trust_witness_utxo
+            && input.final_script_witness.is_none()
             && input.final_script_sig.is_none()
             && !(funding_utxo.script_pubkey.is_p2tr() && has_taproot_metadata)
             && input.non_witness_utxo.is_none()
         {
-            return Err(Error::MissingNonWitnessUtxo { index: i });
+            return Err(Error::UntrustedWitnessUtxo { index: i });
         }
 
         let has_our_public_keys =

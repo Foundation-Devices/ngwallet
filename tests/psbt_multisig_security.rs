@@ -10,7 +10,7 @@ use ngwallet::bdk_wallet::bitcoin::{
     transaction::Version,
 };
 use ngwallet::config::{AddressType, MultiSigDetails, MultiSigSigner};
-use ngwallet::psbt::{Error, OutputKind, TransactionDetails, validate};
+use ngwallet::psbt::{Error, OutputKind, TransactionDetails, ValidationOptions, validate};
 use std::str::FromStr;
 
 const NETWORK: Network = Network::Testnet4;
@@ -276,7 +276,16 @@ fn registered_vendor_paths_validate_against_saved_signer_roots() {
 }
 
 fn validate_with(details: &MultiSigDetails, psbt: &Psbt) -> Result<TransactionDetails, Error> {
-    validate(&Secp256k1::new(), &master(1), psbt, NETWORK, Some(details))
+    validate(
+        &Secp256k1::new(),
+        &master(1),
+        psbt,
+        NETWORK,
+        ValidationOptions {
+            registered_multisig: Some(details),
+            ..Default::default()
+        },
+    )
 }
 
 /// A PSBT with the honest change output replaced by an attacker-crafted
@@ -399,8 +408,14 @@ fn poisoned_input_policy_is_rejected() {
 fn discovery_mode_reports_descriptors_but_never_change() {
     for format in FORMATS {
         let (psbt, _details) = honest_psbt(format);
-        let result = validate(&Secp256k1::new(), &master(1), &psbt, NETWORK, None)
-            .expect("discovery must succeed");
+        let result = validate(
+            &Secp256k1::new(),
+            &master(1),
+            &psbt,
+            NETWORK,
+            ValidationOptions::default(),
+        )
+        .expect("discovery must succeed");
 
         // Reconstructed descriptors let the caller find the account...
         let prefix = match format {
@@ -456,7 +471,13 @@ fn env3050_inconsistent_metadata_never_panics() {
             }
 
             let result = std::panic::catch_unwind(|| {
-                validate(&Secp256k1::new(), &master(1), &psbt, NETWORK, None)
+                validate(
+                    &Secp256k1::new(),
+                    &master(1),
+                    &psbt,
+                    NETWORK,
+                    ValidationOptions::default(),
+                )
             });
             assert!(
                 matches!(result, Ok(Err(_))),
