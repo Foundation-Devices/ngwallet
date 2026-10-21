@@ -111,9 +111,9 @@ checksum = "d965446196e3b7decd44aa7ee49e31d630118f90ef12f97900f262eb915c951d"
 
 [[package]]
 name = "bip322"
-version = "0.0.11"
+version = "0.0.12"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ea758a9ba0bb9b2250bd1a3b6e7c9a677d3a51d616a87d74ab7a52ef4a55ca1a"
+checksum = "4f9b1a54d4ecc089e5b34766936d0b4970e842087d36642817b998d767705e41"
 dependencies = [
  "base64 0.23.0",
  "bitcoin",
@@ -676,9 +676,9 @@ dependencies = [
 
 [[package]]
 name = "rustls"
-version = "0.23.45"
+version = "0.23.46"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0d41d731c7d2f962d1ccc364cec258de3c0e93b38c2fb3ba97ac74513048d634"
+checksum = "48e13bd8c0e9365c43cfa5c9e8f9ad49d3c8444926c9aac819e0e4dc503c8fdf"
 dependencies = [
  "log",
  "once_cell",
