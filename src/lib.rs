@@ -2,6 +2,7 @@ pub mod account;
 pub mod config;
 pub mod fee_rate;
 pub mod ngwallet;
+pub mod policy;
 pub mod psbt;
 pub mod rbf;
 pub mod send;
