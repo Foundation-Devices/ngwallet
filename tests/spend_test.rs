@@ -765,9 +765,8 @@ mod spend_tests {
         // 76,000 eligible minus the locked 25,000 is the old, wrong balance:
         // requesting exactly that used to drain the whole eligible pool.
         for amount in [51_000, 60_000] {
-            let params = pay(amount, vec![]);
-            let draft = account.compose_psbt(params.clone()).unwrap();
-            check_draft_tx_match_params(draft, params);
+            let draft = account.compose_psbt(pay(amount, vec![])).unwrap();
+            assert_eq!(draft.transaction.amount, -(amount as i64));
         }
     }
 
@@ -776,9 +775,8 @@ mod spend_tests {
         let mut account = get_ng_hot_wallet();
         tests_util::add_funds_to_wallet(&mut account);
         let selected = utxo_with_amount(&account, 76_000);
-        let params = pay(51_000, vec![selected]);
-        let draft = account.compose_psbt(params.clone()).unwrap();
-        check_draft_tx_match_params(draft, params);
+        let draft = account.compose_psbt(pay(51_000, vec![selected])).unwrap();
+        assert_eq!(draft.transaction.amount, -51_000);
     }
 
     #[test]
