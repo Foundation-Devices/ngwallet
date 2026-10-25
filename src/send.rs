@@ -346,25 +346,15 @@ impl<P: WalletPersister> NgAccount<P> {
         )
         .map_err(TransactionComposeError::LockedUtxoSelected)?;
 
-        let mut do_not_spend_amount = 0;
-
-        for do_not_spend_utxo in &do_not_spend_utxos {
-            do_not_spend_amount += do_not_spend_utxo.amount;
-        }
-
-        let mut spendable_balance: u64 = spendables.clone().iter().map(|utxo| utxo.amount).sum();
-
-        //deduct do_not_spend_amount from main balance,
-        //this will be the balance of spendable utxos combined
-        if spendable_balance > 0 && do_not_spend_amount < spendable_balance {
-            spendable_balance -= do_not_spend_amount
-        }
+        // The filter already removed locked and unselected coins, so this is
+        // the full eligible balance; only spending all of it is a sweep.
+        let spendable_balance: u64 = spendables.iter().map(|utxo| utxo.amount).sum();
 
         if amount > spendable_balance {
             return Err(TransactionComposeError::CreateTxError(CoinSelection(
                 InsufficientFunds {
                     available: Amount::from_sat(spendable_balance),
-                    needed: Amount::from_sat(spendable_balance.checked_div(amount).unwrap_or(0)),
+                    needed: Amount::from_sat(amount),
                 },
             )));
         }

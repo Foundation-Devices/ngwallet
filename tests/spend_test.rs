@@ -573,12 +573,15 @@ mod psbt_security_tests {
 #[cfg(feature = "envoy")]
 mod spend_tests {
     use crate::utils::tests_util;
+    use bdk_wallet::coin_selection::InsufficientFunds;
+    use bdk_wallet::error::CreateTxError;
     use bdk_wallet::rusqlite::Connection;
     use ngwallet::account::NgAccount;
     use ngwallet::rbf::BumpFeeError;
     use ngwallet::send::{
         DraftTransaction, FeeRateSatPerKvb, TransactionComposeError, TransactionParams,
     };
+    use ngwallet::transaction::Output;
 
     use crate::utils::tests_util::get_ng_hot_wallet;
 
@@ -718,6 +721,86 @@ mod spend_tests {
         assert_eq!(transaction.amount, -(params.amount as i64));
         assert_eq!(transaction.note, params.note);
         assert_eq!(transaction.get_change_tag(), params.tag);
+    }
+
+    // The fixture funds two outputs: 76,000 and 25,000 sats. Coins excluded
+    // by a lock or by an explicit selection must not shrink the eligible
+    // balance a second time, or a fixed amount can turn into a sweep.
+    const RECIPIENT: &str = "tb1pspfcrvz538vvj9f9gfkd85nu5ty98zw9y5e302kha6zurv6vg07s8z7a8w";
+
+    fn utxo_with_amount(account: &NgAccount<Connection>, amount: u64) -> Output {
+        account
+            .utxos()
+            .unwrap()
+            .into_iter()
+            .find(|o| o.amount == amount)
+            .expect("fixture output")
+    }
+
+    fn account_with_locked_25k() -> NgAccount<Connection> {
+        let mut account = get_ng_hot_wallet();
+        tests_util::add_funds_to_wallet(&mut account);
+        let locked = utxo_with_amount(&account, 25_000);
+        account
+            .set_do_not_spend(locked.get_id().as_str(), true)
+            .unwrap();
+        account
+    }
+
+    fn pay(amount: u64, selected_outputs: Vec<Output>) -> TransactionParams {
+        TransactionParams {
+            address: RECIPIENT.to_string(),
+            amount,
+            fee_rate: FeeRateSatPerKvb(1000),
+            selected_outputs,
+            note: None,
+            tag: None,
+            do_not_spend_change: false,
+        }
+    }
+
+    #[test]
+    fn test_compose_with_locked_coin_pays_the_requested_amount() {
+        let account = account_with_locked_25k();
+        // 76,000 eligible minus the locked 25,000 is the old, wrong balance:
+        // requesting exactly that used to drain the whole eligible pool.
+        for amount in [51_000, 60_000] {
+            let params = pay(amount, vec![]);
+            let draft = account.compose_psbt(params.clone()).unwrap();
+            check_draft_tx_match_params(draft, params);
+        }
+    }
+
+    #[test]
+    fn test_compose_with_selected_coin_pays_the_requested_amount() {
+        let mut account = get_ng_hot_wallet();
+        tests_util::add_funds_to_wallet(&mut account);
+        let selected = utxo_with_amount(&account, 76_000);
+        let params = pay(51_000, vec![selected]);
+        let draft = account.compose_psbt(params.clone()).unwrap();
+        check_draft_tx_match_params(draft, params);
+    }
+
+    #[test]
+    fn test_compose_send_max_with_locked_coin_spends_only_eligible_funds() {
+        let account = account_with_locked_25k();
+        let draft = account.compose_psbt(pay(76_000, vec![])).unwrap();
+        let sent = draft.transaction.amount.unsigned_abs();
+        assert_eq!(sent + draft.transaction.fee, 76_000);
+    }
+
+    #[test]
+    fn test_compose_above_eligible_balance_reports_true_funds() {
+        let account = account_with_locked_25k();
+        match account.compose_psbt(pay(76_001, vec![])) {
+            Err(TransactionComposeError::CreateTxError(CreateTxError::CoinSelection(
+                InsufficientFunds { available, needed },
+            ))) => {
+                assert_eq!(available.to_sat(), 76_000);
+                assert_eq!(needed.to_sat(), 76_001);
+            }
+            other => panic!("expected insufficient funds, got {other:?}"),
+        }
     }
 
     // Audit P2-01: a UTXO marked do_not_spend must never be spent, even when
