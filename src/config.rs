@@ -1533,7 +1533,7 @@ impl<P: WalletPersister> NgAccountBuilder<P> {
     }
 
     pub fn build_from_db(self, db: redb::Database) -> anyhow::Result<NgAccount<P>> {
-        let meta_storage = Arc::new(RedbMetaStorage::from_db(db));
+        let meta_storage = Arc::new(RedbMetaStorage::from_db(db)?);
         self.build(meta_storage)
     }
 

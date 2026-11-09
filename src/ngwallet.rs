@@ -213,7 +213,7 @@ impl<P: WalletPersister> NgWallet<P> {
                 .input
                 .clone()
                 .iter()
-                .map(|input| {
+                .map(|input| -> Result<Input> {
                     let tx_id = input.previous_output.txid.to_string();
                     let vout = input.previous_output.vout;
                     let amount = if wallet.get_utxo(input.previous_output).is_some() {
@@ -226,26 +226,24 @@ impl<P: WalletPersister> NgWallet<P> {
                     } else {
                         0
                     };
-                    Input {
-                        tx_id: tx_id.clone(),
+                    Ok(Input {
+                        tag: storage.get_tag(&format!("{tx_id}:{vout}"))?,
+                        tx_id,
                         vout,
                         amount,
-                        tag: storage
-                            .get_tag(format!("{}{}", tx_id, vout).as_str())
-                            .unwrap_or(None),
-                    }
+                    })
                 })
-                .collect::<Vec<Input>>();
+                .collect::<Result<Vec<Input>>>()?;
 
             let outputs = tx
                 .output
                 .clone()
                 .iter()
                 .enumerate()
-                .map(|(index, output)| {
+                .map(|(index, output)| -> Result<Output> {
                     let amount = output.value;
-                    let do_not_spend = storage.get_do_not_spend(&tx_id).unwrap_or(false);
-                    Output {
+                    let output_id = format!("{tx_id}:{index}");
+                    Ok(Output {
                         tx_id: tx_id.clone(),
                         vout: index as u32,
                         amount: amount.to_sat(),
@@ -253,8 +251,8 @@ impl<P: WalletPersister> NgWallet<P> {
                             &output.script_pubkey,
                             wallet.network(),
                         ),
-                        tag: storage.get_tag(&format!("{}:{}", tx_id, index)).unwrap(),
-                        do_not_spend,
+                        tag: storage.get_tag(&output_id)?,
+                        do_not_spend: storage.get_do_not_spend(&output_id)?,
                         keychain: wallet
                             .derivation_of_spk(output.script_pubkey.clone())
                             .map(|x| {
@@ -266,9 +264,9 @@ impl<P: WalletPersister> NgWallet<P> {
                             }),
                         date,
                         is_confirmed: confirmations >= 1,
-                    }
+                    })
                 })
-                .collect::<Vec<Output>>();
+                .collect::<Result<Vec<Output>>>()?;
             let amount: i64 = (received.to_sat() as i64) - (sent.to_sat() as i64);
 
             let address = {
@@ -339,10 +337,7 @@ impl<P: WalletPersister> NgWallet<P> {
             };
             let vsize = tx.vsize() as f32;
 
-            let mut fee: u64 = storage
-                .get_fee(&tx_id)
-                .unwrap_or(None)
-                .unwrap_or(FEE_UNKNOWN);
+            let mut fee: u64 = storage.get_fee(&tx_id)?.unwrap_or(FEE_UNKNOWN);
 
             // calculate fee if it does not exist
             if fee == FEE_UNKNOWN && !tx.is_coinbase() {
@@ -377,7 +372,6 @@ impl<P: WalletPersister> NgWallet<P> {
                 0
             });
 
-            storage.get_note(&tx_id).unwrap_or(None);
             transactions.push(BitcoinTransaction {
                 tx_id: tx_id.clone(),
                 block_height,
@@ -391,7 +385,7 @@ impl<P: WalletPersister> NgWallet<P> {
                 address,
                 date,
                 vsize: tx.vsize(),
-                note: storage.get_note(&tx_id).unwrap(),
+                note: storage.get_note(&tx_id)?,
                 //empty account_id for now,will be populated from account later
                 account_id: "".to_string(),
             })
@@ -525,9 +519,7 @@ impl<P: WalletPersister> NgWallet<P> {
                 }
             }
 
-            let do_not_spend = meta_storage
-                .get_do_not_spend(out_put_id.as_str())
-                .unwrap_or(false);
+            let do_not_spend = meta_storage.get_do_not_spend(out_put_id.as_str())?;
 
             unspents.push(Output {
                 tx_id: local_output.outpoint.txid.to_string(),
@@ -545,9 +537,7 @@ impl<P: WalletPersister> NgWallet<P> {
                             KeyChain::Internal
                         }
                     }),
-                tag: meta_storage
-                    .get_tag(out_put_id.clone().as_str())
-                    .unwrap_or(None),
+                tag: meta_storage.get_tag(out_put_id.as_str())?,
                 do_not_spend,
                 date,
                 is_confirmed: confirmations >= 1,

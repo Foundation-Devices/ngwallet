@@ -178,7 +178,7 @@ impl<P: WalletPersister> NgAccount<P> {
     where
         <P as WalletPersister>::Error: Debug,
     {
-        let meta_storage = RedbMetaStorage::from_db(db);
+        let meta_storage = RedbMetaStorage::from_db(db)?;
         Self::open_account(descriptors, Arc::new(meta_storage))
     }
 
