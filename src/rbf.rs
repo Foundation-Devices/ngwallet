@@ -64,7 +64,9 @@ impl<P: WalletPersister> NgAccount<P> {
         original_transaction: BitcoinTransaction,
     ) -> Result<DraftTransaction, BumpFeeError> {
         let cancel_destination_address = self.get_address(KeychainKind::Internal);
-        let unspend_outputs = self.utxos().unwrap();
+        let unspend_outputs = self
+            .utxos()
+            .map_err(|_| BumpFeeError::UnableToAccessWallet)?;
         //check if transaction is output is locked
         for unspend_output in unspend_outputs.clone() {
             if unspend_output.tx_id == original_transaction.clone().tx_id
@@ -91,7 +93,9 @@ impl<P: WalletPersister> NgAccount<P> {
         selected_outputs: Vec<Output>,
         bitcoin_transaction: BitcoinTransaction,
     ) -> Result<TransactionFeeResult, BumpFeeError> {
-        let unspend_outputs = self.utxos().unwrap();
+        let unspend_outputs = self
+            .utxos()
+            .map_err(|_| BumpFeeError::UnableToAccessWallet)?;
         //check if transaction is output is locked
         for unspend_output in unspend_outputs.clone() {
             if unspend_output.tx_id == bitcoin_transaction.clone().tx_id
@@ -274,7 +278,9 @@ impl<P: WalletPersister> NgAccount<P> {
             drain_to.clone(),
         ) {
             Ok(psbt) => {
-                let transactions = self.transactions().unwrap();
+                let transactions = self
+                    .transactions()
+                    .map_err(|_| BumpFeeError::UnableToAccessWallet)?;
 
                 let transaction = psbt
                     .clone()
@@ -393,8 +399,12 @@ impl<P: WalletPersister> NgAccount<P> {
         fee_absolute: Option<u64>,
         drain_to: Option<Address>,
     ) -> Result<Psbt, BumpFeeError> {
-        let unspend_outputs = self.utxos().unwrap();
-        let transactions = self.transactions().unwrap();
+        let unspend_outputs = self
+            .utxos()
+            .map_err(|_| BumpFeeError::UnableToAccessWallet)?;
+        let transactions = self
+            .transactions()
+            .map_err(|_| BumpFeeError::UnableToAccessWallet)?;
         let tx_id = Txid::from_str(bitcoin_transaction.clone().tx_id.as_str())
             .map_err(|_| BumpFeeError::TransactionNotFound())?;
 

@@ -318,7 +318,9 @@ impl<P: WalletPersister> NgAccount<P> {
         let selected_outputs = params.selected_outputs;
 
         //get current utxo set and balance
-        let utxos = self.utxos().unwrap();
+        let utxos = self
+            .utxos()
+            .map_err(|e| TransactionComposeError::Error(format!("Failed to get UTXOs: {e:?}")))?;
 
         // The wallet will be locked for the rest of the spend method,
         // so calling other NgWallet APIs won't succeed.
