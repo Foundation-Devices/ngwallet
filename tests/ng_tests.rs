@@ -551,6 +551,43 @@ mod tests {
 
     #[test]
     #[cfg(feature = "envoy")]
+    fn transactions_show_each_outputs_lock_and_tag() {
+        let mut account = utils::tests_util::get_ng_hot_wallet();
+        utils::tests_util::add_funds_wallet_with_unconfirmed(&mut account);
+
+        // The unconfirmed spend's only input is one of the funding outputs.
+        let spent = account
+            .transactions()
+            .unwrap()
+            .into_iter()
+            .flat_map(|tx| tx.inputs)
+            .next()
+            .expect("expected a spend with an input");
+        let output_id = format!("{}:{}", spent.tx_id, spent.vout);
+        account.set_tag(&output_id, "Savings").unwrap();
+        account.set_do_not_spend(&output_id, true).unwrap();
+
+        let transactions = account.transactions().unwrap();
+        let input = transactions
+            .iter()
+            .flat_map(|tx| &tx.inputs)
+            .find(|input| format!("{}:{}", input.tx_id, input.vout) == output_id)
+            .unwrap();
+        assert_eq!(input.tag.as_deref(), Some("Savings"));
+
+        let (locked, unlocked): (Vec<_>, Vec<_>) = transactions
+            .iter()
+            .flat_map(|tx| &tx.outputs)
+            .partition(|output| output.get_id() == output_id);
+        assert_eq!(locked.len(), 1);
+        assert!(locked[0].do_not_spend);
+        assert_eq!(locked[0].tag.as_deref(), Some("Savings"));
+        assert!(!unlocked.is_empty());
+        assert!(unlocked.iter().all(|output| !output.do_not_spend));
+    }
+
+    #[test]
+    #[cfg(feature = "envoy")]
     fn check_psbt_parsing() {
         let mut account = utils::tests_util::get_ng_watch_only_account();
         utils::tests_util::add_funds_to_wallet(&mut account);

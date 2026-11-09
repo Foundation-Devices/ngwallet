@@ -178,7 +178,7 @@ impl<P: WalletPersister> NgAccount<P> {
     where
         <P as WalletPersister>::Error: Debug,
     {
-        let meta_storage = RedbMetaStorage::from_db(db);
+        let meta_storage = RedbMetaStorage::from_db(db)?;
         Self::open_account(descriptors, Arc::new(meta_storage))
     }
 
@@ -361,7 +361,7 @@ impl<P: WalletPersister> NgAccount<P> {
         let config = self.config.read().unwrap();
 
         for wallet in self.wallets.read().unwrap().iter() {
-            let wallet_txs = wallet.transactions().unwrap_or_default();
+            let wallet_txs = wallet.transactions()?;
             for wallet_tx in wallet_txs {
                 let tx = {
                     let bdk = wallet.bdk_wallet.lock().expect("Failed to lock wallet");
