@@ -463,14 +463,6 @@ impl MultiSigDetails {
                         ),
                     };
 
-                    if format != AddressType::P2sh {
-                        return Ok(MultiSigSigner::new(
-                            &origin_path,
-                            &fingerprint,
-                            &desc_xpub.xkey,
-                        ));
-                    }
-
                     let mut account_suffix = desc_xpub.derivation_path.as_ref().to_vec();
                     match account_suffix.pop() {
                         Some(ChildNumber::Normal { index: 0 | 1 }) => {}
@@ -1709,6 +1701,53 @@ Derivation: m/48'/1'/0'/2'
                 signer.get_pubkey().unwrap(),
                 origin_xpub.derive_pub(&secp, &public_suffix).unwrap()
             );
+        }
+    }
+
+    #[test]
+    fn single_path_descriptor_folds_fixed_prefix_like_multipath() {
+        let secp = Secp256k1::new();
+        let origin = DerivationPath::from_str("m/45'").unwrap();
+        let cosigners = [1u8, 2, 3].map(|seed| {
+            let master = Xpriv::new_master(Network::Testnet4, &[seed; 32]).unwrap();
+            let xpub = Xpub::from_priv(&secp, &master.derive_priv(&secp, &origin).unwrap());
+            (master.fingerprint(&secp), xpub)
+        });
+        // BIP45 cosigner indexes sit between each key origin and its receive/change branch.
+        let keys = |branch: &str| {
+            cosigners
+                .iter()
+                .enumerate()
+                .map(|(index, (fingerprint, xpub))| {
+                    format!("[{fingerprint}/45']{xpub}/{index}/{branch}/*")
+                })
+                .collect::<Vec<_>>()
+                .join(",")
+        };
+        let wrappers: [fn(String) -> String; 3] = [
+            |keys| format!("wsh(sortedmulti(2,{keys}))"),
+            |keys| format!("sh(wsh(sortedmulti(2,{keys})))"),
+            |keys| format!("sh(sortedmulti(2,{keys}))"),
+        ];
+
+        for wrap in wrappers {
+            let (multipath, _) = MultiSigDetails::from_descriptor(&wrap(keys("<0;1>"))).unwrap();
+            for (branch, keychain) in [("0", KeychainKind::External), ("1", KeychainKind::Internal)]
+            {
+                let single = wrap(keys(branch));
+                assert_eq!(
+                    MultiSigDetails::from_descriptor(&single).unwrap().0,
+                    multipath
+                );
+
+                let imported = multipath.to_descriptor(keychain, &secp, None).unwrap().0;
+                let original = BdkDescriptor::<DescriptorPublicKey>::from_str(&single).unwrap();
+                assert_eq!(
+                    imported.at_derivation_index(7).unwrap().script_pubkey(),
+                    original.at_derivation_index(7).unwrap().script_pubkey(),
+                    "{single}"
+                );
+            }
         }
     }
 

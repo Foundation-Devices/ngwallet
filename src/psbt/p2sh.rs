@@ -231,7 +231,7 @@ pub fn legacy_multisig_descriptor(
     Ok([external_descriptor, internal_descriptor])
 }
 
-fn multisig_descriptor_keys(
+pub(crate) fn multisig_descriptor_keys(
     global_xpubs: &BTreeMap<Xpub, KeySource>,
     bip32_derivations: &BTreeMap<PublicKey, KeySource>,
 ) -> Result<(Vec<DescriptorPublicKey>, Vec<DescriptorPublicKey>), Error> {

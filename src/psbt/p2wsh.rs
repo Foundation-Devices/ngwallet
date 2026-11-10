@@ -1,12 +1,11 @@
 use crate::config::MultiSigDetails;
-use crate::psbt::{Error, OutputKind, PsbtOutput, registered_multisig_output_kind, sort_keys};
-use bdk_wallet::bitcoin::bip32::{ChildNumber, DerivationPath, KeySource, Xpub};
+use crate::psbt::{Error, OutputKind, PsbtOutput, p2sh, registered_multisig_output_kind};
+use bdk_wallet::bitcoin::bip32::{KeySource, Xpub};
 use bdk_wallet::bitcoin::psbt;
 use bdk_wallet::bitcoin::secp256k1::{PublicKey, Secp256k1, Signing, Verification};
 use bdk_wallet::bitcoin::{Network, TxOut};
 use bdk_wallet::descriptor::{Descriptor, ExtendedDescriptor, Segwitv0};
-use bdk_wallet::keys::DescriptorPublicKey;
-use bdk_wallet::miniscript::descriptor::{DescriptorXKey, Wildcard, Wsh};
+use bdk_wallet::miniscript::descriptor::Wsh;
 use bdk_wallet::miniscript::{ForEachKey, Miniscript};
 use std::collections::BTreeMap;
 
@@ -70,44 +69,8 @@ pub fn multisig_descriptor(
     global_xpubs: &BTreeMap<Xpub, KeySource>,
     bip32_derivations: &BTreeMap<PublicKey, KeySource>,
 ) -> Result<[ExtendedDescriptor; 2], Error> {
-    // Find the account Xpubs in the global Xpub map of the PSBT.
-    let xpubs = bip32_derivations
-        .iter()
-        .map(|(_, (subpath_fingerprint, subpath))| {
-            global_xpubs
-                .iter()
-                .find(|(_, (global_fingerprint, global_path))| {
-                    subpath_fingerprint == global_fingerprint
-                        && subpath.as_ref().starts_with(global_path.as_ref())
-                })
-                .ok_or_else(|| Error::MissingGlobalXpub(subpath.clone()))
-        });
-
-    let mut external_keys = Vec::new();
-    let mut internal_keys = Vec::new();
-    for maybe_xpub in xpubs {
-        let (xpub, source) = maybe_xpub?;
-
-        let external_key = DescriptorPublicKey::XPub(DescriptorXKey {
-            origin: Some(source.clone()),
-            xkey: *xpub,
-            derivation_path: DerivationPath::from(vec![ChildNumber::Normal { index: 0 }]),
-            wildcard: Wildcard::Unhardened,
-        });
-
-        let internal_key = DescriptorPublicKey::XPub(DescriptorXKey {
-            origin: Some(source.clone()),
-            xkey: *xpub,
-            derivation_path: DerivationPath::from(vec![ChildNumber::Normal { index: 1 }]),
-            wildcard: Wildcard::Unhardened,
-        });
-
-        external_keys.push(external_key);
-        internal_keys.push(internal_key);
-    }
-
-    sort_keys(&mut external_keys);
-    sort_keys(&mut internal_keys);
+    let (external_keys, internal_keys) =
+        p2sh::multisig_descriptor_keys(global_xpubs, bip32_derivations)?;
 
     let external_descriptor =
         ExtendedDescriptor::new_wsh_sortedmulti(usize::from(required_signers), external_keys)
@@ -122,8 +85,107 @@ pub fn multisig_descriptor(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use bdk_wallet::bitcoin::bip32::{ChildNumber, DerivationPath, Xpriv};
     use bdk_wallet::bitcoin::opcodes::all::OP_RETURN;
     use bdk_wallet::bitcoin::{Amount, Script, ScriptBuf};
+    use std::str::FromStr;
+
+    const ADDRESS_INDEX: u32 = 3;
+
+    // A 2-of-3 receive input whose keys sit `fixed` steps below their global xpubs at `origin`.
+    fn discovered_and_expected(
+        origin: &str,
+        fixed: [&[u32]; 3],
+        with_master_xpubs: bool,
+    ) -> ([ExtendedDescriptor; 2], [ExtendedDescriptor; 2]) {
+        let secp = Secp256k1::new();
+        let origin = DerivationPath::from_str(origin).unwrap();
+        let mut global_xpubs = BTreeMap::new();
+        let mut derivations = BTreeMap::new();
+        let mut keys = [Vec::new(), Vec::new()];
+
+        for (seed, fixed) in (1u8..).zip(fixed) {
+            let master = Xpriv::new_master(Network::Bitcoin, &[seed; 32]).unwrap();
+            let fingerprint = master.fingerprint(&secp);
+            let xpub = Xpub::from_priv(&secp, &master.derive_priv(&secp, &origin).unwrap());
+            global_xpubs.insert(xpub, (fingerprint, origin.clone()));
+            if with_master_xpubs {
+                global_xpubs.insert(
+                    Xpub::from_priv(&secp, &master),
+                    (fingerprint, DerivationPath::master()),
+                );
+            }
+
+            let key_path = origin
+                .extend(
+                    fixed
+                        .iter()
+                        .map(|index| ChildNumber::Normal { index: *index })
+                        .collect::<Vec<_>>(),
+                )
+                .extend([
+                    ChildNumber::Normal { index: 0 },
+                    ChildNumber::Normal {
+                        index: ADDRESS_INDEX,
+                    },
+                ]);
+            let public_key =
+                Xpub::from_priv(&secp, &master.derive_priv(&secp, &key_path).unwrap()).public_key;
+            derivations.insert(public_key, (fingerprint, key_path));
+
+            let fixed = fixed
+                .iter()
+                .map(|index| format!("{index}/"))
+                .collect::<String>();
+            for (keychain, keys) in keys.iter_mut().enumerate() {
+                keys.push(format!(
+                    "[{fingerprint}/{origin}]{xpub}/{fixed}{keychain}/*"
+                ));
+            }
+        }
+
+        let discovered = multisig_descriptor(2, &global_xpubs, &derivations).unwrap();
+        let expected = keys.map(|keys| {
+            ExtendedDescriptor::from_str(&format!("wsh(sortedmulti(2,{}))", keys.join(",")))
+                .unwrap()
+        });
+        (discovered, expected)
+    }
+
+    fn assert_same_scripts(
+        discovered: &[ExtendedDescriptor; 2],
+        expected: &[ExtendedDescriptor; 2],
+    ) {
+        for (discovered, expected) in discovered.iter().zip(expected) {
+            assert_eq!(
+                discovered
+                    .at_derivation_index(ADDRESS_INDEX)
+                    .unwrap()
+                    .script_pubkey(),
+                expected
+                    .at_derivation_index(ADDRESS_INDEX)
+                    .unwrap()
+                    .script_pubkey()
+            );
+        }
+    }
+
+    /// BIP174 places each global xpub at its last hardened step, above BIP45 cosigner indexes.
+    #[test]
+    fn descriptor_keeps_fixed_steps_below_global_xpub() {
+        let (discovered, expected) = discovered_and_expected("m/45'", [&[0], &[1], &[2]], false);
+        assert_same_scripts(&discovered, &expected);
+    }
+
+    /// Master xpubs also prefix every key path, so the deepest global xpub must win.
+    #[test]
+    fn descriptor_prefers_deepest_global_xpub() {
+        let (discovered, expected) = discovered_and_expected("m/48'/0'/0'/2'", [&[]; 3], true);
+        assert_same_scripts(&discovered, &expected);
+
+        let (discovered, expected) = discovered_and_expected("m/45'", [&[0], &[1], &[2]], true);
+        assert_same_scripts(&discovered, &expected);
+    }
 
     fn empty_output_with_witness_script(witness_script: ScriptBuf) -> psbt::Output {
         psbt::Output {
