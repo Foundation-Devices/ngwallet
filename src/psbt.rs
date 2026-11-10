@@ -748,6 +748,10 @@ where
             } else {
                 return Err(Error::InvalidRedeemScript { index: i });
             }
+        } else {
+            // An input of ours with a script we don't recognize can't be checked against what
+            // would be signed. TODO: Change to UnknownInputScript
+            return Err(Error::UnknownOutputScript { index: i });
         }
     }
 
