@@ -22,7 +22,8 @@ pub struct SignedMessage {
     pub message: String,
     /// The address used for signing.
     pub address: String,
-    /// The base64-encoded signature.
+    /// The base64-encoded signature. BIP-322 signatures carry the `smp`
+    /// variant prefix ahead of the base64 witness.
     pub signature: String,
 }
 
@@ -140,8 +141,14 @@ pub fn verify_signed_message(
 
     match parsed.address_type() {
         Some(AddressType::P2tr) => {
-            // BIP-322 Simple (Schnorr).
-            Ok(bip322::verify_simple_encoded(address, message, signature).is_ok())
+            // BIP-322 Simple (Schnorr). Accepts the `smp`-prefixed form the
+            // finalized BIP requires as well as the earlier unprefixed one.
+            // `Inconclusive` means the validator could neither accept nor
+            // reject the proof, so only `Valid` counts.
+            Ok(matches!(
+                bip322::verify_simple_encoded(address, message, signature),
+                Ok(bip322::Verification::Valid { .. })
+            ))
         }
         Some(AddressType::P2pkh | AddressType::P2sh | AddressType::P2wpkh) => {
             let secp = Secp256k1::new();
@@ -257,8 +264,12 @@ mod tests {
         )
         .unwrap();
 
-        assert!(!result.signature.is_empty());
         assert!(result.address.starts_with("bc1p"));
+        // The finalized BIP-322 requires signers to prefix the variant.
+        assert!(
+            result.signature.starts_with("smp"),
+            "BIP-322 simple signature must carry the smp prefix"
+        );
 
         // The taproot signature must round-trip through BIP-322 verification.
         assert!(
@@ -335,6 +346,47 @@ mod tests {
         assert!(
             !verify_signed_message(&signed.message, &signed.address, "not-a-signature").unwrap()
         );
+    }
+
+    // BIP-322 basic test vector "No prefix fallback": a P2TR key-path witness
+    // holding one 64-byte SIGHASH_DEFAULT signature. With `smp` in front it is
+    // the exact shape Passport Core emits.
+    const BIP322_P2TR_ADDRESS: &str =
+        "bc1pss0zhytly75awhm6x2hhvd5lnzv3vssgrf9axfheq8ldyzn88ges79fler";
+    const BIP322_P2TR_MESSAGE: &str = "No prefix fallback";
+    const BIP322_P2TR_WITNESS: &str =
+        "AUCJYOwOjxYAvatTAGYaVlNXBVyFuc4MwNQkOuK2tl8xhfKDONd0NjfYyNSYcRqeCp8hsAnCEPHAVEkO9h6vbQ/R";
+
+    #[test]
+    fn verify_bip322_simple_with_and_without_prefix() {
+        let prefixed = format!("smp{BIP322_P2TR_WITNESS}");
+        for signature in [prefixed.as_str(), BIP322_P2TR_WITNESS] {
+            assert!(
+                verify_signed_message(BIP322_P2TR_MESSAGE, BIP322_P2TR_ADDRESS, signature).unwrap(),
+                "{signature} should verify"
+            );
+            assert!(
+                !verify_signed_message("tampered", BIP322_P2TR_ADDRESS, signature).unwrap(),
+                "{signature} should not verify a different message"
+            );
+        }
+    }
+
+    #[test]
+    fn verify_rejects_bip322_signature_labelled_as_another_variant() {
+        // BIP-322 basic test vector "incorrect prefix type": a valid simple
+        // witness labelled as a full proof must not be read as simple.
+        let address = "bc1pyrgrm6cu6n54jrvkdjd9rvyd3xfyu84s2623awu2srn6mxhscwpsm5644w";
+        let witness = "AUDZwFXUp+adN+/UZj5dVrGAbB3zKs1Vcalz5fCF9srxS63eSWNGvH1NYbrBkPt1BJDUyWUz9zgUxfc63/QheT6M";
+        let message = "incorrect prefix";
+
+        assert!(verify_signed_message(message, address, &format!("smp{witness}")).unwrap());
+        for prefix in ["ful", "pof"] {
+            assert!(
+                !verify_signed_message(message, address, &format!("{prefix}{witness}")).unwrap(),
+                "{prefix} label should be rejected"
+            );
+        }
     }
 
     #[test]

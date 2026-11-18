@@ -111,9 +111,9 @@ checksum = "d965446196e3b7decd44aa7ee49e31d630118f90ef12f97900f262eb915c951d"
 
 [[package]]
 name = "bip322"
-version = "0.0.11"
+version = "0.0.12"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ea758a9ba0bb9b2250bd1a3b6e7c9a677d3a51d616a87d74ab7a52ef4a55ca1a"
+checksum = "4f9b1a54d4ecc089e5b34766936d0b4970e842087d36642817b998d767705e41"
 dependencies = [
  "base64 0.23.0",
  "bitcoin",
@@ -358,12 +358,12 @@ checksum = "a2a2b11eda1d40935b26cf18f6833c526845ae8c41e58d09af6adeb6f0269183"
 [[package]]
 name = "foundation-arena"
 version = "0.1.0"
-source = "git+https://github.com/Foundation-Devices/foundation-rs.git?tag=0.6.1#32c1aece5435b97a3e0816d7d5359a7bd5207a20"
+source = "git+https://github.com/Foundation-Devices/foundation-rs.git?tag=0.6.2#34ad1acd6863c60f82e1b851e22951a0994425a3"
 
 [[package]]
 name = "foundation-urtypes"
 version = "0.5.0"
-source = "git+https://github.com/Foundation-Devices/foundation-rs.git?tag=0.6.1#32c1aece5435b97a3e0816d7d5359a7bd5207a20"
+source = "git+https://github.com/Foundation-Devices/foundation-rs.git?tag=0.6.2#34ad1acd6863c60f82e1b851e22951a0994425a3"
 dependencies = [
  "faster-hex",
  "foundation-arena",
@@ -863,9 +863,9 @@ dependencies = [
 
 [[package]]
 name = "rustls"
-version = "0.23.27"
+version = "0.23.46"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "730944ca083c1c233a75c09f199e973ca499344a2b7ba9e755c457e86fb4a321"
+checksum = "48e13bd8c0e9365c43cfa5c9e8f9ad49d3c8444926c9aac819e0e4dc503c8fdf"
 dependencies = [
  "log",
  "once_cell",
@@ -887,9 +887,9 @@ dependencies = [
 
 [[package]]
 name = "rustls-webpki"
-version = "0.103.13"
+version = "0.103.15"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "61c429a8649f110dddef65e2a5ad240f747e85f7758a6bccc7e5777bd33f756e"
+checksum = "f3c3cf1d8b1e7d4927e2d154c3fcb02979afb9939629c62cd9048d4f07b60ac2"
 dependencies = [
  "ring",
  "rustls-pki-types",
