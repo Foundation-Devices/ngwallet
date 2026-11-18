@@ -53,6 +53,8 @@ pub enum Error {
     NetworkMismatch,
     #[error("wallet-policy transaction does not match: {0}")]
     Match(String),
+    #[error("input {index}: the previous transaction is needed to verify its amount")]
+    UntrustedWitnessUtxo { index: usize },
     #[error("wallet-policy signing failed: {0}")]
     Sign(String),
 }

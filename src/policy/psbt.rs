@@ -69,10 +69,15 @@ pub fn matches_policy_inputs(
     Ok(())
 }
 
+/// `trust_witness_utxo` false requires each input's full previous transaction,
+/// as [`crate::psbt::ValidationOptions`] does for other accounts. A PSBT that
+/// passes every other check but lacks one fails with
+/// [`Error::UntrustedWitnessUtxo`], so callers can offer to trust it.
 pub fn match_psbt(
     psbt: &Psbt,
     policy: &WalletPolicy,
     passport_fp: Fingerprint,
+    trust_witness_utxo: bool,
 ) -> Result<MatchResult> {
     let descriptor = policy
         .descriptor
@@ -93,6 +98,7 @@ pub fn match_psbt(
     }
 
     let mut expected_signatures = 0usize;
+    let mut untrusted_input = None;
     for (index, input) in psbt.inputs.iter().enumerate() {
         validate_sighash(index, input)?;
         let utxo = input
@@ -109,6 +115,9 @@ pub fn match_psbt(
                 .map_err(|reason| Error::Match(format!("input {index}: {reason}")))?,
         );
         validate_non_witness_utxo(index, psbt, input, utxo)?;
+        if !trust_witness_utxo && input.non_witness_utxo.is_none() {
+            untrusted_input = untrusted_input.or(Some(index));
+        }
     }
 
     let compatible = psbt
@@ -168,6 +177,9 @@ pub fn match_psbt(
         {
             change_outputs.insert(index);
         }
+    }
+    if let Some(index) = untrusted_input {
+        return Err(Error::UntrustedWitnessUtxo { index });
     }
 
     Ok(MatchResult {
@@ -532,7 +544,7 @@ mod tests {
     fn matches_and_signs_primary_path() {
         let (policy, master, secp) = fixture(true, false);
         let mut psbt = psbt_for(&policy, Sequence::MAX, absolute::LockTime::ZERO);
-        let matched = match_psbt(&psbt, &policy, master.fingerprint(&secp)).unwrap();
+        let matched = match_psbt(&psbt, &policy, master.fingerprint(&secp), true).unwrap();
         assert_eq!(matched.active_path, Some(SpendPathKind::Primary));
         assert_eq!(matched.expected_signatures, 1);
         crate::policy::signing::sign(&mut psbt, &master, &secp, 1).unwrap();
@@ -567,7 +579,7 @@ mod tests {
         .unwrap();
         let mut psbt = psbt_for(&policy, Sequence::MAX, absolute::LockTime::ZERO);
 
-        let matched = match_psbt(&psbt, &policy, device.fingerprint(&secp)).unwrap();
+        let matched = match_psbt(&psbt, &policy, device.fingerprint(&secp), true).unwrap();
         assert_eq!(matched.active_path, Some(SpendPathKind::Primary));
         assert_eq!(matched.expected_signatures, 2);
         crate::policy::signing::sign(&mut psbt, &device, &secp, matched.expected_signatures)
@@ -587,6 +599,7 @@ mod tests {
             &relative_psbt,
             &relative,
             relative_master.fingerprint(&secp),
+            true,
         )
         .unwrap();
         assert_eq!(matched.active_path, Some(SpendPathKind::Recovery));
@@ -601,9 +614,35 @@ mod tests {
             &absolute_psbt,
             &absolute,
             absolute_master.fingerprint(&secp),
+            true,
         )
         .unwrap();
         assert_eq!(matched.active_path, Some(SpendPathKind::Recovery));
+    }
+
+    #[test]
+    fn requires_previous_transaction_unless_witness_utxo_is_trusted() {
+        let (policy, master, secp) = fixture(true, false);
+        let fingerprint = master.fingerprint(&secp);
+        let mut psbt = psbt_for(&policy, Sequence::MAX, absolute::LockTime::ZERO);
+        assert_eq!(
+            match_psbt(&psbt, &policy, fingerprint, false),
+            Err(Error::UntrustedWitnessUtxo { index: 0 })
+        );
+        assert!(match_psbt(&psbt, &policy, fingerprint, true).is_ok());
+
+        let previous = Transaction {
+            version: Version::TWO,
+            lock_time: absolute::LockTime::ZERO,
+            input: Vec::new(),
+            output: vec![psbt.inputs[0].witness_utxo.clone().unwrap()],
+        };
+        psbt.unsigned_tx.input[0].previous_output = OutPoint {
+            txid: previous.compute_txid(),
+            vout: 0,
+        };
+        psbt.inputs[0].non_witness_utxo = Some(previous);
+        assert!(match_psbt(&psbt, &policy, fingerprint, false).is_ok());
     }
 
     #[test]
@@ -611,7 +650,7 @@ mod tests {
         let (policy, master, secp) = fixture(true, false);
         let mut psbt = psbt_for(&policy, Sequence::MAX, absolute::LockTime::ZERO);
         psbt.inputs[0].witness_script = Some(ScriptBuf::new());
-        assert!(match_psbt(&psbt, &policy, master.fingerprint(&secp)).is_err());
+        assert!(match_psbt(&psbt, &policy, master.fingerprint(&secp), true).is_err());
     }
 
     #[test]
@@ -621,7 +660,7 @@ mod tests {
         psbt.inputs[0].sighash_type = Some(EcdsaSighashType::None.into());
 
         assert!(matches_policy_inputs(&psbt, &policy, master.fingerprint(&secp)).is_ok());
-        assert!(match_psbt(&psbt, &policy, master.fingerprint(&secp)).is_err());
+        assert!(match_psbt(&psbt, &policy, master.fingerprint(&secp), true).is_err());
     }
 
     #[test]
@@ -649,6 +688,6 @@ mod tests {
         )
         .unwrap();
         let psbt = psbt_for(&policy, Sequence::from_height(5), absolute::LockTime::ZERO);
-        assert!(match_psbt(&psbt, &policy, device.fingerprint(&secp)).is_err());
+        assert!(match_psbt(&psbt, &policy, device.fingerprint(&secp), true).is_err());
     }
 }
