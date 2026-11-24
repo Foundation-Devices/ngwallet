@@ -1,0 +1,13 @@
+[advisories]
+# Both are reached only through the `envoy` feature, and neither fix is reachable without
+# moving Foundation's bdk-1 fork (ENV-3534). Remove an entry once its fix lands.
+ignore = [
+    # webpki-roots 0.25 still bundles the emSign root. electrum-client 0.23, which bdk_electrum
+    # pins, requires webpki-roots ^0.25. rustls-webpki 0.103.16+ rejects chains through the
+    # distrusted intermediates regardless of the roots, so the root itself is no longer trusted.
+    "RUSTSEC-2026-0381",
+    # Bundled SQLite before 3.54 can return uninitialised memory for a crafted database and
+    # -wal pair. bdk_chain pins rusqlite 0.31; the fix needs rusqlite 0.41. ngwallet itself
+    # opens SQLite only in tests.
+    "RUSTSEC-2026-0459",
+]
