@@ -1099,6 +1099,21 @@ pub struct NgDescriptor {
     pub export_addr_hint: Option<AddressType>,
 }
 
+impl NgDescriptor {
+    /// Replaces a private internal or external descriptor with its public
+    /// form. Returns whether either held a private key.
+    pub(crate) fn strip_private_keys(&mut self) -> anyhow::Result<bool> {
+        let mut stripped = false;
+        for descriptor in std::iter::once(&mut self.internal).chain(self.external.as_mut()) {
+            if let Some(public) = public_form_if_private(descriptor)? {
+                *descriptor = public;
+                stripped = true;
+            }
+        }
+        Ok(stripped)
+    }
+}
+
 impl fmt::Debug for NgDescriptor {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("NgDescriptor")
@@ -1207,6 +1222,10 @@ impl NgAccountConfig {
     /// This intentionally hashes the original bytes for compatibility with the
     /// unversioned `RemoteUpdate` schema released in 3.6.2. A canonical public
     /// hash requires a separately versioned and negotiated wire format.
+    ///
+    /// An account's config holds only public descriptors (see
+    /// [`Self::strip_private_keys`]), so for a hot account these are the
+    /// public forms of the descriptors it was built from.
     pub fn descriptor_hash(&self) -> [u8; 32] {
         use bdk_wallet::bitcoin::hashes::{Hash, HashEngine, sha256};
         let mut engine = sha256::HashEngine::default();
@@ -1241,6 +1260,23 @@ impl NgAccountConfig {
                 )
             })
         })
+    }
+
+    /// Replaces every private descriptor with its public form; watch-only
+    /// descriptors stay byte-for-byte. Returns whether any private key was
+    /// removed. Fails, leaving the config unchanged, on a key that is neither
+    /// public nor private or a private key with no exact public form.
+    ///
+    /// A stored config never holds private keys: whoever builds or opens the
+    /// account supplies them in the descriptors its wallets are created from.
+    pub fn strip_private_keys(&mut self) -> anyhow::Result<bool> {
+        let mut descriptors = self.descriptors.clone();
+        let mut stripped = false;
+        for descriptor in &mut descriptors {
+            stripped |= descriptor.strip_private_keys()?;
+        }
+        self.descriptors = descriptors;
+        Ok(stripped)
     }
 
     pub fn clear_private_descriptors(&mut self) {
@@ -1373,6 +1409,36 @@ fn classify_descriptor_for_exchange(descriptor: &str) -> ExchangeDescriptor {
         ExchangeDescriptor::Publicized(public_descriptor.to_string())
     } else {
         ExchangeDescriptor::Unsafe
+    }
+}
+
+/// The public form of `descriptor` if it holds a private key, or `None` if it
+/// is watch-only. Fails closed on a key that is neither public nor private and
+/// on a private key with no exact public form. Errors never quote the
+/// descriptor, which may hold a secret.
+fn public_form_if_private(descriptor: &str) -> anyhow::Result<Option<String>> {
+    let raw_descriptor = BdkDescriptor::<String>::from_str(descriptor)
+        .map_err(|_| anyhow::anyhow!("account descriptor does not parse"))?;
+
+    let mut contains_secret = false;
+    let keys_are_known = raw_descriptor.for_each_key(|raw_key| {
+        if DescriptorSecretKey::from_str(raw_key).is_ok() {
+            contains_secret = true;
+            true
+        } else {
+            DescriptorPublicKey::from_str(raw_key).is_ok()
+        }
+    });
+    if !keys_are_known {
+        anyhow::bail!("account descriptor holds a key that is neither public nor private");
+    }
+    if !contains_secret {
+        return Ok(None);
+    }
+
+    match classify_descriptor_for_exchange(descriptor) {
+        ExchangeDescriptor::Publicized(public) => Ok(Some(public)),
+        _ => anyhow::bail!("account descriptor holds a private key with no exact public form"),
     }
 }
 

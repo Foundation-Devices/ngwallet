@@ -119,7 +119,11 @@ impl<P: WalletPersister> NgAccount<P> {
         meta: Arc<dyn MetaStorage>,
         descriptors: Vec<Descriptor<P>>,
     ) -> anyhow::Result<Self> {
-        let account_config = ng_account_config.clone();
+        // The wallets hold the private keys; the stored config never does.
+        let mut account_config = ng_account_config.clone();
+        account_config
+            .strip_private_keys()
+            .with_context(|| "Failed to remove private keys from account config")?;
         let NgAccountConfig {
             preferred_address_type,
             network,
@@ -160,6 +164,10 @@ impl<P: WalletPersister> NgAccount<P> {
         })
     }
 
+    /// Opens the account stored in `db_path`. If its config still holds
+    /// private keys, the metadata moves to a fresh file: rewriting the config
+    /// in place would leave the old value in pages redb has freed but not yet
+    /// reused.
     pub fn open_account_from_file(
         descriptors: Vec<Descriptor<P>>,
         db_path: Option<String>,
@@ -167,10 +175,33 @@ impl<P: WalletPersister> NgAccount<P> {
     where
         <P as WalletPersister>::Error: Debug,
     {
+        let reopen_descriptors: Vec<Descriptor<P>> = descriptors
+            .iter()
+            .map(|descriptor| Descriptor {
+                internal: descriptor.internal.clone(),
+                external: descriptor.external.clone(),
+                bdk_persister: descriptor.bdk_persister.clone(),
+            })
+            .collect();
+        let meta_storage = RedbMetaStorage::from_file(db_path.clone())?;
+        let (account, stripped) = Self::open_and_strip(descriptors, Arc::new(meta_storage))?;
+        if !stripped {
+            return Ok(account);
+        }
+
+        let config = account.config.read().unwrap().serialize();
+        // Every handle on the old file must be closed before it is replaced.
+        drop(account);
+        if let Err(e) = RedbMetaStorage::rewrite_file(db_path.clone(), &config) {
+            // The live config is already public; only freed pages may keep the keys.
+            log::warn!("Failed to move account metadata to a fresh file: {e:?}");
+        }
         let meta_storage = RedbMetaStorage::from_file(db_path)?;
-        Self::open_account(descriptors, Arc::new(meta_storage))
+        Self::open_account(reopen_descriptors, Arc::new(meta_storage))
     }
 
+    /// Like [`Self::open_account_from_file`], but a config that still holds
+    /// private keys is only rewritten in place, since the caller owns `db`.
     pub fn open_account_from_db(
         descriptors: Vec<Descriptor<P>>,
         db: redb::Database,
@@ -182,6 +213,15 @@ impl<P: WalletPersister> NgAccount<P> {
         Self::open_account(descriptors, Arc::new(meta_storage))
     }
 
+    /// Opens the account stored in `meta_storage`. A hot account's private
+    /// keys come only from `descriptors`: its stored config holds the public
+    /// forms.
+    ///
+    /// A config written by an earlier version can still hold the private
+    /// keys. They are removed from it here, once the caller has supplied them
+    /// in `descriptors`; if it hasn't, opening fails and the config is kept,
+    /// since it may hold the only copy. [`NgAccountConfig::from_storage`]
+    /// returns the stored config unchanged.
     pub fn open_account(
         descriptors: Vec<Descriptor<P>>,
         meta_storage: Arc<dyn MetaStorage>,
@@ -189,7 +229,19 @@ impl<P: WalletPersister> NgAccount<P> {
     where
         <P as WalletPersister>::Error: Debug,
     {
-        let config = meta_storage
+        Ok(Self::open_and_strip(descriptors, meta_storage)?.0)
+    }
+
+    /// [`Self::open_account`], also returning whether the stored config held
+    /// private keys that were removed.
+    fn open_and_strip(
+        descriptors: Vec<Descriptor<P>>,
+        meta_storage: Arc<dyn MetaStorage>,
+    ) -> anyhow::Result<(Self, bool)>
+    where
+        <P as WalletPersister>::Error: Debug,
+    {
+        let mut config = meta_storage
             .get_config()
             .with_context(|| "Failed to get load account config")?
             .ok_or(anyhow::anyhow!("Account config not found"))?;
@@ -207,11 +259,31 @@ impl<P: WalletPersister> NgAccount<P> {
             wallets.push(wallet);
         }
 
-        Ok(Self {
-            config: Arc::new(RwLock::new(config)),
-            wallets: Arc::new(RwLock::new(wallets)),
-            meta_storage,
-        })
+        let stripped = config
+            .strip_private_keys()
+            .with_context(|| "Failed to remove private keys from account config")?;
+        if stripped {
+            if wallets.is_empty() || wallets.iter().any(|wallet| !wallet.is_hot()) {
+                anyhow::bail!(
+                    "Account config holds private keys that were not supplied to open it"
+                );
+            }
+            meta_storage
+                .set_config(config.serialize().as_str())
+                .with_context(|| "Failed to set account config")?;
+            meta_storage
+                .persist()
+                .with_context(|| "Failed to persist account config")?;
+        }
+
+        Ok((
+            Self {
+                config: Arc::new(RwLock::new(config)),
+                wallets: Arc::new(RwLock::new(wallets)),
+                meta_storage,
+            },
+            stripped,
+        ))
     }
 
     pub fn rename(&self, name: &str) -> Result<(), Error> {
@@ -229,7 +301,10 @@ impl<P: WalletPersister> NgAccount<P> {
             wallet.persist()?;
         }
 
-        let config = self.config.read().unwrap();
+        // Building and opening already keep private keys out of the config;
+        // this also covers a caller that wrote one into it directly.
+        let mut config = self.config.read().unwrap().clone();
+        config.strip_private_keys()?;
         self.meta_storage
             .set_config(config.serialize().as_str())
             .map_err(|e| anyhow::anyhow!(e))
@@ -241,22 +316,24 @@ impl<P: WalletPersister> NgAccount<P> {
         export_addr_hint: Option<AddressType>,
     ) -> Result<(), Error> {
         let address_type = get_address_type(&descriptor.internal);
+        let mut new_descriptor = NgDescriptor {
+            internal: descriptor.internal.clone(),
+            external: descriptor.external.clone(),
+            address_type,
+            export_addr_hint,
+        };
+        new_descriptor.strip_private_keys()?;
         {
             let mut config = self.config.write().unwrap();
             for wallet_descriptor in &config.descriptors {
-                if wallet_descriptor.internal == descriptor.internal {
+                if wallet_descriptor.internal == new_descriptor.internal {
                     return Err(anyhow::anyhow!("Descriptor already exists"));
                 }
                 if address_type == wallet_descriptor.address_type {
                     return Err(anyhow::anyhow!("Address type already exists"));
                 }
             }
-            config.descriptors.push(NgDescriptor {
-                internal: descriptor.internal.clone(),
-                external: descriptor.external.clone(),
-                address_type,
-                export_addr_hint,
-            });
+            config.descriptors.push(new_descriptor);
             let wallet = NgWallet::new_from_descriptor(
                 descriptor.internal.clone(),
                 descriptor.external.clone(),

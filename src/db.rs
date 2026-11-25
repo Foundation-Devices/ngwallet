@@ -2,7 +2,10 @@ use crate::config::{AddressType, NgAccountConfig};
 use crate::store::MetaStorage;
 use anyhow::{Context, Result};
 use bdk_wallet::KeychainKind;
-use redb::{Builder, Database, ReadableTable, TableDefinition};
+use redb::{
+    Builder, Database, Key, ReadTransaction, ReadableTable, TableDefinition, TableError,
+    TableHandle, Value, WriteTransaction,
+};
 
 const FEE_TABLE: TableDefinition<&str, u64> = TableDefinition::new("fees");
 
@@ -25,10 +28,7 @@ pub struct RedbMetaStorage {
 impl RedbMetaStorage {
     pub fn from_file(path: Option<String>) -> anyhow::Result<Self> {
         let db = {
-            let file_path = path
-                .clone()
-                .map(|p| format!("{p}/account.meta"))
-                .unwrap_or("account.meta".to_string());
+            let file_path = meta_file_path(path);
             Builder::new()
                 .create(file_path)
                 .with_context(|| "Failed to create redb database")?
@@ -46,6 +46,78 @@ impl RedbMetaStorage {
     pub fn persist(&self) -> Result<Vec<u8>> {
         Ok(vec![])
     }
+
+    /// Moves the metadata in `path` to a fresh file, with `config` as the
+    /// account config. Updating a value in place leaves the old bytes in pages
+    /// redb has freed but not yet reused; a fresh file holds only live data.
+    pub(crate) fn rewrite_file(path: Option<String>, config: &str) -> Result<()> {
+        let file_path = meta_file_path(path);
+        let new_path = format!("{file_path}.new");
+        // A leftover from an interrupted rewrite holds nothing the live file lacks.
+        let _ = std::fs::remove_file(&new_path);
+        {
+            let old = Database::open(&file_path)?;
+            let read_txn = old.begin_read()?;
+            // Only these tables are copied, so refuse rather than drop another.
+            let known = [
+                FEE_TABLE.name().to_string(),
+                NOTE_TABLE.name().to_string(),
+                TAG_TABLE.name().to_string(),
+                TAGS_LIST.name().to_string(),
+                DO_NOT_SPEND_TABLE.name().to_string(),
+                ACCOUNT_CONFIG.name().to_string(),
+                LAST_VERIFIED_ADDRESS_TABLE.name().to_string(),
+            ];
+            if let Some(table) = read_txn
+                .list_tables()?
+                .find(|table| !known.iter().any(|name| name == table.name()))
+            {
+                anyhow::bail!("Unknown metadata table {}", table.name());
+            }
+            if read_txn.list_multimap_tables()?.next().is_some() {
+                anyhow::bail!("Unexpected multimap metadata table");
+            }
+
+            let new = Builder::new().create(&new_path)?;
+            let write_txn = new.begin_write()?;
+            copy_table(&read_txn, &write_txn, FEE_TABLE)?;
+            copy_table(&read_txn, &write_txn, NOTE_TABLE)?;
+            copy_table(&read_txn, &write_txn, TAG_TABLE)?;
+            copy_table(&read_txn, &write_txn, TAGS_LIST)?;
+            copy_table(&read_txn, &write_txn, DO_NOT_SPEND_TABLE)?;
+            copy_table(&read_txn, &write_txn, LAST_VERIFIED_ADDRESS_TABLE)?;
+            write_txn
+                .open_table(ACCOUNT_CONFIG)?
+                .insert("config", config)?;
+            write_txn.commit()?;
+        }
+        std::fs::rename(&new_path, &file_path)?;
+        Ok(())
+    }
+}
+
+fn meta_file_path(path: Option<String>) -> String {
+    path.map(|p| format!("{p}/account.meta"))
+        .unwrap_or("account.meta".to_string())
+}
+
+/// Copies every entry of `table`, if it exists, from `from` into `to`.
+fn copy_table<K: Key + 'static, V: Value + 'static>(
+    from: &ReadTransaction,
+    to: &WriteTransaction,
+    table: TableDefinition<K, V>,
+) -> Result<()> {
+    let source = match from.open_table(table) {
+        Ok(source) => source,
+        Err(TableError::TableDoesNotExist(_)) => return Ok(()),
+        Err(e) => return Err(e.into()),
+    };
+    let mut target = to.open_table(table)?;
+    for entry in source.iter()? {
+        let (key, value) = entry?;
+        target.insert(key.value(), value.value())?;
+    }
+    Ok(())
 }
 
 impl MetaStorage for RedbMetaStorage {
