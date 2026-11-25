@@ -299,11 +299,17 @@ mod tests {
         let canonical = config_with_descriptor(public_descriptor(CHECKSUMLESS_PUBLIC), None);
         assert_ne!(watch_only.descriptor_hash(), canonical.descriptor_hash());
 
-        // A queued update produced by the released raw-byte algorithm remains
-        // valid after upgrading this consumer.
+        // An account stores the public form of the descriptors it was built
+        // from, so a hot account's hash covers that form, not the private
+        // bytes. Remote updates target watch-only accounts, whose descriptors
+        // are stored byte-for-byte, so their hashes are unchanged.
         let account = make_account();
         let config = account.config.read().unwrap();
-        let queued = RemoteUpdate::new(
+        assert_eq!(
+            config.descriptors[0].internal,
+            public_descriptor(INTERNAL_DESCRIPTOR)
+        );
+        let bound_to_private_bytes = RemoteUpdate::new(
             config.id.clone(),
             config.network,
             LEGACY_PRIVATE_HASH,
@@ -313,8 +319,11 @@ mod tests {
         )
         .serialize();
         drop(config);
-        account.update(queued).unwrap();
-        assert_eq!(account.config.read().unwrap().last_remote_sequence, 1);
+        let err = account.update(bound_to_private_bytes).unwrap_err();
+        assert!(
+            err.to_string().contains("descriptor hash mismatch"),
+            "{err}"
+        );
     }
 
     /// Metadata carrying a different `preferred_address_type` must be rejected.

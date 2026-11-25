@@ -38,6 +38,8 @@ mod tests {
         ngwallet::config::{AddressType, NgAccountBackup, NgAccountBuilder, NgAccountConfig},
         ngwallet::ngwallet::{NgWallet, PsbtOutputOwnership},
         ngwallet::send::{FeeRateSatPerKvb, TransactionParams},
+        ngwallet::store::MetaStorage,
+        std::path::{Path, PathBuf},
         std::sync::{Arc, Mutex},
     };
 
@@ -49,6 +51,177 @@ mod tests {
                 "{label} leaked private marker {marker}: {value}"
             );
         }
+    }
+
+    #[cfg(feature = "envoy")]
+    const STORAGE_TEST_MNEMONIC: &str =
+        "addict hold sand engage ostrich cousin swarm away puzzle huge rookie fancy";
+
+    /// An empty directory for one test's account files.
+    #[cfg(feature = "envoy")]
+    fn account_dir(name: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!("ngwallet-{name}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    #[cfg(feature = "envoy")]
+    fn dir_path(dir: &Path) -> Option<String> {
+        Some(dir.to_string_lossy().into_owned())
+    }
+
+    /// The test seed's P2WPKH and P2TR descriptors as (internal, external)
+    /// pairs, in private or public form.
+    #[cfg(feature = "envoy")]
+    fn seed_descriptor_pairs(private: bool) -> Vec<(String, String)> {
+        let seed = Mnemonic::parse(STORAGE_TEST_MNEMONIC).unwrap().to_seed("");
+        get_descriptors(&seed, Network::Signet, 0)
+            .unwrap()
+            .into_iter()
+            .filter(|d| d.bip() == "84" || d.bip() == "86")
+            .map(|d| {
+                if private {
+                    (d.change_descriptor_xprv(), d.descriptor_xprv())
+                } else {
+                    (d.change_descriptor_xpub(), d.descriptor_xpub())
+                }
+            })
+            .collect()
+    }
+
+    /// Wallet descriptors whose BDK state is kept in `dir`, so the account
+    /// can be reopened.
+    #[cfg(feature = "envoy")]
+    fn file_descriptors(dir: &Path, private: bool) -> Vec<Descriptor<Connection>> {
+        seed_descriptor_pairs(private)
+            .into_iter()
+            .enumerate()
+            .map(|(index, (internal, external))| Descriptor {
+                internal,
+                external: Some(external),
+                bdk_persister: Arc::new(Mutex::new(
+                    Connection::open(dir.join(format!("wallet_{index}.sqlite"))).unwrap(),
+                )),
+            })
+            .collect()
+    }
+
+    #[cfg(feature = "envoy")]
+    fn build_hot_account_in(dir: &Path) -> NgAccount<Connection> {
+        NgAccountBuilder::default()
+            .name("Mobile Wallet".to_string())
+            .color("red".to_string())
+            .seed_has_passphrase(false)
+            .device_serial(None)
+            .date_added(None)
+            .preferred_address_type(AddressType::P2wpkh)
+            .index(0)
+            .descriptors(file_descriptors(dir, true))
+            .date_synced(None)
+            .account_path(dir_path(dir))
+            .network(Network::Signet)
+            .id("storage-test".to_string())
+            .build_from_file(dir_path(dir))
+            .unwrap()
+    }
+
+    /// Stores the config the way earlier versions did: the same account,
+    /// with its private descriptors.
+    #[cfg(feature = "envoy")]
+    fn write_legacy_config(account: &NgAccount<Connection>) {
+        let mut legacy = account.config.read().unwrap().clone();
+        for (descriptor, (internal, external)) in legacy
+            .descriptors
+            .iter_mut()
+            .zip(seed_descriptor_pairs(true))
+        {
+            descriptor.internal = internal;
+            descriptor.external = Some(external);
+        }
+        let storage: &dyn MetaStorage = account.meta_storage.as_ref();
+        storage.set_config(&legacy.serialize()).unwrap();
+    }
+
+    /// The files in `dir` that contain an extended private key.
+    #[cfg(feature = "envoy")]
+    fn files_with_private_keys(dir: &Path) -> Vec<String> {
+        std::fs::read_dir(dir)
+            .unwrap()
+            .map(|entry| entry.unwrap().path())
+            .filter(|path| {
+                let bytes = std::fs::read(path).unwrap();
+                bytes
+                    .windows(4)
+                    .any(|window| window == b"tprv" || window == b"xprv")
+            })
+            .map(|path| path.display().to_string())
+            .collect()
+    }
+
+    #[test]
+    #[cfg(feature = "envoy")]
+    fn hot_account_files_hold_only_public_descriptors() {
+        let dir = account_dir("hot-account-files");
+        let account = build_hot_account_in(&dir);
+        account.persist().unwrap();
+        assert!(account.is_hot());
+
+        let stored: Vec<(String, String)> = account
+            .config
+            .read()
+            .unwrap()
+            .descriptors
+            .iter()
+            .map(|d| (d.internal.clone(), d.external.clone().unwrap()))
+            .collect();
+        assert_eq!(stored, seed_descriptor_pairs(false));
+
+        drop(account);
+        assert_eq!(files_with_private_keys(&dir), Vec::<String>::new());
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    #[cfg(feature = "envoy")]
+    fn opening_a_legacy_hot_account_moves_its_metadata_to_a_clean_file() {
+        let dir = account_dir("legacy-hot-account");
+        let account = build_hot_account_in(&dir);
+        account.meta_storage.set_note("txid", "kept").unwrap();
+        write_legacy_config(&account);
+        drop(account);
+        assert!(!files_with_private_keys(&dir).is_empty());
+
+        let account =
+            NgAccount::open_account_from_file(file_descriptors(&dir, true), dir_path(&dir))
+                .unwrap();
+        assert!(account.is_hot());
+        assert!(!account.config.read().unwrap().has_private_descriptors());
+        assert_eq!(
+            account.meta_storage.get_note("txid").unwrap().as_deref(),
+            Some("kept")
+        );
+
+        drop(account);
+        assert_eq!(files_with_private_keys(&dir), Vec::<String>::new());
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    #[cfg(feature = "envoy")]
+    fn a_legacy_hot_account_opened_without_its_keys_keeps_them() {
+        let dir = account_dir("legacy-hot-account-without-keys");
+        let account = build_hot_account_in(&dir);
+        write_legacy_config(&account);
+        drop(account);
+
+        let error =
+            NgAccount::open_account_from_file(file_descriptors(&dir, false), dir_path(&dir))
+                .err()
+                .expect("opening without the private keys must fail");
+        assert!(error.to_string().contains("not supplied"), "{error}");
+        assert!(!files_with_private_keys(&dir).is_empty());
+        std::fs::remove_dir_all(&dir).unwrap();
     }
 
     #[test]
