@@ -217,8 +217,7 @@ mod tests {
 
         let error =
             NgAccount::open_account_from_file(file_descriptors(&dir, false), dir_path(&dir))
-                .err()
-                .expect("opening without the private keys must fail");
+                .expect_err("opening without the private keys must fail");
         assert!(error.to_string().contains("not supplied"), "{error}");
         assert!(!files_with_private_keys(&dir).is_empty());
         std::fs::remove_dir_all(&dir).unwrap();
